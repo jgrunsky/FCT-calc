@@ -11,7 +11,7 @@
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<meta name="app-version" content="2026-08-24-fct-calc-v2.1.34-pnl-board">
+<meta name="app-version" content="2026-08-24-fct-calc-v2.1.35-ops-net">
 <title data-id="th-modified">FCT Load Profitability — French Camp Transport</title>
 <link rel="manifest" href='data:application/manifest+json,{"name":"FCT Load Profitability","short_name":"FCT Calc","start_url":".","display":"standalone","background_color":"%2312100e","theme_color":"%2312100e","icons":[{"src":"data:image/svg%2Bxml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 192 192%27%3E%3Crect width=%27192%27 height=%27192%27 fill=%27%2312100e%27/%3E%3Ctext x=%2796%27 y=%27124%27 font-size=%2772%27 font-family=%27sans-serif%27 font-weight=%27700%27 fill=%27%238fb590%27 text-anchor=%27middle%27%3EFCT%3C/text%3E%3C/svg%3E","sizes":"192x192","type":"image/svg+xml"}]}'>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -193,6 +193,10 @@
   .pnl-row.tot{border-top:1px solid var(--border);margin-top:4px;padding-top:8px;font-weight:700}
   .pnl-row.tot .pnl-lab{color:var(--text)}
   .pnl-row.net{border-top:1px dashed var(--border-strong);padding-top:8px;margin-top:2px}
+  .pnl-row.net .pnl-lab{font-size:13px}
+  .pnl-row.net-full{border-top:none;padding-top:4px;margin-top:0;font-weight:500;font-size:12px}
+  .pnl-row.net-full .pnl-lab{color:var(--text-muted);font-weight:500}
+  .pnl-row .pnl-hint{display:block;font:400 10px/1.25 var(--body);color:var(--text-faint);text-transform:none;letter-spacing:0;margin-top:1px}
   .pnl-foot{margin-top:10px;padding-top:8px;border-top:1px solid var(--border);font-size:12px;color:var(--text-muted)}
   .pnl-drv{display:flex;align-items:baseline;justify-content:space-between;gap:8px;padding:3px 0;font-size:12.5px}
   .pnl-drv .n{font-family:var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap;color:var(--text)}
@@ -1416,7 +1420,7 @@
    still exposes the Import JSON box for future refreshes.
    ============================================================= */
 
-const APP_VERSION = '2026-08-24-fct-calc-v2.1.34-pnl-board';
+const APP_VERSION = '2026-08-24-fct-calc-v2.1.35-ops-net';
 const STORAGE_KEY = 'fct-calc:state';
 const IDB_NAME = 'fct-calc-db';
 const IDB_STORE = 'kv';
@@ -2633,6 +2637,12 @@ function variableComponents(milesOv, hoursOv, rateOv){
      reconciliation view — this line just stops charging it to every load.
      James note 2026-08-12: Sunday sub volume trending down, so the stale
      historical amortization is even further from current reality. */
+  /* EST days keep this $35 plug. On closed days that use ADP field
+     dollars, accumulatePnlByDay / applyAdpToModeled drop it to 0 —
+     ADP already includes REGULAR/OT/meals/sick/vacation, tarps+wash
+     already live in wearPerMile, and there is no tarps/tow residue
+     setting. Do not zero this here: Queue scoring and open-today EST
+     still need the plug. Wear and the $150 Lopez/Prado sub stay. */
   const other= Number(s.otherVariablePerLoad)||0;
   return [
     { k:'fuel',   label:'Fuel',              amount: mi*fuelPerMile(),
@@ -2644,7 +2654,7 @@ function variableComponents(milesOv, hoursOv, rateOv){
     { k:'subhauler', label:'Subhauler pro-rata', amount: 0,
       basis: 'v2.0.9: subhauler now tracked per-load ($150/load for Lopez/<name> · Prado/<name> subs, applied in computeDayRow); historical pool baseline '+money(Number(s.subhaulerPerYear)||0)+'/yr disabled here to prevent double-count with the per-load charge' },
     { k:'other',  label:'Other / unallocated', amount: other,
-      basis: 'Residual reconciling the four modelled lines to the T12M actual per-load variable spend — driver non-productive paid time, tarps, wash, tow' },
+      basis: 'EST plug: driver non-productive paid time + tarps/wash/tow. Dropped on ADP field-dollar days (v2.1.35) so it does not double-count clocked pay. Tarps/wash already sit in wearPerMile; no separate tarps/tow residue setting' },
   ];
 }
 function variableCostPerLoad(){ return variableComponents().reduce((a,c)=>a+c.amount,0); }
@@ -3127,7 +3137,7 @@ function defaultSettings(){
     avgMilesPerLoad: 50,         // v2.1.17c: James 2026-08-20 corrected — real FC→PNG→Ripon→FC round trip = ~50 mi (FC→Stockton ~15, Stockton→Ripon ~22, Ripon→FC ~13). Was 80 based on total fleet-mile/load-count ratio which included Harris + longer-haul loads.
     hoursPerLoad: 5,             // total time on load, Diamond dispatch
     subhaulerPerYear: 363000,    // QBO 326 — booked as its own per-load line
-    otherVariablePerLoad: 35.00, // v2.1.17b: was $21.02. Bumped to absorb WC (moved from Insurance fixed) at ~$14/load. Real WC = $104K/yr ÷ ~7500 loads = $13.87/load. Plus small residuals.
+    otherVariablePerLoad: 35.00, // v2.1.17b: was $21.02. Bumped to absorb WC (moved from Insurance fixed) at ~$14/load. Real WC = $104K/yr ÷ ~7500 loads = $13.87/load. Plus small residuals. v2.1.35: EST days only — ADP field-dollar days drop this plug (no tarps/tow residue setting; tarps/wash already in wearPerMile).
     /* Non-Diamond revenue is a PLACEHOLDER. Diamond is calibrated to T12M and
        bills off the 30% FSC card; the other three buckets have no verified
        rate yet, so they ship at $500 and are flagged EST wherever they land.
@@ -7286,12 +7296,22 @@ function findAdpColumns(aoa){
 }
 
 /* Day-level rule: replace modelled driver wages with ADP field-driver
-   dollars. Fuel / wear / sub-haul stay. Do not invent a $/hr from ADP. */
-function applyAdpToModeled(modeledVar, modeledDriver, adpDollars){
+   dollars. Fuel / wear / sub-haul stay. The EST otherVariablePerLoad
+   plug (~$35: non-productive paid time + tarps/wash/tow) drops — ADP
+   already includes REGULAR/OT/meals/sick/vacation, and tarps/wash
+   already live in wearPerMile. No tarps/tow residue setting exists.
+   Do not invent a $/hr from ADP. */
+function stripAdpOtherPlug(otherCost, otherPlug, usesAdp){
+  const o = Number(otherCost)||0;
+  if(!usesAdp) return o;
+  return Math.max(0, o - (Number(otherPlug)||0));
+}
+function applyAdpToModeled(modeledVar, modeledDriver, adpDollars, modeledOtherPlug){
   const v = Number(modeledVar)||0;
   const d = Number(modeledDriver)||0;
   if(adpDollars==null || !isFinite(Number(adpDollars))) return v;
-  return v - d + Number(adpDollars);
+  const other = (modeledOtherPlug!=null && isFinite(Number(modeledOtherPlug))) ? Number(modeledOtherPlug) : 0;
+  return v - d - other + Number(adpDollars);
 }
 
 function parseAdpDailyTotals(aoa, opts){
@@ -7567,10 +7587,11 @@ async function hydrateAdpPay(){
 }
 
 function applyAdpDayTotals(dateISO, T){
-  /* T: { loads, revenue, varCost, driverCost, hours, cm } — mutates in place.
+  /* T: { loads, revenue, varCost, driverCost, hours, cm, otherPlug } — mutates in place.
      Only swap when the day has loads; otherwise ADP would become a
      no-revenue labor charge on an empty picker. Today (openDate) stays
-     on the model unless this file was an after-close re-drop. */
+     on the model unless this file was an after-close re-drop.
+     Fuel / wear / $150 sub stay. The EST other plug drops (v2.1.35). */
   const adp = adpFieldDay(dateISO);
   T.adp = adp;
   T.estVarCost = T.varCost;
@@ -7582,7 +7603,7 @@ function applyAdpDayTotals(dateISO, T){
     return T;
   }
   T.varSource = 'ADP';
-  T.varCost = applyAdpToModeled(T.varCost, T.driverCost, adp.dollars);
+  T.varCost = applyAdpToModeled(T.varCost, T.driverCost, adp.dollars, T.otherPlug);
   T.driverCost = adp.dollars;
   T.hours = adp.hours;
   T.cm = T.revenue - T.varCost;
@@ -8105,6 +8126,10 @@ function computeDayRow(r){
     }
     varCost = fuelCost + driverCost + wearCost + otherCost + subHaulCost;
   }
+  /* The $35 otherVariablePerLoad plug only — not a varCostOverride lump
+     and not the Lopez/Prado $150. ADP days subtract this so clocked pay
+     is not double-counted; wear and sub stay. */
+  const otherPlug = (varOv>0 || isSubHaul) ? 0 : (Number(otherCost)||0);
 
   const cm = revenue - varCost;
 
@@ -8140,6 +8165,7 @@ function computeDayRow(r){
            revenue:revenue, billed:billed>0, rateEst:rev.est, rateBasis:rev.basis,
            varCost:varCost, driverCost:driverCost,
            fuelCost:fuelCost, wearCost:wearCost, otherCost:otherCost, subHaulCost:subHaulCost,
+           otherPlug:otherPlug,
            varOverride:varOv>0, subHaul:isSubHaul,
            laneCal:laneCal,   // v2.1.21: {factor, source, laneKey, loadsInWindow?}
            cm:cm, cmPerHour: hours>0? cm/hours : 0, fixedAlloc:0, net:cm };
@@ -8148,12 +8174,13 @@ function computeDay(){
   const s = state.settings, d = state.dayRollup;
   const rows = d.currentRows.map(computeDayRow);
   const act  = rows.filter(r=>r.active);
-  const T = { loads:act.length, revenue:0, varCost:0, cm:0, hours:0, cardRevenue:0, driverCost:0 };
-  act.forEach(r=>{ T.revenue+=r.revenue; T.varCost+=r.varCost; T.cm+=r.cm; T.hours+=r.hours; T.cardRevenue+=r.cardRevenue; T.driverCost+=(Number(r.driverCost)||0); });
+  const T = { loads:act.length, revenue:0, varCost:0, cm:0, hours:0, cardRevenue:0, driverCost:0, otherPlug:0 };
+  act.forEach(r=>{ T.revenue+=r.revenue; T.varCost+=r.varCost; T.cm+=r.cm; T.hours+=r.hours; T.cardRevenue+=r.cardRevenue; T.driverCost+=(Number(r.driverCost)||0); T.otherPlug+=(Number(r.otherPlug)||0); });
   /* v2.1.33: when ADP field-driver actuals cover a CLOSED date, swap the
      modelled driver-wage component for that day's ADP dollars. Fuel,
-     wear, and sub-haul stay. Today stays on the model unless the file
-     was re-dropped after close. Hours on a closed day become ADP hours. */
+     wear, and sub-haul stay. v2.1.35 also drops the EST other plug.
+     Today stays on the model unless the file was re-dropped after close.
+     Hours on a closed day become ADP hours. */
   applyAdpDayTotals(d.date, T);
   T.cmPerHour = T.hours>0 ? T.cm/T.hours : 0;
 
@@ -8314,8 +8341,9 @@ function dayTotalsHTML(d){
         (d.mixHealthy?'<span class="chip g">healthy</span>':'<span class="chip y">skewing</span>'))
     + line('Total revenue', T.loads+' load'+(T.loads===1?'':'s')+' at bucket rates', money2(T.revenue))
     + line('Total variable cost', T.varSource==='ADP'
-        ? '<span class="chip g">ADP</span> field-driver '+money(T.driverCost)+' + modelled fuel/wear'
-          + (T.estDriverCost!=null ? ' (was '+money(T.estDriverCost)+' estimated driver)' : '')
+        ? '<span class="chip g">ADP</span> field-driver '+money(T.driverCost)+' + modelled fuel/wear/sub'
+          + ' (the $35 other plug is off — ADP already has that paid time)'
+          + (T.estDriverCost!=null ? ' · was '+money(T.estDriverCost)+' estimated driver' : '')
         : T.loads+' × '+money(variableCostPerLoad())+'/load — fuel + driver + wear + subhauler + unallocated',
         '−'+money2(T.varCost),'var(--red)')
     + line('<b>Total contribution margin</b>', T.varSource==='ADP'
@@ -8548,15 +8576,16 @@ function runningTotals(refDate){
       if(!r.date || r.date<from || r.date>to) return;
       const c = computeDayRow(r);
       if(!c.active) return;
-      const d = perDay[r.date] || (perDay[r.date] = {loads:0, rev:0, varc:0, driver:0});
+      const d = perDay[r.date] || (perDay[r.date] = {loads:0, rev:0, varc:0, driver:0, otherPlug:0});
       d.loads++; d.rev+=c.revenue; d.varc+=c.varCost; d.driver+=(Number(c.driverCost)||0);
+      d.otherPlug += (Number(c.otherPlug)||0);
     });
     let loads=0, rev=0, varc=0, adpDays=0, estDays=0;
     Object.keys(perDay).forEach(dt=>{
       const d = perDay[dt];
       const adp = adpFieldDay(dt);
       let dayVar = d.varc;
-      if(adp && adpAppliesToDate(dt)){ dayVar = applyAdpToModeled(d.varc, d.driver, adp.dollars); adpDays++; }
+      if(adp && adpAppliesToDate(dt)){ dayVar = applyAdpToModeled(d.varc, d.driver, adp.dollars, d.otherPlug); adpDays++; }
       else estDays++;
       loads += d.loads; rev += d.rev; varc += dayVar;
     });
@@ -8573,12 +8602,17 @@ function runningTotals(refDate){
 
 /* =============================================================
    v2.1.34 P&L board (James 2026-08-24)
+   v2.1.35: two nets — Ops (rev − wages − fuel − fixed) is the
+   headline James means; After wear is fully loaded (still subtracts
+   wear + remaining other + Lopez/Prado $150). ADP days drop the
+   $35 otherVariablePerLoad plug so clocked pay is not double-counted.
    -------------------------------------------------------------
    The landing-strip DAY/WTD/MTD chips were too small — payroll looked
    buried. This board is the thing to LOOK at: revenue, driver wages,
-   fuel, wear/other, fixed, contribution, net. Each line says ADP /
-   Verizon / EST. Day-in-view follows the picker; MTD/WTD stay locked
-   to today (same as runningTotals). Today stays EST while open.
+   fuel, wear/other, fixed, contribution, ops net, after wear. Each
+   line says ADP / Verizon / EST. Day-in-view follows the picker;
+   MTD/WTD stay locked to today (same as runningTotals). Today stays
+   EST while open.
    ============================================================= */
 function verizonFuelDollarsForDate(dateISO){
   if(!dateISO) return null;
@@ -8595,7 +8629,7 @@ function verizonFuelDollarsForDate(dateISO){
 
 function emptyPnlDay(){
   return { rev:0, billed:0, rateEst:0, fuel:0, driver:0, wear:0, other:0, sub:0,
-           hours:0, loads:0, fuelSrc:'EST', driverSrc:'EST', office:0 };
+           otherPlug:0, hours:0, loads:0, fuelSrc:'EST', driverSrc:'EST', office:0 };
 }
 
 function seedPnlDayFromAdp(dateISO){
@@ -8626,6 +8660,7 @@ function accumulatePnlByDay(){
     b.driver += Number(r.driverCost)||0;
     b.wear += Number(r.wearCost)||0;
     b.other += Number(r.otherCost)||0;
+    b.otherPlug = (Number(b.otherPlug)||0) + (Number(r.otherPlug)||0);
     b.sub += Number(r.subHaulCost)||0;
     b.hours += Number(r.hours)||0;
     b.loads++;
@@ -8637,6 +8672,10 @@ function accumulatePnlByDay(){
       b.driver = adp.dollars;
       b.driverSrc = 'ADP';
       b.hours = adp.hours;
+      /* Drop the EST $35 other plug only. Wear and Lopez/Prado $150 stay.
+         varCostOverride lumps are not in otherPlug, so they remain in other. */
+      b.other = stripAdpOtherPlug(b.other, b.otherPlug, true);
+      b.otherPlug = 0;
     } else {
       b.driverSrc = 'EST';
     }
@@ -8672,9 +8711,29 @@ function pnlSumRange(byDay, from, to){
   });
   const fpd = fixedCostPerDay();
   out.fixed = out.nDays * fpd;
-  out.net = out.cm - out.fixed;
+  const nets = pnlFinishLines(out);
+  out.net = nets.net;
+  out.opsNet = nets.opsNet;
+  out.opsCm = nets.opsCm;
   return out;
 }
+
+/* BEGIN PNL_BOARD */
+/* Ops net = revenue − driver wages − fuel − fixed (the number James means).
+   After wear / fully loaded = ops net − wear − remaining other − sub. */
+function pnlFinishLines(x){
+  const rev = Number(x && x.rev)||0;
+  const driver = Number(x && x.driver)||0;
+  const fuel = Number(x && x.fuel)||0;
+  const wearOther = Number(x && x.wearOther)||0;
+  const fixed = Number(x && x.fixed)||0;
+  const opsCm = rev - driver - fuel;
+  const opsNet = opsCm - fixed;
+  const cm = opsCm - wearOther;
+  const net = cm - fixed;
+  return { opsCm:opsCm, opsNet:opsNet, cm:cm, net:net };
+}
+/* END PNL_BOARD */
 
 function pnlWrapDay(b){
   b = b || emptyPnlDay();
@@ -8682,17 +8741,18 @@ function pnlWrapDay(b){
   const driver = Number(b.driver)||0;
   const fuel = Number(b.fuel)||0;
   const varCost = fuel + driver + wearOther;
-  const cm = (Number(b.rev)||0) - varCost;
   const fpd = fixedCostPerDay();
+  const nets = pnlFinishLines({ rev:b.rev, driver:driver, fuel:fuel, wearOther:wearOther, fixed:fpd });
   return {
     rev: Number(b.rev)||0, billed: Number(b.billed)||0, rateEst: Number(b.rateEst)||0,
-    fuel:fuel, driver:driver, wearOther:wearOther, varCost:varCost, cm:cm,
+    fuel:fuel, driver:driver, wearOther:wearOther, varCost:varCost,
+    cm:nets.cm, opsCm:nets.opsCm, opsNet:nets.opsNet,
     loads: Number(b.loads)||0, nDays:1,
     adpDays: b.driverSrc==='ADP' ? 1 : 0,
     estDriverDays: b.driverSrc==='ADP' ? 0 : 1,
     verizonFuelDays: b.fuelSrc==='Verizon' ? 1 : 0,
     office: Number(b.office)||0,
-    fixed: fpd, net: cm - fpd
+    fixed: fpd, net: nets.net
   };
 }
 
@@ -8770,15 +8830,18 @@ function pnlColHTML(title, sub, x, extraClass){
   const fuelC = pnlFuelChip(x);
   const wearC = { label:'EST', cls:'y' };
   const fixC = { label:'Pro-rata', cls:'b' };
+  const opsNet = (x.opsNet!=null && isFinite(Number(x.opsNet))) ? Number(x.opsNet) : ((Number(x.net)||0) + (Number(x.wearOther)||0));
+  const afterWear = Number(x.net)||0;
   return '<div class="pnl-col'+(extraClass?(' '+extraClass):'')+'">'
     + '<div class="pnl-col-h">'+esc(title)+'<b>'+esc(sub)+'</b></div>'
     + '<div class="pnl-row"><span class="pnl-lab">Revenue</span>'+pnlAmtHTML(x.rev, revC)+'</div>'
     + '<div class="pnl-row"><span class="pnl-lab">Driver wages</span>'+pnlAmtHTML(x.driver, drvC)+'</div>'
     + '<div class="pnl-row"><span class="pnl-lab">Fuel</span>'+pnlAmtHTML(x.fuel, fuelC)+'</div>'
-    + '<div class="pnl-row"><span class="pnl-lab">Wear / other</span>'+pnlAmtHTML(x.wearOther, wearC)+'</div>'
+    + '<div class="pnl-row"><span class="pnl-lab">Wear / other<span class="pnl-hint">shown · not in Ops net</span></span>'+pnlAmtHTML(x.wearOther, wearC)+'</div>'
     + '<div class="pnl-row tot"><span class="pnl-lab">Contribution</span>'+pnlAmtHTML(x.cm, null, {color:true, signed:true})+'</div>'
     + '<div class="pnl-row"><span class="pnl-lab">Fixed</span>'+pnlAmtHTML(x.fixed, fixC)+'</div>'
-    + '<div class="pnl-row tot net"><span class="pnl-lab">Net</span>'+pnlAmtHTML(x.net, null, {color:true, signed:true})+'</div>'
+    + '<div class="pnl-row tot net"><span class="pnl-lab">Ops net<span class="pnl-hint">rev − wages − fuel − fixed</span></span>'+pnlAmtHTML(opsNet, null, {color:true, signed:true})+'</div>'
+    + '<div class="pnl-row net-full"><span class="pnl-lab">After wear</span>'+pnlAmtHTML(afterWear, null, {color:true, signed:true})+'</div>'
     + '</div>';
 }
 
@@ -8797,7 +8860,10 @@ function pnlBoardHTML(dateISO){
     + '<div class="pnl-head"><div class="pnl-title">P&amp;L</div></div>'
     + '<p class="pnl-lede">Actual profit and loss for the day in view, plus week and month through today. '
     + 'Closed days use ADP field-driver dollars. Fuel uses Verizon fleet miles when we have them, otherwise the lane estimate. '
-    + 'Wear / other stays estimated. Office payroll is listed underneath — it is not inside load variable.'
+    + '<b>Ops net</b> is revenue minus driver wages, fuel, and fixed — that is the number to look at for the month. '
+    + '<b>After wear</b> still subtracts wear / other / sub-haul. Wear stays on the board so nothing is hidden. '
+    + 'On ADP days the $35 other plug is off (clocked pay already includes that time); EST days keep it. '
+    + 'Office payroll is listed underneath — it is not inside load variable.'
     + openNote+'</p>'
     + '<div class="pnl-cols">'
     + pnlColHTML('Day in view', dayLbl+todayMark, m.day)
@@ -13270,7 +13336,7 @@ function renderSet(){
       + nf('sHrsLoad','Hours / load', s.hoursPerLoad,'0.25','Total time on load. Drives the driver line.')
       + '</div><div class="fld fld2">'
       + nf('sSubYr','Subhauler $/yr', s.subhaulerPerYear,'1000','QBO 326. Booked as its own per-load line rather than folded into a rate you can influence.')
-      + nf('sOtherVar','Other / unallocated $/load', s.otherVariablePerLoad,'0.01','Residual reconciling the four modelled lines to the T12M actual per-load spend — driver non-productive paid time, tarps, wash, tow. Shown rather than buried.')
+      + nf('sOtherVar','Other / unallocated $/load', s.otherVariablePerLoad,'0.01','EST plug: driver non-productive paid time, tarps, wash, tow. On ADP days this drops to $0 so it does not stack on clocked field-driver dollars. Wear $/mile and the $150 sub fee are separate.')
       + '</div>';
     comps.forEach(c=>{
       h += '<div class="row"><div class="row-l"><div class="row-t">'+esc(c.label)+'</div>'
@@ -13631,9 +13697,9 @@ function renderSet(){
     const ap = state.adpPay || defaultAdpPay();
     const adpLoaded = !!(__adpRows && __adpRows.length && ap.dateMin);
     h += '<div class="card"><h2>ADP driver pay '
-      + '<span style="font-size:10px;color:var(--green);text-transform:none;letter-spacing:0">v2.1.34</span></h2>'
+      + '<span style="font-size:10px;color:var(--green);text-transform:none;letter-spacing:0">v2.1.35</span></h2>'
       + '<div class="hint" style="margin-bottom:12px">Drop the ADP Workforce Now <b>Employee Daily Totals</b> report on Today. '
-      + 'Then look at the <b>P&amp;L board on Today</b> — not this page — for revenue, driver wages, fuel, wear, fixed, and net. '
+      + 'Then look at the <b>P&amp;L board on Today</b> — not this page — for revenue, driver wages, fuel, wear, fixed, Ops net, and After wear. '
       + 'Field-driver dollars replace modelled driver wages on <b>closed days</b> and on MTD/WTD through yesterday. '
       + 'Today stays on the estimate until you re-drop after close — a 2pm pull is not the day P&amp;L. '
       + 'Office names stay off load cost. Pay rows live in IndexedDB on this phone — not in git, not in localStorage.</div>'
@@ -14915,6 +14981,11 @@ SHADOW_TIMELINE_TEXT['2026-07-28'] = "**PARTIAL DAY — Phase 2 diff loop stoppe
 
 /* ---- v2.0 DATA: Changelog (in-app version history) ---- */
 const SHADOW_CHANGELOG = [
+  { ver:'v2.1.35-ops-net', date:'2026-08-24', changes:[
+    'P&L board now shows two nets so James does not have to skip a line in his head: Ops net (headline) is revenue − driver wages − fuel − fixed; After wear is the fully-loaded number that still subtracts wear / other / sub-haul. Wear / other stays visible. Day, MTD, and WTD all get both',
+    'ADP days no longer add the $35 other/unallocated plug on top of field-driver dollars — that plug was non-productive paid time + tarps/wash/tow, and ADP already has REGULAR, OT, meals, sick, and vacation. Tarps and wash already sit in wear $/mile; there is no separate tarps/tow setting, so the residue is $0. Wear and the $150 Lopez/Prado sub fee stay. EST days (including open today) keep the $35 plug',
+    'Does not change diesel, MPG, Queue scoring, missing-rates, Worker, ADP parser, office exclusion, or which ADP pay codes count. Rent stays off. Pay files still never go in git'
+  ]},
   { ver:'v2.1.34-pnl-board', date:'2026-08-24', changes:[
     'Today now has a P&L board you can actually read — revenue, driver wages, fuel, wear/other, fixed, contribution, and net — for the day in view plus month-to-date (and week). Each line says ADP, Verizon, or EST. Not a trophy chip, not buried in Settings',
     'Closed-day driver wages still come from the ADP Employee Daily Totals drop (same rule as v2.1.33): today stays EST while open; MTD/WTD use ADP through yesterday. Dropping the August file moves closed-day wages and MTD net on this board',

@@ -82,7 +82,7 @@ const ctx = createContext(sandbox);
 runInContext(datePrelude + html.slice(start, end), ctx);
 
 const {
-  parseAdpDailyTotals, matchAdpPerson, applyAdpToModeled,
+  parseAdpDailyTotals, matchAdpPerson, applyAdpToModeled, stripAdpOtherPlug,
   looksLikeAdpAoa, mergeAdpRowsForRange, summarizeAdpRows,
   adpAppliesToDate, adpFileIsEndOfDay, adpFieldDriversForDate,
   rebuildAdpIndex, pnlDriverSource
@@ -194,9 +194,17 @@ assert.equal(looksLikeAdpAoa([['Date','Driver','Grower','FB','Commodity']]), fal
 
 {
   // Modelled: $400 var of which $144 is driver. ADP field $677.38 → var = 400-144+677.38
+  // No other-plug arg → same as v2.1.33/34 (other stays).
   const next = applyAdpToModeled(400, 144, 677.38);
   assert.equal(Math.round(next*100)/100, 933.38);
   assert.equal(applyAdpToModeled(400, 144, null), 400);
+  // v2.1.35: ADP days drop the EST other plug (~$35/load). Wear/sub are not in this swap.
+  const withPlug = applyAdpToModeled(400, 144, 677.38, 35);
+  assert.equal(Math.round(withPlug*100)/100, 898.38);
+  assert.equal(stripAdpOtherPlug(350, 350, true), 0, 'ADP day: other plug drops to 0');
+  assert.equal(stripAdpOtherPlug(350, 350, false), 350, 'EST day: other plug stays');
+  assert.equal(stripAdpOtherPlug(500, 350, true), 150, 'ADP day: keep override lump, drop plug only');
+  assert.equal(stripAdpOtherPlug(150, 0, true), 150, 'ADP day: Lopez/Prado $150 is not the other plug');
 }
 
 {
@@ -238,6 +246,26 @@ assert.equal(looksLikeAdpAoa([['Date','Driver','Grower','FB','Commodity']]), fal
   assert.equal(pnlDriverSource(20, 1), 'ADP+EST');
   assert.equal(pnlDriverSource(21, 0), 'ADP');
   assert.equal(pnlDriverSource(0, 21), 'EST');
+}
+
+{
+  /* v2.1.35 P&L nets: Ops = rev − wages − fuel − fixed; After wear still
+     subtracts wear/other/sub. James's live MTD (pre-plug-drop) screenshot. */
+  const pnlStart = html.indexOf('/* BEGIN PNL_BOARD */');
+  const pnlEnd = html.indexOf('/* END PNL_BOARD */');
+  assert.ok(pnlStart >= 0 && pnlEnd > pnlStart, 'PNL_BOARD markers missing from index.html');
+  const pnlSandbox = {};
+  runInContext(html.slice(pnlStart, pnlEnd), createContext(pnlSandbox));
+  const { pnlFinishLines } = pnlSandbox;
+  const mtd = pnlFinishLines({
+    rev: 343439.62, driver: 107054.54, fuel: 46737.27,
+    wearOther: 49106.18, fixed: 138186
+  });
+  assert.equal(Math.round(mtd.opsNet*100)/100, 51461.81, 'Ops net is James\'s ~$50k (wear omitted)');
+  assert.equal(Math.round(mtd.net*100)/100, 2355.63, 'After wear is the old single net');
+  assert.equal(Math.round((mtd.opsNet - mtd.net)*100)/100, 49106.18, 'gap is exactly wear/other');
+  const estDay = pnlFinishLines({ rev: 20217.68, driver: 5191.24, fuel: 1515.84, wearOther: 2877.23, fixed: 6008 });
+  assert.ok(estDay.opsNet > estDay.net, 'EST day still gets an Ops net above After wear');
 }
 
 console.log('adp-daily-totals.test.mjs: ok');
