@@ -11,7 +11,7 @@
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<meta name="app-version" content="2026-08-24-fct-calc-v2.1.32-queue-tomorrow-preloads">
+<meta name="app-version" content="2026-08-24-fct-calc-v2.1.33-adp-actuals">
 <title data-id="th-modified">FCT Load Profitability — French Camp Transport</title>
 <link rel="manifest" href='data:application/manifest+json,{"name":"FCT Load Profitability","short_name":"FCT Calc","start_url":".","display":"standalone","background_color":"%2312100e","theme_color":"%2312100e","icons":[{"src":"data:image/svg%2Bxml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 192 192%27%3E%3Crect width=%27192%27 height=%27192%27 fill=%27%2312100e%27/%3E%3Ctext x=%2796%27 y=%27124%27 font-size=%2772%27 font-family=%27sans-serif%27 font-weight=%27700%27 fill=%27%238fb590%27 text-anchor=%27middle%27%3EFCT%3C/text%3E%3C/svg%3E","sizes":"192x192","type":"image/svg+xml"}]}'>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -1384,7 +1384,7 @@
    still exposes the Import JSON box for future refreshes.
    ============================================================= */
 
-const APP_VERSION = '2026-08-24-fct-calc-v2.1.32-queue-tomorrow-preloads';
+const APP_VERSION = '2026-08-24-fct-calc-v2.1.33-adp-actuals';
 const STORAGE_KEY = 'fct-calc:state';
 const IDB_NAME = 'fct-calc-db';
 const IDB_STORE = 'kv';
@@ -1399,6 +1399,11 @@ const IDB_STORE = 'kv';
    future storage tier migration should be able to move state without also
    dragging rows along. */
 const IDB_ROWS_KEY = 'fct-calc:lastImportRows';
+/* v2.1.33: ADP Workforce Now Employee Daily Totals live under their own
+   IDB key — pay rows are large and must never ride in the localStorage
+   state blob. Re-import replaces that date range only; dispatch rows
+   (IDB_ROWS_KEY) are untouched. Pay data stays on-device. */
+const IDB_ADP_KEY = 'fct-calc:adpPayRows';
 
 /* =============================================================
    STORAGE HARDENING (pattern lifted from Lift Log)
@@ -1437,6 +1442,10 @@ function compactStateForStorage(s){
         rows: [], _rowsInIDB: true
       });
     }
+  }
+  /* v2.1.33: ADP pay rows never serialize into LS. Metadata only. */
+  if(s.adpPay && typeof s.adpPay === 'object'){
+    out.adpPay = Object.assign({}, defaultAdpPay(), s.adpPay, { rows:null, _rowsInIDB:true });
   }
   return out;
 }
@@ -1518,7 +1527,9 @@ function showStorageError(title,detail,opts){
   row.appendChild(ex); row.appendChild(dis); host.appendChild(row);
 }
 function copyAllData(){
-  const payload = { savedAt:new Date().toISOString(), appVersion:APP_VERSION, storageEnv:STORAGE_ENV, state:state };
+  /* Compact first so a "copy everything" dump never includes ADP pay rows. */
+  const payload = { savedAt:new Date().toISOString(), appVersion:APP_VERSION, storageEnv:STORAGE_ENV,
+                    state:compactStateForStorage(state) };
   const txt = JSON.stringify(payload,null,2);
   const done = ()=>toast('Copied — paste somewhere safe');
   if(navigator.clipboard&&navigator.clipboard.writeText){
@@ -3224,6 +3235,32 @@ function defaultDispatchOps(){
 function defaultVerizon(){
   return { days:{}, aliases:{} };
 }
+
+/* v2.1.33: ADP Employee Daily Totals metadata. The pay ROWS live in IDB
+   under IDB_ADP_KEY; this shell is what LS may hold (file name, range,
+   dollar totals). Never put rows here. */
+function defaultAdpPay(){
+  return {
+    fileName:'', importedAt:'', dateMin:'', dateMax:'',
+    fieldDollars:0, fieldHours:0, officeDollars:0, officeHours:0,
+    fieldPeople:0, officePeople:0, unmatchedPeople:0, payRows:0,
+    _rowsInIDB:false
+  };
+}
+function normalizeAdpPay(saved){
+  const out = defaultAdpPay();
+  if(!saved || typeof saved!=='object') return out;
+  ['fileName','importedAt','dateMin','dateMax'].forEach(k=>{
+    if(typeof saved[k]==='string') out[k] = saved[k];
+  });
+  ['fieldDollars','fieldHours','officeDollars','officeHours',
+   'fieldPeople','officePeople','unmatchedPeople','payRows'].forEach(k=>{
+    const n = Number(saved[k]);
+    if(isFinite(n) && n>=0) out[k] = n;
+  });
+  out._rowsInIDB = !!saved._rowsInIDB;
+  return out;
+}
 /* 2026-08-18 v2.1.0: live Verizon Reveal feed from fct-verizon Worker. Distinct
    from state.verizon (CSV timecard import). vehicles/drivers are arrays of
    objects direct from Verizon; lastSync is our fetch stamp; lastIngestedAt is
@@ -3702,6 +3739,7 @@ function defaultState(){
            customerLabels:defaultCustomerLabels(), rateTable:defaultRateTable(),
            diamondTiers:defaultDiamondTiers(), dispatchOps:defaultDispatchOps(),
            verizon:defaultVerizon(), verizonLive:defaultVerizonLive(),
+           adpPay:defaultAdpPay(),
            companyInfo:defaultCompanyInfo(), sms:defaultSmsConfig(),
            /* v2.1.29: operator-typed missing-lane rates. Empty on a fresh
               install; mergeLaneRateOverrides() unions a saved map on boot
@@ -3755,6 +3793,7 @@ function loadState(){
       // app is on estimates, which is exactly the v1.4 behaviour.
       state.verizon         = normalizeVerizon(p.verizon);
       state.verizonLive     = normalizeVerizonLive(p.verizonLive);
+      state.adpPay          = normalizeAdpPay(p.adpPay);
       /* v1.8 slots. Both absent on every pre-v1.8 save, which is the normal
          case on upgrade: contacts land from the shipped book with the
          operator's edits merged by key, and the SMS block lands empty, which
@@ -7060,6 +7099,401 @@ function matchDriver(raw){
   hit = roster.find(d=>{ const dt=norm(d.name).split(' '); return toks.some(t=>dt.indexOf(t)>=0); });
   return hit ? hit.name : '';
 }
+
+/* BEGIN ADP_ACTUALS */
+/* =============================================================
+   ADP WORKFORCE NOW — Employee Daily Totals (v2.1.33)
+   -------------------------------------------------------------
+   OLE .xls / xlsx, one sheet. Header noise, then a two-row header
+   (Last Name / First Name / Position ID, then Pay Date / Pay Code /
+   Hours / Dollars). Employee blocks: last + first + ZCT id, then
+   pay-date rows. Excel serial dates. Long pay-code names wrap onto
+   the next row (col Pay Code only, no date) — concatenate onto the
+   previous code. Meal / OT dollars are real pay; include them.
+
+   Field-driver dollars replace the modelled driver-wage line on
+   that date. Office names stay off load variable. Parser only —
+   never bake sample pay into source, never persist pay in
+   localStorage.
+   ============================================================= */
+
+function adpNormName(s){
+  return String(s||'').toUpperCase().replace(/[^A-Z ]/g,' ').replace(/\s+/g,' ').trim();
+}
+function adpCellText(v){
+  if(v==null || v==='') return '';
+  if(v instanceof Date) return '';
+  if(typeof v==='number' && isFinite(v)) return '';
+  return String(v).replace(/\s+/g,' ').trim();
+}
+function adpNum(v){
+  if(v==null || v==='') return 0;
+  if(typeof v==='number') return isFinite(v) ? v : 0;
+  const s = String(v).replace(/[$,()\s]/g,'').replace(/^[−–—-]/,'-');
+  const n = parseFloat(s);
+  return isFinite(n) ? n : 0;
+}
+
+/* Match ADP first+last to the field roster or the office roster.
+   Last-name uniqueness + first-token overlap so "Jose Saucedo" lands
+   on Jose Manuel Saucedo and "Villeda." lands on Orlando Villeda,
+   without Vincent Maimone stealing Joseph's surname. */
+function matchAdpPerson(first, last, rosters){
+  const drivers = (rosters && rosters.drivers) || (state.settings && state.settings.drivers) || [];
+  const office  = (rosters && rosters.office)  || (state.settings && state.settings.office)  || [];
+  const firstN = adpNormName(first);
+  const lastN  = adpNormName(last);
+  const full   = adpNormName((firstN+' '+lastN).trim());
+  if(!full) return { name:'', role:'unmatched', raw:(first+' '+last).trim() };
+
+  const exact = (list, role)=>{
+    const hit = list.find(p=>adpNormName(p.name)===full);
+    return hit ? { name:hit.name, role:role } : null;
+  };
+  let hit = exact(drivers,'field') || exact(office,'office');
+  if(hit) return hit;
+
+  const byLast = (list)=>{
+    if(!lastN) return [];
+    return list.filter(p=>{
+      const toks = adpNormName(p.name).split(' ').filter(Boolean);
+      return toks.indexOf(lastN)>=0 || toks[toks.length-1]===lastN;
+    });
+  };
+  const firstFits = (rosterName)=>{
+    if(!firstN) return true;
+    const toks = adpNormName(rosterName).split(' ');
+    if(toks.indexOf(firstN)>=0) return true;
+    /* "Jose" vs "Jose Manuel", "Juan" vs "Juan Manuel Jr Castillo" */
+    return toks.some(t=> t.indexOf(firstN)===0 || firstN.indexOf(t)===0);
+  };
+
+  const dLast = byLast(drivers);
+  if(dLast.length===1 && firstFits(dLast[0].name))
+    return { name:dLast[0].name, role:'field' };
+  if(dLast.length>1 && firstN){
+    const f = dLast.filter(p=>firstFits(p.name));
+    if(f.length===1) return { name:f[0].name, role:'field' };
+  }
+
+  const oLast = byLast(office);
+  if(oLast.length===1 && firstFits(oLast[0].name))
+    return { name:oLast[0].name, role:'office' };
+  if(oLast.length>1 && firstN){
+    const f = oLast.filter(p=>firstFits(p.name));
+    if(f.length===1) return { name:f[0].name, role:'office' };
+  }
+
+  /* Short-name / alias fallback through the dispatch matcher, but only
+     if the ADP last name actually appears on the roster hit — otherwise
+     "Maimone" would map Vincent onto Joseph. */
+  if(typeof matchDriver === 'function'){
+    const md = matchDriver(full) || matchDriver(lastN) || matchDriver((firstN+' '+lastN).trim());
+    if(md && lastN && adpNormName(md).split(' ').indexOf(lastN)>=0)
+      return { name:md, role:'field' };
+  }
+  return { name:'', role:'unmatched', raw:(String(first||'').trim()+' '+String(last||'').trim()).trim() };
+}
+
+function looksLikeAdpAoa(aoa){
+  if(!aoa || !aoa.length) return false;
+  const n = Math.min(45, aoa.length);
+  let blob = '';
+  let hasLast=false, hasPay=false, hasHours=false, hasDollars=false;
+  for(let i=0;i<n;i++){
+    const row = aoa[i]||[];
+    for(let c=0;c<row.length;c++){
+      const s = String(row[c]==null?'':row[c]).replace(/\s+/g,' ').trim();
+      if(!s) continue;
+      blob += s + '\n';
+      if(/^last\s*name$/i.test(s)) hasLast = true;
+      if(/^pay\s*code$/i.test(s)) hasPay = true;
+      if(/^hours?$/i.test(s)) hasHours = true;
+      if(/^dollars?$/i.test(s)) hasDollars = true;
+    }
+  }
+  if(/employee\s+daily\s+totals/i.test(blob)) return true;
+  return hasLast && hasPay && hasHours && hasDollars;
+}
+
+function findAdpColumns(aoa){
+  const fallback = { last:0, first:5, pos:6, date:0, code:5, hours:14, dollars:17, nameHeader:-1, payHeader:-1 };
+  if(!aoa || !aoa.length) return fallback;
+  const label = (v)=> String(v==null?'':v).replace(/\s+/g,' ').trim();
+  const idx = (row, re)=>{
+    for(let c=0;c<(row||[]).length;c++){ if(re.test(label(row[c]))) return c; }
+    return -1;
+  };
+  for(let i=0;i<Math.min(80, aoa.length);i++){
+    const row = aoa[i]||[];
+    const last = idx(row, /^last\s*name$/i);
+    if(last<0) continue;
+    const first = idx(row, /^first\s*name$/i);
+    const pos   = idx(row, /position\s*id/i);
+    for(let j=i;j<Math.min(i+5, aoa.length);j++){
+      const p = aoa[j]||[];
+      const code = idx(p, /^pay\s*code$/i);
+      const hrs  = idx(p, /^hours?$/i);
+      const dol  = idx(p, /^dollars?$/i);
+      const date = idx(p, /^pay\s*date$/i);
+      if(code>=0 && hrs>=0 && dol>=0){
+        return {
+          last:last, first: first>=0?first:fallback.first, pos: pos>=0?pos:fallback.pos,
+          date: date>=0?date:fallback.date, code:code, hours:hrs, dollars:dol,
+          nameHeader:i, payHeader:j
+        };
+      }
+    }
+  }
+  return fallback;
+}
+
+/* Day-level rule: replace modelled driver wages with ADP field-driver
+   dollars. Fuel / wear / sub-haul stay. Do not invent a $/hr from ADP. */
+function applyAdpToModeled(modeledVar, modeledDriver, adpDollars){
+  const v = Number(modeledVar)||0;
+  const d = Number(modeledDriver)||0;
+  if(adpDollars==null || !isFinite(Number(adpDollars))) return v;
+  return v - d + Number(adpDollars);
+}
+
+function parseAdpDailyTotals(aoa, opts){
+  opts = opts || {};
+  if(!aoa || !aoa.length) throw new Error('That ADP report is empty.');
+  const toDate = opts.parseDate || (typeof parseCellDate === 'function' ? parseCellDate : null);
+  if(!toDate) throw new Error('ADP parser is missing a date reader.');
+  const matchPerson = opts.matchPerson || matchAdpPerson;
+  const cols = opts.cols || findAdpColumns(aoa);
+  const start = Math.max(0, (cols.payHeader>=0 ? cols.payHeader+1 : (cols.nameHeader>=0 ? cols.nameHeader+1 : 0)));
+
+  const rows = [];
+  let cur = null;          // { last, first, pos, who }
+  let prevPay = null;
+  let skipped = 0;
+
+  const isHeaderish = (row)=>{
+    const a = adpCellText(row[cols.last]), b = adpCellText(row[cols.code]);
+    return /^last\s*name$/i.test(a) || /^pay\s*(date|code)$/i.test(a) || /^pay\s*code$/i.test(b)
+        || /employee\s+daily\s+totals/i.test(a+' '+b);
+  };
+
+  for(let i=start;i<aoa.length;i++){
+    const row = aoa[i]||[];
+    if(isHeaderish(row)){ prevPay = null; continue; }
+
+    const dateISO = toDate(row[cols.date]);
+    const lastTxt = adpCellText(row[cols.last]);
+    const firstTxt = adpCellText(row[cols.first]);
+    const posTxt = String(row[cols.pos]==null?'':row[cols.pos]).trim();
+    const codeTxt = adpCellText(row[cols.code]);
+    const hours = adpNum(row[cols.hours]);
+    const dollars = adpNum(row[cols.dollars]);
+
+    const filled = row.filter(c=>c!=null && String(c).trim()!=='').length;
+    if(!filled){ continue; }
+
+    /* Employee header: last name, not a date, usually a ZCT position id. */
+    const looksZct = /^ZCT/i.test(posTxt);
+    const lastIsName = lastTxt && !dateISO && !/^total/i.test(lastTxt) && !/^company/i.test(lastTxt);
+    if(lastIsName && (looksZct || firstTxt) && !/^pay\s/i.test(lastTxt)){
+      const who = matchPerson(firstTxt, lastTxt, opts.rosters);
+      cur = { last:lastTxt, first:firstTxt, pos:posTxt, who:who };
+      prevPay = null;
+      continue;
+    }
+
+    /* Wrapped pay-code continuation: no date, code text only, same employee. */
+    if(!dateISO && cur && prevPay && codeTxt && !lastTxt){
+      prevPay.payCode = (prevPay.payCode+' '+codeTxt).replace(/\s+/g,' ').trim();
+      if(hours) prevPay.hours += hours;
+      if(dollars) prevPay.dollars += dollars;
+      continue;
+    }
+
+    if(!dateISO){ skipped++; continue; }
+    if(!cur){ skipped++; continue; }
+
+    const rec = {
+      date: dateISO,
+      last: cur.last, first: cur.first, positionId: cur.pos,
+      payCode: codeTxt || '(blank)',
+      hours: hours, dollars: dollars,
+      rosterName: cur.who.name, role: cur.who.role,
+      company: /^ZCT/i.test(cur.pos) ? 'ZCT' : ''
+    };
+    rows.push(rec);
+    prevPay = rec;
+  }
+
+  if(!rows.length) throw new Error('No pay rows found — is this the ADP Employee Daily Totals report?');
+
+  const dates = {};
+  rows.forEach(r=>{ dates[r.date] = (dates[r.date]||0)+1; });
+  const dateList = Object.keys(dates).sort();
+  return {
+    kind:'adp',
+    rows:rows, dates:dateList, dateMin:dateList[0], dateMax:dateList[dateList.length-1],
+    skipped:skipped, cols:cols
+  };
+}
+
+function summarizeAdpRows(rows){
+  const fieldNames = {}, officeNames = {}, unmatchedNames = {};
+  let fieldDollars=0, fieldHours=0, officeDollars=0, officeHours=0;
+  (rows||[]).forEach(r=>{
+    if(r.role==='field'){
+      fieldDollars += Number(r.dollars)||0; fieldHours += Number(r.hours)||0;
+      if(r.rosterName) fieldNames[r.rosterName]=1;
+    } else if(r.role==='office'){
+      officeDollars += Number(r.dollars)||0; officeHours += Number(r.hours)||0;
+      if(r.rosterName) officeNames[r.rosterName]=1;
+    } else {
+      unmatchedNames[r.raw || ((r.first||'')+' '+(r.last||'')).trim() || '?']=1;
+    }
+  });
+  return {
+    fieldDollars:fieldDollars, fieldHours:fieldHours,
+    officeDollars:officeDollars, officeHours:officeHours,
+    fieldPeople:Object.keys(fieldNames).length,
+    officePeople:Object.keys(officeNames).length,
+    unmatchedPeople:Object.keys(unmatchedNames).length,
+    unmatchedNames:Object.keys(unmatchedNames).sort(),
+    payRows:(rows||[]).length
+  };
+}
+
+/* In-memory pay index. Not on `state` so save()/copyAllData cannot leak it. */
+let __adpRows = [];
+let __adpByDate = Object.create(null);
+
+function rebuildAdpIndex(rows){
+  __adpRows = Array.isArray(rows) ? rows.slice() : [];
+  __adpByDate = Object.create(null);
+  __adpRows.forEach(r=>{
+    if(!r || !r.date) return;
+    const d = __adpByDate[r.date] || (__adpByDate[r.date] = {
+      fieldDollars:0, fieldHours:0, officeDollars:0, officeHours:0,
+      fieldRowCount:0, officeRowCount:0, fieldNames:{}, officeNames:{}
+    });
+    const dol = Number(r.dollars)||0, hrs = Number(r.hours)||0;
+    if(r.role==='field'){
+      d.fieldDollars += dol; d.fieldHours += hrs; d.fieldRowCount++;
+      if(r.rosterName) d.fieldNames[r.rosterName]=1;
+    } else if(r.role==='office'){
+      d.officeDollars += dol; d.officeHours += hrs; d.officeRowCount++;
+      if(r.rosterName) d.officeNames[r.rosterName]=1;
+    }
+  });
+}
+
+function adpFieldDay(dateISO){
+  if(!dateISO) return null;
+  const d = __adpByDate[dateISO];
+  if(!d || !d.fieldRowCount) return null;
+  return {
+    date:dateISO,
+    dollars:d.fieldDollars, hours:d.fieldHours,
+    officeDollars:d.officeDollars, officeHours:d.officeHours,
+    driverCount:Object.keys(d.fieldNames).length,
+    officeCount:Object.keys(d.officeNames).length
+  };
+}
+
+function adpMetaFromRows(rows, fileName){
+  const sum = summarizeAdpRows(rows);
+  const dates = {};
+  (rows||[]).forEach(r=>{ if(r && r.date) dates[r.date]=1; });
+  const dateList = Object.keys(dates).sort();
+  return Object.assign(defaultAdpPay(), sum, {
+    fileName: fileName || (state.adpPay && state.adpPay.fileName) || '',
+    importedAt: new Date().toISOString(),
+    dateMin: dateList[0]||'', dateMax: dateList[dateList.length-1]||'',
+    _rowsInIDB: true
+  });
+}
+
+function saveAdpPay(){
+  const payload = {
+    fileName: (state.adpPay && state.adpPay.fileName) || '',
+    importedAt: (state.adpPay && state.adpPay.importedAt) || '',
+    rows: __adpRows
+  };
+  if(__adpRows.length){
+    idbPut(IDB_ADP_KEY, payload).catch(err=>{
+      showStorageError('IndexedDB ADP write failed',
+        'The ADP pay rows could not persist to IndexedDB: '
+        +String(err&&err.message||err)
+        +'. They are in memory for this tab only. Re-drop the Employee Daily Totals file after a reload.',
+        {severity:'warn'});
+    });
+  } else {
+    idbDel(IDB_ADP_KEY).catch(()=>{});
+  }
+  save();   // metadata only — compactStateForStorage strips any rows
+}
+
+function mergeAdpRowsForRange(existing, incoming, dateMin, dateMax){
+  const kept = (existing||[]).filter(r=> !r.date || r.date<dateMin || r.date>dateMax);
+  return kept.concat(incoming||[]);
+}
+
+function ingestAdpParse(parsed, fileName){
+  if(!parsed || !parsed.rows || !parsed.rows.length)
+    throw new Error('No pay rows found in that ADP report.');
+  const incoming = parsed.rows;
+  const dateMin = parsed.dateMin, dateMax = parsed.dateMax;
+  const merged = mergeAdpRowsForRange(__adpRows, incoming, dateMin, dateMax);
+  rebuildAdpIndex(merged);
+  state.adpPay = adpMetaFromRows(merged, fileName || parsed.fileName || 'adp.xls');
+  saveAdpPay();
+  return {
+    kind:'adp',
+    rows:incoming, mergedCount:merged.length,
+    dateMin:dateMin, dateMax:dateMax,
+    summary:summarizeAdpRows(incoming),
+    fileName: state.adpPay.fileName
+  };
+}
+
+async function hydrateAdpPay(){
+  try{
+    const stored = await idbGet(IDB_ADP_KEY);
+    const rows = stored && Array.isArray(stored.rows) ? stored.rows
+               : Array.isArray(stored) ? stored : [];
+    if(!rows.length) return false;
+    rebuildAdpIndex(rows);
+    const name = (stored && stored.fileName) || (state.adpPay && state.adpPay.fileName) || '';
+    state.adpPay = adpMetaFromRows(rows, name);
+    if(stored && stored.importedAt) state.adpPay.importedAt = stored.importedAt;
+    save();
+    return true;
+  } catch(_){
+    return false;
+  }
+}
+
+function applyAdpDayTotals(dateISO, T){
+  /* T: { loads, revenue, varCost, driverCost, hours, cm } — mutates in place.
+     Only swap when the day has loads; otherwise ADP would become a
+     no-revenue labor charge on an empty picker. */
+  const adp = adpFieldDay(dateISO);
+  T.adp = adp;
+  T.estVarCost = T.varCost;
+  T.estDriverCost = T.driverCost;
+  T.estHours = T.hours;
+  if(!adp || !(Number(T.loads)>0)){
+    T.varSource = 'EST';
+    return T;
+  }
+  T.varSource = 'ADP';
+  T.varCost = applyAdpToModeled(T.varCost, T.driverCost, adp.dollars);
+  T.driverCost = adp.dollars;
+  T.hours = adp.hours;
+  T.cm = T.revenue - T.varCost;
+  return T;
+}
+/* END ADP_ACTUALS */
+
 /* "PRELOADER / DELIVERY" — the delivery driver owns the on-clock hours. */
 function splitDriverCell(v){
   const s = String(v==null?'':v).trim();
@@ -7253,6 +7687,13 @@ function ingestWorkbook(arrayBuf, fileName){
     wb.SheetNames.forEach(n=>{
       sheets[n] = XLSX.utils.sheet_to_json(wb.Sheets[n], {header:1, raw:true, defval:''});
     });
+    /* v2.1.33: sniff ADP Employee Daily Totals before treating this as
+       a dispatch log. Same SheetJS path, different walker. */
+    const firstAoa = sheets[wb.SheetNames[0]] || [];
+    if(looksLikeAdpAoa(firstAoa)){
+      const parsed = parseAdpDailyTotals(firstAoa);
+      return ingestAdpParse(parsed, fileName);
+    }
     __wb = { fileName:fileName, sheetNames:wb.SheetNames, sheets:sheets };
     const di = state.dispatchImport;
     if(wb.SheetNames.indexOf(di.sheetName)<0) di.sheetName = wb.SheetNames[0];
@@ -7496,6 +7937,7 @@ function computeDayRow(r){
      track what the trucks actually drive on this lane in the last 7 days.
      Sub-hauls and override rows are exempt (they don't cost off miles). */
   const laneCal = laneCalibrationFactor(r.origin, r.deliveryPoint || r.destination);
+  let driverCost = 0;
   if(varOv>0){
     varCost = varOv;
   } else if(isSubHaul){
@@ -7504,14 +7946,19 @@ function computeDayRow(r){
     // v2.1.18: prefer lane-specific miles when we have them (accurate fuel + wear
     // per specific origin→destination). Falls back to tier miles otherwise.
     const rawLaneMi = laneMilesFor(r.origin, r.deliveryPoint || r.destination);
+    const driverOf = (comps)=> (comps.find(c=>c.k==='driver')||{amount:0}).amount;
     if(rawLaneMi > 0 && tierV){
       const calibratedMi = rawLaneMi * laneCal.factor;
-      varCost = variableComponents(calibratedMi, tierV.hours).reduce((a,c)=>a+c.amount, 0);
+      const comps = variableComponents(calibratedMi, tierV.hours);
+      varCost = comps.reduce((a,c)=>a+c.amount, 0);
+      driverCost = driverOf(comps);
     } else {
       // No lane match — fleet factor is the best we can do. Apply to the tier
       // model's implicit miles by scaling the variable output. Skip if factor=1.
-      const base = tierV ? tierVariable(tierV) : variableCostPerLoad();
-      varCost = (laneCal.source !== 'none') ? base * laneCal.factor : base;
+      const comps = variableComponents(tierV ? tierV.miles : null, tierV ? tierV.hours : null);
+      const scale = (laneCal.source !== 'none') ? laneCal.factor : 1;
+      varCost = comps.reduce((a,c)=>a+c.amount, 0) * scale;
+      driverCost = driverOf(comps) * scale;
     }
   }
 
@@ -7547,7 +7994,7 @@ function computeDayRow(r){
            tier: tierV? tierV.k : '',
            linehaul:linehaul, fsc:fsc, fscRule:rule, cardRevenue:cardRevenue,
            revenue:revenue, billed:billed>0, rateEst:rev.est, rateBasis:rev.basis,
-           varCost:varCost, varOverride:varOv>0, subHaul:isSubHaul,
+           varCost:varCost, driverCost:driverCost, varOverride:varOv>0, subHaul:isSubHaul,
            laneCal:laneCal,   // v2.1.21: {factor, source, laneKey, loadsInWindow?}
            cm:cm, cmPerHour: hours>0? cm/hours : 0, fixedAlloc:0, net:cm };
 }
@@ -7555,8 +8002,12 @@ function computeDay(){
   const s = state.settings, d = state.dayRollup;
   const rows = d.currentRows.map(computeDayRow);
   const act  = rows.filter(r=>r.active);
-  const T = { loads:act.length, revenue:0, varCost:0, cm:0, hours:0, cardRevenue:0 };
-  act.forEach(r=>{ T.revenue+=r.revenue; T.varCost+=r.varCost; T.cm+=r.cm; T.hours+=r.hours; T.cardRevenue+=r.cardRevenue; });
+  const T = { loads:act.length, revenue:0, varCost:0, cm:0, hours:0, cardRevenue:0, driverCost:0 };
+  act.forEach(r=>{ T.revenue+=r.revenue; T.varCost+=r.varCost; T.cm+=r.cm; T.hours+=r.hours; T.cardRevenue+=r.cardRevenue; T.driverCost+=(Number(r.driverCost)||0); });
+  /* v2.1.33: when ADP field-driver actuals cover this date, swap the
+     modelled driver-wage component for that day's ADP dollars. Fuel,
+     wear, and sub-haul stay. Hours on the day become ADP hours. */
+  applyAdpDayTotals(d.date, T);
   T.cmPerHour = T.hours>0 ? T.cm/T.hours : 0;
 
   /* ---- v1.5 actuals roll-up ----
@@ -7606,8 +8057,12 @@ function computeDay(){
 
   // Pro-rata by hours on load. If nobody logged hours, spread evenly so the
   // day verdict still means something instead of silently allocating zero.
+  // v2.1.33: after ADP swap, T.hours is clocked ADP hours — keep allocating
+  // the fixed nut off modelled load hours (estHours) so the row split still
+  // matches the loads.
+  const allocHrs = (T.estHours!=null) ? T.estHours : T.hours;
   act.forEach(r=>{
-    r.fixedAlloc = T.hours>0 ? fixedTotal*(r.hours/T.hours)
+    r.fixedAlloc = allocHrs>0 ? fixedTotal*(r.hours/allocHrs)
                  : (act.length? fixedTotal/act.length : 0);
     r.net = r.cm - r.fixedAlloc;
   });
@@ -7702,7 +8157,8 @@ function dayTotalsHTML(d){
   return '<div class="kpi-grid" style="margin-bottom:6px">'
     + '<div><div class="kpi sm">'+money(T.revenue)+'</div><div class="kpi-label">Total revenue</div></div>'
     + '<div><div class="kpi sm" style="color:'+(T.cm>=0?'var(--green)':'var(--red)')+'">'+money(T.cm)+'</div><div class="kpi-label">Contribution margin</div></div>'
-    + '<div><div class="kpi sm">'+num(T.hours,2)+'</div><div class="kpi-label">Total hours utilized</div></div>'
+    + '<div><div class="kpi sm">'+num(T.hours,2)+'</div><div class="kpi-label">'
+    + (T.varSource==='ADP' ? 'ADP hours (actual)' : 'Total hours utilized')+'</div></div>'
     + '<div><div class="kpi sm">'+money2(T.cmPerHour)+'</div><div class="kpi-label">Avg $/hr</div></div>'
     + '</div>'
     + line('Loads', T.loads+' row'+(T.loads===1?'':'s')+' with data', String(T.loads))
@@ -7710,9 +8166,14 @@ function dayTotalsHTML(d){
         + (d.inSeason ? ' — inside the Jun–Nov seasonal window' : ''),
         (d.mixHealthy?'<span class="chip g">healthy</span>':'<span class="chip y">skewing</span>'))
     + line('Total revenue', T.loads+' load'+(T.loads===1?'':'s')+' at bucket rates', money2(T.revenue))
-    + line('Total variable cost', T.loads+' × '+money(variableCostPerLoad())+'/load — fuel + driver + wear + subhauler + unallocated',
+    + line('Total variable cost', T.varSource==='ADP'
+        ? '<span class="chip g">ADP</span> field-driver '+money(T.driverCost)+' + modelled fuel/wear'
+          + (T.estDriverCost!=null ? ' (was '+money(T.estDriverCost)+' estimated driver)' : '')
+        : T.loads+' × '+money(variableCostPerLoad())+'/load — fuel + driver + wear + subhauler + unallocated',
         '−'+money2(T.varCost),'var(--red)')
-    + line('<b>Total contribution margin</b>', T.loads+' × '+money(contributionPerLoad())+'/load',
+    + line('<b>Total contribution margin</b>', T.varSource==='ADP'
+        ? 'revenue − variable with ADP driver wages'
+        : T.loads+' × '+money(contributionPerLoad())+'/load',
         '<b>'+money2(T.cm)+'</b>', T.cm>=0?'var(--green)':'var(--red)')
     + line('Day fixed cost', money(fixedStackAnnual())+'/yr ÷ '+operatingDays()+' operating days', '−'+money2(d.fixedTotal),'var(--red)')
     + line('<b>Day net</b>','after full fixed cost', '<b>'+money2(d.net)+'</b>', d.net>=0?'var(--green)':'var(--red)')
@@ -7720,8 +8181,15 @@ function dayTotalsHTML(d){
         d.breakeven.toFixed(1)+' loads/day')
     + line('Loads vs breakeven','', (T.loads-d.breakeven>=0?'+':'')+(T.loads-d.breakeven).toFixed(1),
         (T.loads-d.breakeven)>=0?'var(--green)':'var(--red)')
-    + line('Total hours utilized','across '+T.loads+' load'+(T.loads===1?'':'s'), num(T.hours,2)+' hr')
+    + line('Total hours utilized', T.varSource==='ADP'
+        ? 'ADP field-driver hours (modelled load hours were '+num(T.estHours,2)+')'
+        : 'across '+T.loads+' load'+(T.loads===1?'':'s'),
+        num(T.hours,2)+' hr')
     + line('Avg contribution $/hr','', money2(T.cmPerHour))
+    + (T.adp && T.adp.officeDollars
+        ? line('Office ADP (not in variable)', 'Kelly / Leah / Jeremy / Vince / Rene — office/fixed side',
+            money2(T.adp.officeDollars))
+        : '')
     /* v1.7 — the one thing this card would otherwise be silently wrong about.
        Everything above counts Section 1 only. Section 2 is on screen, is being
        worked this afternoon, and contributes nothing here; saying so costs one
@@ -7926,18 +8394,31 @@ function runningTotals(refDate){
   const monthStart = refDate.slice(0,8)+'01';
   const fpd = fixedCostPerDay(), be = breakevenLoadsPerDay();
   const agg = (from,to)=>{
-    const days = {};
-    let loads=0, rev=0, varc=0;
+    /* v2.1.33: group by day first so ADP dollars replace that day's
+       modelled driver wages, then sum. Do not blend ADP into a fake $/hr. */
+    const perDay = {};
     li.rows.forEach(r=>{
       if(!r.date || r.date<from || r.date>to) return;
       const c = computeDayRow(r);
       if(!c.active) return;
-      loads++; rev+=c.revenue; varc+=c.varCost; days[r.date]=1;
+      const d = perDay[r.date] || (perDay[r.date] = {loads:0, rev:0, varc:0, driver:0});
+      d.loads++; d.rev+=c.revenue; d.varc+=c.varCost; d.driver+=(Number(c.driverCost)||0);
     });
-    const nDays = Object.keys(days).length;
+    let loads=0, rev=0, varc=0, adpDays=0, estDays=0;
+    Object.keys(perDay).forEach(dt=>{
+      const d = perDay[dt];
+      const adp = adpFieldDay(dt);
+      let dayVar = d.varc;
+      if(adp){ dayVar = applyAdpToModeled(d.varc, d.driver, adp.dollars); adpDays++; }
+      else estDays++;
+      loads += d.loads; rev += d.rev; varc += dayVar;
+    });
+    const nDays = Object.keys(perDay).length;
     const cm = rev - varc;
     return { loads:loads, rev:rev, varc:varc, cm:cm, days:nDays,
-             fixed:nDays*fpd, net:cm-(nDays*fpd), beLoads:nDays*be };
+             fixed:nDays*fpd, net:cm-(nDays*fpd), beLoads:nDays*be,
+             adpDays:adpDays, estDays:estDays,
+             varSource: adpDays ? (estDays ? 'MIX' : 'ADP') : 'EST' };
   };
   return { week:agg(weekStart,refDate), month:agg(monthStart,refDate),
            weekStart:weekStart, monthStart:monthStart };
@@ -8261,6 +8742,12 @@ function sheetFootHTML(d){
          + '<td class="money" style="color:var(--red)">−'+money(A.varCost)+'</td>'
          + '<td class="money" style="color:'+(A.cm>=0?'var(--green)':'var(--red)')+'">'+money(A.cm)+'</td>' : '')
     + '</tr>';
+  if(T.varSource==='ADP'){
+    h += '<tr class="sheet-sub"><td class="c-time">ADP</td>'
+      + '<td colspan="'+(NC-1)+'">Driver wages in the TOTAL are ADP field-driver actuals ('
+      + money(T.driverCost)+' / '+num(T.hours,1)+' hr). Load rows still show the hours × $/hr estimate. '
+      + 'Office ADP is not in this number.</td></tr>';
+  }
   /* v1.5 — the variance line. Measured against the estimate for THE SAME rows,
      never against the whole day, so unmatched loads cannot masquerade as a
      saving. Over on cost is bad news, hence red on a positive number. */
@@ -8337,6 +8824,28 @@ function verizonPillHTML(dateISO){
   return '<span class="chip g" title="'+esc(day.fileName+' — '+day.legCount+' trip legs across '
     + day.driverCount+' drivers, clustered into round trips. '+n+' of '+tot+' loads matched.')
     + '" style="cursor:help">📡 Actuals '+n+'/'+tot+'</span>';
+}
+
+/* v2.1.33: ADP vs EST for driver wages on the day in view. */
+function adpPillHTML(dateISO){
+  const adp = adpFieldDay(dateISO);
+  const meta = state.adpPay || defaultAdpPay();
+  const loaded = !!(meta.dateMin && __adpRows.length);
+  if(adp){
+    return '<span class="chip g" title="'+esc('ADP field-driver actuals for this day: '
+      + money(adp.dollars)+' / '+num(adp.hours,1)+' hr across '+adp.driverCount+' driver'
+      +(adp.driverCount===1?'':'s')+'. Replaces modelled hours × loaded $/hr in variable cost. '
+      +(adp.officeDollars? ('Office ADP '+money(adp.officeDollars)+' is not in load cost. ') : '')
+      + 'File: '+(meta.fileName||'Employee Daily Totals')+'.')
+      + '" style="cursor:help">ADP '+money(adp.dollars)+'</span>';
+  }
+  if(loaded){
+    return '<span class="chip y" title="'+esc('ADP is loaded for '+meta.dateMin+' → '+meta.dateMax
+      + ', but this day has no field-driver pay rows. Driver wages stay on the hours × loaded $/hr estimate.')
+      + '" style="cursor:help">EST driver $</span>';
+  }
+  return '<span class="chip y" title="Driver wages are hours × loaded $/hr. Drop the ADP Employee Daily Totals report to replace them with real field-driver pay for that date."'
+    + ' style="cursor:help">EST driver $</span>';
 }
 
 /* The day rollup renders into the LANDING page, not the Calculator tab.
@@ -8540,9 +9049,12 @@ function landingStripHTML(){
   // is the authoritative number the day-tile at the top of the sheet also uses.
   const cm = dToday ? dToday.totals.cm : 0;
   const cmColor = cm > 0 ? 'g' : cm < 0 ? 'r' : '';
+  const cmAdp = dToday && dToday.totals.varSource==='ADP';
   const cmSub = revLoads
     ? revLoads + ' load' + (revLoads===1?'':'s') + ' · ' + money(dToday.totals.varCost) + ' var'
+      + (cmAdp ? ' · ADP' : ' · EST')
     : 'no active loads';
+  const cmLab = cmAdp ? "CONTRIBUTION · ADP" : "CONTRIBUTION · EST";
 
   const stampMs = v.fetchedAt ? Date.parse(v.fetchedAt) : 0;
   const stampAge = stampMs ? Math.max(0, Math.floor((Date.now()-stampMs)/60000)) : null;
@@ -8582,10 +9094,14 @@ function landingStripHTML(){
              clickable: calValid || !!lc.error })
     + tile(truckBig, 'TRUCKS REPORTING', truckSub,
            { drill: 'trucks', numClass: truckColor, title: truckTitle, id: 'lsTrucks' })
-    + tile(moneyResponsive(cm), "TODAY'S CONTRIBUTION", cmSub,
+    + tile(moneyResponsive(cm), cmLab, cmSub,
            { drill: 'contribution', id: 'lsCM', numClass: cmColor,
            title: dToday ? ('Revenue − variable cost across today\'s '
-             + dToday.totals.loads + ' active loads. Fixed nut ('
+             + dToday.totals.loads + ' active loads'
+             + (dToday.totals.varSource==='ADP'
+                ? ('. Driver wages from ADP '+money(dToday.totals.driverCost)+' / '+num(dToday.totals.hours,1)+' hr (field drivers). Modelled driver was '+money(dToday.totals.estDriverCost)+'.')
+                : '. Driver wages estimated (hours × loaded $/hr). Drop ADP Daily Totals to replace them.')
+             + ' Fixed nut ('
              + money(dToday.fixedTotal) + ') is applied at day-close; net so far = '
              + money(dToday.net) + '.') : '' })
     + '</div>'
@@ -9147,8 +9663,10 @@ function renderDayRollup(){
       h += '<div id="dispDrop" class="drop-zone" style="margin:0;padding:'+(src==='file'?'48px':'30px')+' 18px;font-size:16px">'
         + '📗 Drop dispatch xlsx or tap'
         + '<div style="font:400 11.5px/1.45 var(--body);color:var(--text-faint);margin-top:9px">'
-        + 'Add the Verizon Daily Timecard CSV — together or after — to price the day off actual miles and hours</div></div>'
+        + 'Verizon Daily Timecard CSV for actual miles, or ADP Employee Daily Totals (xls) for real driver pay</div></div>'
         + '<input type="file" id="dispFile" accept=".xlsx,.xlsm,.xls,.csv" multiple style="display:none">'
+        + '<button type="button" id="adpPick" style="all:unset;cursor:pointer;display:inline-block;margin-top:13px;margin-right:14px;'
+        + 'font:500 11px/1 var(--body);color:var(--text-faint);border-bottom:1px dotted var(--border-strong)">ADP pay</button>'
         + '<button type="button" id="dispOneDrive" style="all:unset;cursor:pointer;display:inline-block;margin-top:13px;'
         + 'font:500 11px/1 var(--body);color:var(--text-faint);border-bottom:1px dotted var(--border-strong)">Import from OneDrive</button>'
         + '<div id="oneDriveBox" style="display:none;margin-top:12px;text-align:left">'
@@ -9208,11 +9726,15 @@ function renderDayRollup(){
        whatever day is IN the picker — that IS the day the operator is looking
        at, and computeDay() reads state.dayRollup which is the picker's day. */
     const dToday = (typeof computeDay === 'function') ? computeDay() : null;
+    const daySrc = dToday && dToday.totals && dToday.totals.varSource;
     const dayTile = dToday ? '<span style="white-space:nowrap" title="'
       + esc('Day: '+dToday.totals.loads+' load'+(dToday.totals.loads===1?'':'s')
         + ', '+money(dToday.totals.revenue)+' revenue, '+money(dToday.totals.varCost)+' variable, '
         + money(dToday.totals.cm)+' contribution, '+money(dToday.fixedTotal)+' fixed → '
-        + money(dToday.net)+' net')+'">'
+        + money(dToday.net)+' net'
+        + (daySrc==='ADP' ? ('. Driver wages from ADP '+money(dToday.totals.driverCost)+' / '+num(dToday.totals.hours,1)+' hr.')
+                          : '. Driver wages estimated (hours × loaded $/hr).'))+'">'
+      + (daySrc==='ADP' ? '<span class="chip g">ADP</span> ' : '<span class="chip y">EST</span> ')
       + 'DAY <b class="num" style="color:'
       + (dToday.net>=0?'var(--green)':'var(--red)')+'">'
       + (dToday.net>=0?'+':'')+money(dToday.net)+'</b></span>' : '';
@@ -9227,10 +9749,21 @@ function renderDayRollup(){
         return d.toLocaleDateString('en-US',{month:'short',day:'numeric'});
       }catch(_){ return todayISO; }
     })();
-    const mini = (t,x,fullName)=> x ? '<span style="white-space:nowrap" title="'
-      + esc(fullName+'-to-date through today ('+todayHuman+'). Locked to today regardless of the day picker above.')+'">'
-      + t+' <b class="num" style="color:'
-      + (x.net>=0?'var(--green)':'var(--red)')+'">'+(x.net>=0?'+':'')+money(x.net)+'</b></span>' : '';
+    const mini = (t,x,fullName)=>{
+      if(!x) return '';
+      const mark = x.varSource==='ADP' ? '<span class="chip g">ADP</span> '
+                 : x.varSource==='MIX' ? '<span class="chip a">ADP+EST</span> '
+                 : '<span class="chip y">EST</span> ';
+      const why = x.varSource==='ADP'
+        ? ' Driver wages from ADP actuals on each day, then summed.'
+        : x.varSource==='MIX'
+          ? ' '+x.adpDays+' day'+(x.adpDays===1?'':'s')+' on ADP, '+x.estDays+' still estimated.'
+          : ' Driver wages still hours × loaded $/hr — drop the ADP Daily Totals file to replace them.';
+      return '<span style="white-space:nowrap" title="'
+        + esc(fullName+'-to-date through today ('+todayHuman+'). Locked to today regardless of the day picker above.'+why)+'">'
+        + mark + t+' <b class="num" style="color:'
+        + (x.net>=0?'var(--green)':'var(--red)')+'">'+(x.net>=0?'+':'')+money(x.net)+'</b></span>';
+    };
     h += '<div class="card" id="dispDrop" style="padding:10px 14px;margin-bottom:12px">'
       + '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">'
       + '<div style="display:flex;align-items:center;gap:7px;min-width:0">'
@@ -9243,6 +9776,7 @@ function renderDayRollup(){
       + (shown===todayISO?'<span class="chip g">TODAY</span>':'')
       + workerPillHTML()
       + verizonPillHTML(shown)
+      + adpPillHTML(shown)
       + '</div>'
       + '<div style="display:flex;align-items:center;gap:11px;font-size:11px;color:var(--text-muted);flex-wrap:wrap">'
       + dayTile + mini('WTD', rt&&rt.week, 'Week') + mini('MTD', rt&&rt.month, 'Month')
@@ -9259,10 +9793,13 @@ function renderDayRollup(){
             + 'padding:4px 8px;border-radius:4px;border:1px solid var(--border-strong);color:var(--text-muted);font-size:13px" title="Force full sync">⚡</button>'
           : '')
       + '<button type="button" id="dispPick" title="'
-      + (dataSource()==='worker' ? 'Import a file — the Verizon timecard CSV, or the dispatch xlsx by hand'
-                                 : 'Import from the dispatch xlsx or the Verizon timecard CSV')
+      + (dataSource()==='worker' ? 'Import a file — Verizon timecard CSV, dispatch xlsx, or ADP Daily Totals'
+                                 : 'Import dispatch xlsx, Verizon timecard CSV, or ADP Daily Totals')
       + '" style="all:unset;cursor:pointer;'
       + 'padding:4px 8px;border-radius:4px;border:1px solid var(--border-strong);color:var(--text-muted);font-size:13px">↻</button>'
+      + '<button type="button" id="adpPick" title="Import ADP Employee Daily Totals (field-driver pay). Replaces that date range; does not wipe dispatch."'
+      + ' style="all:unset;cursor:pointer;padding:4px 8px;border-radius:4px;border:1px solid var(--border-strong);'
+      + 'color:var(--text-muted);font:700 10px/1 var(--body);letter-spacing:.04em">ADP</button>'
       + '</div></div>'
       + '<input type="file" id="dispFile" accept=".xlsx,.xlsm,.xls,.csv" multiple style="display:none">'
       + '<div id="dispStatus" style="font-size:10px;color:var(--text-faint)"></div></div>';
@@ -9870,6 +10407,8 @@ function wireDayRollup(){
     // Empty state has no separate pick button — the drop zone is the button.
     const pickBtn = document.getElementById('dispPick');
     if(pickBtn) pickBtn.addEventListener('click',()=>fileEl.click());
+    const adpBtn = document.getElementById('adpPick');
+    if(adpBtn) adpBtn.addEventListener('click',e=>{ e.preventDefault(); e.stopPropagation(); fileEl.click(); });
     // v1.5: every file, not just the first — the picker is multiple now.
     fileEl.addEventListener('change',()=>{ handleDroppedFiles(fileEl.files); });
     const drop = document.getElementById('dispDrop');
@@ -10040,11 +10579,45 @@ function handleDroppedFiles(list){
       fr.onload = ()=>{
         const txt = String(fr.result||'');
         if(looksLikeVerizon(txt)) handleVerizonText(txt, f.name);
-        else handleDispatchFile(f);      // a dispatch log that happens to be CSV
+        else {
+          const aoa = (typeof parseCsv==='function') ? parseCsv(txt) : [];
+          if(aoa.length && looksLikeAdpAoa(aoa)){
+            try{
+              const parsed = parseAdpDailyTotals(aoa);
+              const res = ingestAdpParse(parsed, f.name);
+              renderDash();
+              toast('ADP '+res.dateMin+'–'+res.dateMax+' · field '+money((res.summary||{}).fieldDollars));
+              setDispStatus(adpImportStatusHTML(res));
+            }catch(e){
+              setDispStatus('<div class="hint" style="color:var(--red)">'+esc(String(e&&e.message||e))+'</div>');
+            }
+          } else handleDispatchFile(f);
+        }
       };
       fr.readAsText(f);
     } else handleDispatchFile(f);
   });
+}
+
+function adpImportStatusHTML(res){
+  const s = (res && res.summary) || summarizeAdpRows(__adpRows);
+  const a = state.adpPay || defaultAdpPay();
+  const range = (res && res.dateMin && res.dateMax) ? (res.dateMin+' → '+res.dateMax)
+              : (a.dateMin && a.dateMax ? (a.dateMin+' → '+a.dateMax) : '');
+  let msg = '<div class="hint">💵 <b>ADP pay</b> — '+esc(a.fileName||'Employee Daily Totals')
+    + (range ? ' · '+esc(range) : '')
+    + ' · field drivers '+money(s.fieldDollars)+' / '+num(s.fieldHours,1)+' hr'
+    + ' · office '+money(s.officeDollars)+' (not in load cost)';
+  if(s.unmatchedPeople){
+    msg += '<br><span style="color:var(--amber)">'+s.unmatchedPeople+' name'
+      +(s.unmatchedPeople===1?'':'s')+' not on the roster'
+      + (s.unmatchedNames && s.unmatchedNames.length
+          ? ': '+s.unmatchedNames.slice(0,4).map(esc).join(', ')+(s.unmatchedNames.length>4?'…':'')
+          : '')
+      + ' — those dollars were left out of driver actuals.</span>';
+  }
+  msg += ' Stored on this phone (IndexedDB), not in the dispatch file.</div>';
+  return msg;
 }
 
 function handleDispatchFile(file){
@@ -10055,6 +10628,13 @@ function handleDispatchFile(file){
   fr.onerror = ()=> setDispStatus('<div class="hint" style="color:var(--red)">Could not read that file.</div>');
   fr.onload = ()=>{
     ingestWorkbook(fr.result, file.name).then(res=>{
+      if(res && res.kind==='adp'){
+        renderDash();
+        const s = res.summary || {};
+        toast('ADP '+res.dateMin+'–'+res.dateMax+' · field '+money(s.fieldDollars));
+        setDispStatus(adpImportStatusHTML(res));
+        return;
+      }
       // Whole landing page — a new import moves the sheet AND the glance widgets.
       invalidateVerizonMatch();
       /* v1.6: a hand import makes the file the source of truth for what is on
@@ -11157,7 +11737,15 @@ function fetchDispatchUrl(url){
   setDispStatus('<div class="hint">Fetching…</div>');
   fetch(u).then(r=>{ if(!r.ok) throw new Error('HTTP '+r.status); return r.arrayBuffer(); })
     .then(buf=>ingestWorkbook(buf, url.split('/').pop().split('?')[0] || 'dispatch.xlsx'))
-    .then(res=>{ renderDash(); toast(res.rows.length+' loads · '+res.dates.length+' days'); })
+    .then(res=>{
+      if(res && res.kind==='adp'){
+        renderDash();
+        toast('ADP '+res.dateMin+'–'+res.dateMax+' · field '+money((res.summary||{}).fieldDollars));
+        setDispStatus(adpImportStatusHTML(res));
+        return;
+      }
+      renderDash(); toast(res.rows.length+' loads · '+res.dates.length+' days');
+    })
     .catch(e=>{
       setDispStatus('<div class="hint" style="color:var(--amber)">OneDrive would not hand the file over directly ('+esc(String(e&&e.message||e))+'). '
         + 'That is normal — OneDrive blocks cross-origin downloads. Open the link, choose <b>Download</b>, then drop the file on the box above.</div>');
@@ -12619,6 +13207,30 @@ function renderSet(){
       + '<div class="legend">Sync now forces a full re-parse. An automatic sync on load does not: if the worker\'s '
       + '<code>ingestedAt</code> matches what is already stored it leaves the parsed rows alone, so per-row overrides '
       + 'survive opening the app. A failed sync never clears what is on screen — it changes the pill and nothing else.</div></div>';
+
+    const ap = state.adpPay || defaultAdpPay();
+    const adpLoaded = !!(__adpRows && __adpRows.length && ap.dateMin);
+    h += '<div class="card"><h2>ADP driver pay '
+      + '<span style="font-size:10px;color:var(--green);text-transform:none;letter-spacing:0">v2.1.33</span></h2>'
+      + '<div class="hint" style="margin-bottom:12px">Drop the ADP Workforce Now <b>Employee Daily Totals</b> report on Today. '
+      + 'Field-driver dollars replace modelled driver wages on that date (and on MTD/WTD, day by day). '
+      + 'Office names stay off load cost. Pay rows live in IndexedDB on this phone — not in git, not in localStorage.</div>'
+      + '<div class="row"><div class="row-l"><div class="row-t">Loaded range</div>'
+      + '<div class="row-s">'+(adpLoaded ? esc(ap.fileName||'Employee Daily Totals')+' · '+esc(agoText(ap.importedAt)||'') : 'nothing imported yet — tap ADP on Today or drop the xls')+'</div></div>'
+      + '<div class="row-v" style="font-size:12px">'+(adpLoaded ? esc(ap.dateMin)+' → '+esc(ap.dateMax) : '—')+'</div></div>'
+      + '<div class="row"><div class="row-l"><div class="row-t">Field drivers</div>'
+      + '<div class="row-s">'+ (adpLoaded ? ap.fieldPeople+' people · '+num(ap.payRows)+' pay rows' : 'in load variable when a day is covered') +'</div></div>'
+      + '<div class="row-v" style="font-size:12px">'+(adpLoaded ? money(ap.fieldDollars) : '—')+'</div></div>'
+      + '<div class="row"><div class="row-l"><div class="row-t">Office / admin</div>'
+      + '<div class="row-s">not in per-load driver cost</div></div>'
+      + '<div class="row-v" style="font-size:12px">'+(adpLoaded ? money(ap.officeDollars) : '—')+'</div></div>'
+      + '<div class="btn-row" style="margin-top:12px">'
+      + '<button class="act" id="sAdpPick">ADP pay file</button>'
+      + (adpLoaded ? '<button class="act ghost" id="sAdpClear">Clear ADP</button>' : '')
+      + '</div>'
+      + '<input type="file" id="sAdpFile" accept=".xlsx,.xlsm,.xls,.csv" style="display:none">'
+      + '<div class="legend">Re-importing the same month replaces that date range and leaves the dispatch log alone. '
+      + 'Diesel, Queue scoring, missing-rates, and Worker settings are not touched.</div></div>';
   }
 
   /* --- Day rollup (v1.3) --- */
@@ -13128,6 +13740,21 @@ function renderSet(){
     });
     const syncEl = document.getElementById('sWorkerSync');
     if(syncEl) syncEl.addEventListener('click',()=>{ syncFromWorker({force:true}).then(()=>renderSet()); });
+    const sAdpPick = document.getElementById('sAdpPick');
+    const sAdpFile = document.getElementById('sAdpFile');
+    if(sAdpPick && sAdpFile){
+      sAdpPick.addEventListener('click',()=>sAdpFile.click());
+      sAdpFile.addEventListener('change',()=>{ handleDroppedFiles(sAdpFile.files); sAdpFile.value=''; });
+    }
+    const sAdpClear = document.getElementById('sAdpClear');
+    if(sAdpClear) sAdpClear.addEventListener('click',()=>{
+      if(!confirm('Clear ADP pay actuals on this phone? Dispatch stays. Days go back to estimated driver wages.')) return;
+      rebuildAdpIndex([]);
+      state.adpPay = defaultAdpPay();
+      idbDel(IDB_ADP_KEY).catch(()=>{});
+      save(); renderSet(); renderDash();
+      toast('ADP pay cleared');
+    });
   }
 
   /* --- v1.5 Verizon --- */
@@ -13434,6 +14061,12 @@ window.addEventListener('resize',closeSugPop);
       try { renderDash(); } catch(_){}
       try { renderQueue(); } catch(_){}
       try { renderHist(); } catch(_){}
+    }
+  });
+  hydrateAdpPay().then(function(hydrated){
+    if(hydrated){
+      try { renderDash(); } catch(_){}
+      try { renderSet(); } catch(_){}
     }
   });
 
@@ -13859,6 +14492,12 @@ SHADOW_TIMELINE_TEXT['2026-07-28'] = "**PARTIAL DAY — Phase 2 diff loop stoppe
 
 /* ---- v2.0 DATA: Changelog (in-app version history) ---- */
 const SHADOW_CHANGELOG = [
+  { ver:'v2.1.33-adp-actuals', date:'2026-08-24', changes:[
+    'Drop the ADP Workforce Now Employee Daily Totals report (xls/xlsx) on Today — same drop as dispatch / Verizon. Parser only; the pay file never goes into git',
+    'When that file covers a day, Today / DAY / contribution / variable use the real field-driver ADP dollars for that date instead of hours × loaded $/hr. Fuel, wear, and sub-haul fees stay on the model. Days with no ADP stay estimated, marked EST vs ADP',
+    'MTD and WTD do the same thing per day, then add — August MTD moves when August ADP is loaded. Office names (Kelly, Leah, Jeremy, Vince, Rene) stay off load cost; they are an office-pay total, not per-load driver cost',
+    'Pay rows persist in IndexedDB (not localStorage), keyed apart from dispatch. Re-import replaces that date range and does not wipe the dispatch log. Wrapped pay-code rows, Villeda., and Jose Saucedo match the roster. Does not change diesel, Queue scoring, missing-rates, PNG-for-scoring, or Worker canonical settings'
+  ]},
   { ver:'v2.1.32-queue-tomorrow-preloads', date:'2026-08-24', changes:[
     'Queue now surfaces tomorrow\'s pre-6am preloads the same way Today does — they were already on the sheet, but only at the bottom as a flat list, so they were easy to miss',
     'A chip under the open/assigned line says how many tomorrow preloads there are, how many still need a driver, and jumps to them. If none, it says why (trimmed import vs quiet night) instead of going silent',
