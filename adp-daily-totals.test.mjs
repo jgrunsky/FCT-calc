@@ -82,7 +82,7 @@ const ctx = createContext(sandbox);
 runInContext(datePrelude + html.slice(start, end), ctx);
 
 const {
-  parseAdpDailyTotals, matchAdpPerson, applyAdpToModeled,
+  parseAdpDailyTotals, matchAdpPerson, applyAdpToModeled, stripAdpOtherPlug,
   looksLikeAdpAoa, mergeAdpRowsForRange, summarizeAdpRows,
   adpAppliesToDate, adpFileIsEndOfDay, adpFieldDriversForDate,
   rebuildAdpIndex, pnlDriverSource
@@ -197,6 +197,13 @@ assert.equal(looksLikeAdpAoa([['Date','Driver','Grower','FB','Commodity']]), fal
   const next = applyAdpToModeled(400, 144, 677.38);
   assert.equal(Math.round(next*100)/100, 933.38);
   assert.equal(applyAdpToModeled(400, 144, null), 400);
+  // Leftover other plug still drops on ADP days (v2.1.36 default other is $0).
+  const withPlug = applyAdpToModeled(400, 144, 677.38, 35);
+  assert.equal(Math.round(withPlug*100)/100, 898.38);
+  assert.equal(stripAdpOtherPlug(350, 350, true), 0, 'ADP day: leftover other plug drops to 0');
+  assert.equal(stripAdpOtherPlug(0, 0, false), 0, 'EST day with settings other=0 stays 0');
+  assert.equal(stripAdpOtherPlug(500, 350, true), 150, 'ADP day: keep override lump, drop plug only');
+  assert.equal(stripAdpOtherPlug(150, 0, true), 150, 'ADP day: Lopez/Prado $150 is not the other plug');
 }
 
 {
@@ -238,6 +245,84 @@ assert.equal(looksLikeAdpAoa([['Date','Driver','Grower','FB','Commodity']]), fal
   assert.equal(pnlDriverSource(20, 1), 'ADP+EST');
   assert.equal(pnlDriverSource(21, 0), 'ADP');
   assert.equal(pnlDriverSource(0, 21), 'EST');
+}
+
+{
+  /* v2.1.35 P&L nets: Ops = rev − wages − fuel − fixed; After wear still
+     subtracts wear/other/sub. James's live MTD (pre-plug-drop) screenshot. */
+  const pnlStart = html.indexOf('/* BEGIN PNL_BOARD */');
+  const pnlEnd = html.indexOf('/* END PNL_BOARD */');
+  assert.ok(pnlStart >= 0 && pnlEnd > pnlStart, 'PNL_BOARD markers missing from index.html');
+  const pnlSandbox = {};
+  runInContext(html.slice(pnlStart, pnlEnd), createContext(pnlSandbox));
+  const { pnlFinishLines } = pnlSandbox;
+  const mtd = pnlFinishLines({
+    rev: 343439.62, driver: 107054.54, fuel: 46737.27,
+    wearOther: 49106.18, fixed: 138186
+  });
+  assert.equal(Math.round(mtd.opsNet*100)/100, 51461.81, 'Ops net is James\'s ~$50k (wear omitted)');
+  assert.equal(Math.round(mtd.net*100)/100, 2355.63, 'After wear is the old single net');
+  assert.equal(Math.round((mtd.opsNet - mtd.net)*100)/100, 49106.18, 'gap is exactly wear/other');
+  const estDay = pnlFinishLines({ rev: 20217.68, driver: 5191.24, fuel: 1515.84, wearOther: 2877.23, fixed: 6008 });
+  assert.ok(estDay.opsNet > estDay.net, 'EST day still gets an Ops net above After wear');
+}
+
+{
+  /* v2.1.39: wear is 313.2+3+4+9 tarps / 900k mi. 313.10 stays out.
+     Lease stays $470k (not the $171k parent). Tarps are not in other. */
+  assert.ok(/otherVariablePerLoad:\s*0\b/.test(html), 'default otherVariablePerLoad is 0');
+  assert.ok(/wearPerMile:\s*0\.498\b/.test(html), 'default wearPerMile is $0.498');
+  assert.ok(!/otherVariablePerLoad:\s*35/.test(html), 'shipped $35 other plug is gone');
+  const wearLine = (html.match(/wearPerMile:\s*0\.498,[^\n]*/) || [''])[0];
+  assert.ok(/313\.9 tarps/.test(wearLine), 'wear comment includes 313.9 tarps');
+  assert.ok(/16,272\.96/.test(html) && /1,601\.19/.test(html), 'tarp parts + repairs split is recorded');
+  assert.ok(!/wearPerMile:\s*0\.511/.test(html), '313.10 was not added to wear');
+  const wearAnnual = 0.498 * 900000;
+  assert.equal(wearAnnual, 448200);
+  const shop = 319811 + 75893 + 34787 + 17874;
+  assert.equal(shop, 448365);
+  assert.ok(Math.abs(wearAnnual - shop) < 300, '900k mi × $0.498 ≈ $448k shop+tarps');
+  assert.ok(/truckLease'[\s\S]{0,80}amount:470000/.test(html), 'lease stays $470k');
+  assert.ok(/Equity Lease \(LTO\) \$295,676\.85/.test(html), '313.8 includes Equity Lease, not parent-only $171k');
+  assert.ok(/amount:92922/.test(html), 'WC once at $92,922');
+}
+
+{
+  /* v2.1.37: WC once in the nut; legal/bonuses stay out. */
+  assert.ok(/k:'workersComp'/.test(html), 'workersComp line exists in the fixed stack');
+  assert.ok(/amount:92922/.test(html), 'WC is 2025 304.2 $92,922');
+  assert.ok(/amount:598000/.test(html), 'insurance stays non-WC $598k');
+  assert.ok(/excludeFromBaseline:true/.test(html), '2025 legal stays out of the recurring nut');
+  assert.ok(/otherMisc'[\s\S]{0,120}amount:\s*62000/.test(html), 'otherMisc not raised to absorb lawsuit legal');
+}
+
+{
+  /* v2.0.9 / v2.1.38: subhaulers only as used. $150 on Lopez/ / Prado/
+     slash rows. Not in other, not in the variableComponents pool, not
+     a per-load amortization of QBO 326. In-house Prado/Lopez are W-2. */
+  const subStart = html.indexOf('/* BEGIN SUBHAUL_AS_USED */');
+  const subEnd = html.indexOf('/* END SUBHAUL_AS_USED */');
+  assert.ok(subStart >= 0 && subEnd > subStart, 'SUBHAUL_AS_USED markers missing from index.html');
+  const subSandbox = {};
+  runInContext(html.slice(subStart, subEnd), createContext(subSandbox));
+  const { isSubHaulDriver, subHaulFeeForDriver } = subSandbox;
+  assert.equal(isSubHaulDriver('Lopez/Jose'), true);
+  assert.equal(isSubHaulDriver('Prado/Miguel'), true);
+  assert.equal(isSubHaulDriver('lopez/x'), true);
+  assert.equal(isSubHaulDriver('PRADO/Y'), true);
+  assert.equal(subHaulFeeForDriver('Lopez/Jose'), 150);
+  assert.equal(subHaulFeeForDriver('Prado/Miguel'), 150);
+  assert.equal(isSubHaulDriver('Carlos Prado'), false, 'in-house W-2 Carlos Prado is not a sub');
+  assert.equal(isSubHaulDriver('Rafael Lopez'), false, 'in-house W-2 Rafael Lopez is not a sub');
+  assert.equal(isSubHaulDriver('Lopez'), false, 'surname alone is not a sub');
+  assert.equal(isSubHaulDriver('Prado'), false);
+  assert.equal(subHaulFeeForDriver('Carlos Prado'), 0);
+  assert.equal(subHaulFeeForDriver('Rafael Lopez'), 0);
+  assert.equal(subHaulFeeForDriver(''), 0);
+  assert.ok(/k:'subhauler'[\s\S]{0,80}amount:\s*0/.test(html), 'pooled subhauler in variableComponents is 0');
+  assert.ok(/otherVariablePerLoad:\s*0\b/.test(html), 'other stays 0 — sub is not folded into other');
+  assert.ok(!/subhaulerPerYear\s*\/\s*loadsPerYear/.test(html), 'QBO 326 is not amortized per load in code');
+  assert.ok(/truckLease'[\s\S]{0,80}amount:470000/.test(html), 'lease amount unchanged');
 }
 
 console.log('adp-daily-totals.test.mjs: ok');
