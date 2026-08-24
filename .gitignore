@@ -1,0 +1,6 @@
+# Pay data — never commit ADP payroll exports
+*Daily Totals*
+*DailyTotals*
+*Employee Daily*
+*.adp.xls
+*.adp.xlsx
