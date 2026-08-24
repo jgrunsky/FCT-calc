@@ -44,8 +44,10 @@ function parseCellDate(v){
 function defaultAdpPay(){
   return { fileName:'', importedAt:'', dateMin:'', dateMax:'',
     fieldDollars:0, fieldHours:0, officeDollars:0, officeHours:0,
-    fieldPeople:0, officePeople:0, unmatchedPeople:0, payRows:0, _rowsInIDB:false };
+    fieldPeople:0, officePeople:0, unmatchedPeople:0, payRows:0,
+    openDate:'', endOfDay:false, _rowsInIDB:false };
 }
+function isoLocal(d){ return d.getFullYear()+'-'+p2(d.getMonth()+1)+'-'+p2(d.getDate()); }
 `;
 
 const rosters = {
@@ -81,7 +83,8 @@ runInContext(datePrelude + html.slice(start, end), ctx);
 
 const {
   parseAdpDailyTotals, matchAdpPerson, applyAdpToModeled,
-  looksLikeAdpAoa, mergeAdpRowsForRange, summarizeAdpRows
+  looksLikeAdpAoa, mergeAdpRowsForRange, summarizeAdpRows,
+  adpAppliesToDate, adpFileIsEndOfDay
 } = sandbox;
 
 function blank(n){ return Array(n).fill(''); }
@@ -202,6 +205,22 @@ assert.equal(looksLikeAdpAoa([['Date','Driver','Grower','FB','Commodity']]), fal
     '2026-08-01', '2026-08-31'
   );
   assert.deepEqual(kept.map(r=>r.date).sort(), ['2026-07-31','2026-08-01','2026-09-01']);
+}
+
+{
+  /* Closed-day gate: a 2pm pull must not become today's P&L, and must not
+     silently become "yesterday's actuals" overnight without a new import. */
+  assert.equal(adpAppliesToDate('2026-08-23', { openDate:'2026-08-24', endOfDay:false }), true);
+  assert.equal(adpAppliesToDate('2026-08-24', { openDate:'2026-08-24', endOfDay:false }), false);
+  assert.equal(adpAppliesToDate('2026-08-24', { openDate:'2026-08-24', endOfDay:true }), true,
+    're-drop after close may apply ADP to today');
+  assert.equal(adpAppliesToDate('2026-08-24', { openDate:'2026-08-25', endOfDay:false }), true,
+    'next-morning import: yesterday is closed');
+  assert.equal(adpAppliesToDate('2026-08-25', { openDate:'2026-08-25', endOfDay:false }), false);
+  assert.equal(adpFileIsEndOfDay('2026-08-24T14:00:00', '2026-08-24'), false,
+    '2pm local is not end of day');
+  assert.equal(adpFileIsEndOfDay('2026-08-24T20:00:00', '2026-08-24'), true,
+    '8pm local re-drop counts as end of day');
 }
 
 console.log('adp-daily-totals.test.mjs: ok');

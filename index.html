@@ -3244,13 +3244,17 @@ function defaultAdpPay(){
     fileName:'', importedAt:'', dateMin:'', dateMax:'',
     fieldDollars:0, fieldHours:0, officeDollars:0, officeHours:0,
     fieldPeople:0, officePeople:0, unmatchedPeople:0, payRows:0,
+    /* Local calendar day that was still in progress when this file was
+       dropped. That date stays EST (partial clock) until a later import
+       or an after-close re-drop. Closed days are date < openDate. */
+    openDate:'', endOfDay:false,
     _rowsInIDB:false
   };
 }
 function normalizeAdpPay(saved){
   const out = defaultAdpPay();
   if(!saved || typeof saved!=='object') return out;
-  ['fileName','importedAt','dateMin','dateMax'].forEach(k=>{
+  ['fileName','importedAt','dateMin','dateMax','openDate'].forEach(k=>{
     if(typeof saved[k]==='string') out[k] = saved[k];
   });
   ['fieldDollars','fieldHours','officeDollars','officeHours',
@@ -3258,6 +3262,7 @@ function normalizeAdpPay(saved){
     const n = Number(saved[k]);
     if(isFinite(n) && n>=0) out[k] = n;
   });
+  out.endOfDay = !!saved.endOfDay;
   out._rowsInIDB = !!saved._rowsInIDB;
   return out;
 }
@@ -7399,14 +7404,61 @@ function adpFieldDay(dateISO){
   };
 }
 
+/* v2.1.33 (James 2026-08-24): today is still in progress. An ADP Daily
+   Totals pull at 2pm is a partial clock, not the day's P&L. Apply ADP to
+   closed days (dates before the import's openDate) and to MTD/WTD through
+   yesterday. Today stays on modelled driver cost unless this import is
+   clearly an end-of-day re-drop (after ADP_TODAY_CLOSE_HOUR local).
+   Live API pull is out of scope — file import only. */
+const ADP_TODAY_CLOSE_HOUR = 20; // 8:00pm local
+
+function adpFileIsEndOfDay(importedAt, openDate, now){
+  if(!openDate) return false;
+  const t = importedAt ? new Date(importedAt) : (now || new Date());
+  if(isNaN(t.getTime())) return false;
+  const importDay = (typeof isoLocal==='function')
+    ? isoLocal(t)
+    : (t.getFullYear()+'-'+p2(t.getMonth()+1)+'-'+p2(t.getDate()));
+  if(importDay > openDate) return true;
+  if(importDay === openDate)
+    return (t.getHours()*60 + t.getMinutes()) >= ADP_TODAY_CLOSE_HOUR*60;
+  return false;
+}
+
+/* Pure gate so tests can pass openDate / endOfDay without the live clock.
+   A date applies when it was already closed at import (date < openDate),
+   or it is the in-progress day and the file is an after-close re-drop. */
+function adpAppliesToDate(dateISO, opts){
+  opts = opts || {};
+  if(!dateISO) return false;
+  const meta = opts.meta || (typeof state!=='undefined' && state.adpPay) || {};
+  const openDate = opts.openDate || meta.openDate || '';
+  const endOfDay = (opts.endOfDay!=null) ? !!opts.endOfDay : !!meta.endOfDay;
+  if(!openDate){
+    /* No stamp (legacy in-memory): treat local today as open. */
+    const today = opts.todayISO || (typeof isoLocal==='function' ? isoLocal(opts.now || new Date()) : '');
+    if(!today) return false;
+    if(dateISO < today) return true;
+    if(dateISO > today) return false;
+    return adpFileIsEndOfDay(meta.importedAt, today, opts.now);
+  }
+  if(dateISO < openDate) return true;
+  if(dateISO > openDate) return false;
+  return endOfDay;
+}
+
 function adpMetaFromRows(rows, fileName){
   const sum = summarizeAdpRows(rows);
   const dates = {};
   (rows||[]).forEach(r=>{ if(r && r.date) dates[r.date]=1; });
   const dateList = Object.keys(dates).sort();
+  const importedAt = new Date().toISOString();
+  const openDate = (typeof isoLocal==='function') ? isoLocal(new Date()) : importedAt.slice(0,10);
   return Object.assign(defaultAdpPay(), sum, {
     fileName: fileName || (state.adpPay && state.adpPay.fileName) || '',
-    importedAt: new Date().toISOString(),
+    importedAt: importedAt,
+    openDate: openDate,
+    endOfDay: adpFileIsEndOfDay(importedAt, openDate),
     dateMin: dateList[0]||'', dateMax: dateList[dateList.length-1]||'',
     _rowsInIDB: true
   });
@@ -7416,6 +7468,8 @@ function saveAdpPay(){
   const payload = {
     fileName: (state.adpPay && state.adpPay.fileName) || '',
     importedAt: (state.adpPay && state.adpPay.importedAt) || '',
+    openDate: (state.adpPay && state.adpPay.openDate) || '',
+    endOfDay: !!(state.adpPay && state.adpPay.endOfDay),
     rows: __adpRows
   };
   if(__adpRows.length){
@@ -7465,6 +7519,14 @@ async function hydrateAdpPay(){
     const name = (stored && stored.fileName) || (state.adpPay && state.adpPay.fileName) || '';
     state.adpPay = adpMetaFromRows(rows, name);
     if(stored && stored.importedAt) state.adpPay.importedAt = stored.importedAt;
+    if(stored && stored.openDate){
+      state.adpPay.openDate = stored.openDate;
+    } else if(stored && stored.importedAt){
+      const t = new Date(stored.importedAt);
+      if(!isNaN(t.getTime()) && typeof isoLocal==='function') state.adpPay.openDate = isoLocal(t);
+    }
+    if(stored && stored.endOfDay!=null) state.adpPay.endOfDay = !!stored.endOfDay;
+    else state.adpPay.endOfDay = adpFileIsEndOfDay(state.adpPay.importedAt, state.adpPay.openDate);
     save();
     return true;
   } catch(_){
@@ -7475,13 +7537,15 @@ async function hydrateAdpPay(){
 function applyAdpDayTotals(dateISO, T){
   /* T: { loads, revenue, varCost, driverCost, hours, cm } — mutates in place.
      Only swap when the day has loads; otherwise ADP would become a
-     no-revenue labor charge on an empty picker. */
+     no-revenue labor charge on an empty picker. Today (openDate) stays
+     on the model unless this file was an after-close re-drop. */
   const adp = adpFieldDay(dateISO);
   T.adp = adp;
   T.estVarCost = T.varCost;
   T.estDriverCost = T.driverCost;
   T.estHours = T.hours;
-  if(!adp || !(Number(T.loads)>0)){
+  T.adpHeld = !!(adp && !adpAppliesToDate(dateISO));
+  if(!adp || !(Number(T.loads)>0) || !adpAppliesToDate(dateISO)){
     T.varSource = 'EST';
     return T;
   }
@@ -8004,9 +8068,10 @@ function computeDay(){
   const act  = rows.filter(r=>r.active);
   const T = { loads:act.length, revenue:0, varCost:0, cm:0, hours:0, cardRevenue:0, driverCost:0 };
   act.forEach(r=>{ T.revenue+=r.revenue; T.varCost+=r.varCost; T.cm+=r.cm; T.hours+=r.hours; T.cardRevenue+=r.cardRevenue; T.driverCost+=(Number(r.driverCost)||0); });
-  /* v2.1.33: when ADP field-driver actuals cover this date, swap the
+  /* v2.1.33: when ADP field-driver actuals cover a CLOSED date, swap the
      modelled driver-wage component for that day's ADP dollars. Fuel,
-     wear, and sub-haul stay. Hours on the day become ADP hours. */
+     wear, and sub-haul stay. Today stays on the model unless the file
+     was re-dropped after close. Hours on a closed day become ADP hours. */
   applyAdpDayTotals(d.date, T);
   T.cmPerHour = T.hours>0 ? T.cm/T.hours : 0;
 
@@ -8186,7 +8251,7 @@ function dayTotalsHTML(d){
         : 'across '+T.loads+' load'+(T.loads===1?'':'s'),
         num(T.hours,2)+' hr')
     + line('Avg contribution $/hr','', money2(T.cmPerHour))
-    + (T.adp && T.adp.officeDollars
+    + (T.varSource==='ADP' && T.adp && T.adp.officeDollars
         ? line('Office ADP (not in variable)', 'Kelly / Leah / Jeremy / Vince / Rene — office/fixed side',
             money2(T.adp.officeDollars))
         : '')
@@ -8409,7 +8474,7 @@ function runningTotals(refDate){
       const d = perDay[dt];
       const adp = adpFieldDay(dt);
       let dayVar = d.varc;
-      if(adp){ dayVar = applyAdpToModeled(d.varc, d.driver, adp.dollars); adpDays++; }
+      if(adp && adpAppliesToDate(dt)){ dayVar = applyAdpToModeled(d.varc, d.driver, adp.dollars); adpDays++; }
       else estDays++;
       loads += d.loads; rev += d.rev; varc += dayVar;
     });
@@ -8831,20 +8896,25 @@ function adpPillHTML(dateISO){
   const adp = adpFieldDay(dateISO);
   const meta = state.adpPay || defaultAdpPay();
   const loaded = !!(meta.dateMin && __adpRows.length);
-  if(adp){
-    return '<span class="chip g" title="'+esc('ADP field-driver actuals for this day: '
+  const applies = !!(adp && adpAppliesToDate(dateISO));
+  if(applies){
+    return '<span class="chip g" title="'+esc('ADP field-driver actuals for this closed day: '
       + money(adp.dollars)+' / '+num(adp.hours,1)+' hr across '+adp.driverCount+' driver'
       +(adp.driverCount===1?'':'s')+'. Replaces modelled hours × loaded $/hr in variable cost. '
       +(adp.officeDollars? ('Office ADP '+money(adp.officeDollars)+' is not in load cost. ') : '')
       + 'File: '+(meta.fileName||'Employee Daily Totals')+'.')
       + '" style="cursor:help">ADP '+money(adp.dollars)+'</span>';
   }
+  if(adp && !applies){
+    return '<span class="chip y" title="'+esc('Today is still in progress. This ADP file was dropped while the day was open, so those clocked rows are a partial day — not the P&L. Closed days and MTD/WTD through yesterday use ADP. Re-drop after close (after '+ADP_TODAY_CLOSE_HOUR+':00) to use ADP for today.')
+      + '" style="cursor:help">EST · day open</span>';
+  }
   if(loaded){
     return '<span class="chip y" title="'+esc('ADP is loaded for '+meta.dateMin+' → '+meta.dateMax
       + ', but this day has no field-driver pay rows. Driver wages stay on the hours × loaded $/hr estimate.')
       + '" style="cursor:help">EST driver $</span>';
   }
-  return '<span class="chip y" title="Driver wages are hours × loaded $/hr. Drop the ADP Employee Daily Totals report to replace them with real field-driver pay for that date."'
+  return '<span class="chip y" title="Driver wages are hours × loaded $/hr. Drop the ADP Employee Daily Totals report to replace them with real field-driver pay on closed days."'
     + ' style="cursor:help">EST driver $</span>';
 }
 
@@ -9100,7 +9170,9 @@ function landingStripHTML(){
              + dToday.totals.loads + ' active loads'
              + (dToday.totals.varSource==='ADP'
                 ? ('. Driver wages from ADP '+money(dToday.totals.driverCost)+' / '+num(dToday.totals.hours,1)+' hr (field drivers). Modelled driver was '+money(dToday.totals.estDriverCost)+'.')
-                : '. Driver wages estimated (hours × loaded $/hr). Drop ADP Daily Totals to replace them.')
+                : dToday.totals.adpHeld
+                  ? '. Today is still open — ADP on file is a partial clock, not the P&L. Driver wages stay hours × loaded $/hr. Re-drop after close to use ADP for today.'
+                  : '. Driver wages estimated (hours × loaded $/hr). Drop ADP Daily Totals to replace closed days.')
              + ' Fixed nut ('
              + money(dToday.fixedTotal) + ') is applied at day-close; net so far = '
              + money(dToday.net) + '.') : '' })
@@ -9663,7 +9735,7 @@ function renderDayRollup(){
       h += '<div id="dispDrop" class="drop-zone" style="margin:0;padding:'+(src==='file'?'48px':'30px')+' 18px;font-size:16px">'
         + '📗 Drop dispatch xlsx or tap'
         + '<div style="font:400 11.5px/1.45 var(--body);color:var(--text-faint);margin-top:9px">'
-        + 'Verizon Daily Timecard CSV for actual miles, or ADP Employee Daily Totals (xls) for real driver pay</div></div>'
+        + 'Verizon Daily Timecard CSV for actual miles, or ADP Employee Daily Totals (xls) for closed-day driver pay</div></div>'
         + '<input type="file" id="dispFile" accept=".xlsx,.xlsm,.xls,.csv" multiple style="display:none">'
         + '<button type="button" id="adpPick" style="all:unset;cursor:pointer;display:inline-block;margin-top:13px;margin-right:14px;'
         + 'font:500 11px/1 var(--body);color:var(--text-faint);border-bottom:1px dotted var(--border-strong)">ADP pay</button>'
@@ -9755,10 +9827,10 @@ function renderDayRollup(){
                  : x.varSource==='MIX' ? '<span class="chip a">ADP+EST</span> '
                  : '<span class="chip y">EST</span> ';
       const why = x.varSource==='ADP'
-        ? ' Driver wages from ADP actuals on each day, then summed.'
+        ? ' Driver wages from ADP actuals on each closed day, then summed.'
         : x.varSource==='MIX'
-          ? ' '+x.adpDays+' day'+(x.adpDays===1?'':'s')+' on ADP, '+x.estDays+' still estimated.'
-          : ' Driver wages still hours × loaded $/hr — drop the ADP Daily Totals file to replace them.';
+          ? ' '+x.adpDays+' closed day'+(x.adpDays===1?'':'s')+' on ADP; '+x.estDays+' estimated (today stays EST until you re-drop after close).'
+          : ' Driver wages still hours × loaded $/hr — drop the ADP Daily Totals file to replace closed days.';
       return '<span style="white-space:nowrap" title="'
         + esc(fullName+'-to-date through today ('+todayHuman+'). Locked to today regardless of the day picker above.'+why)+'">'
         + mark + t+' <b class="num" style="color:'
@@ -10616,7 +10688,8 @@ function adpImportStatusHTML(res){
           : '')
       + ' — those dollars were left out of driver actuals.</span>';
   }
-  msg += ' Stored on this phone (IndexedDB), not in the dispatch file.</div>';
+  msg += '. Closed days use ADP; today stays estimated until you re-drop after close.'
+    + ' Stored on this phone (IndexedDB), not in the dispatch file.</div>';
   return msg;
 }
 
@@ -13213,7 +13286,8 @@ function renderSet(){
     h += '<div class="card"><h2>ADP driver pay '
       + '<span style="font-size:10px;color:var(--green);text-transform:none;letter-spacing:0">v2.1.33</span></h2>'
       + '<div class="hint" style="margin-bottom:12px">Drop the ADP Workforce Now <b>Employee Daily Totals</b> report on Today. '
-      + 'Field-driver dollars replace modelled driver wages on that date (and on MTD/WTD, day by day). '
+      + 'Field-driver dollars replace modelled driver wages on <b>closed days</b> and on MTD/WTD through yesterday. '
+      + 'Today stays on the estimate until you re-drop after close — a 2pm pull is not the day P&amp;L. '
       + 'Office names stay off load cost. Pay rows live in IndexedDB on this phone — not in git, not in localStorage.</div>'
       + '<div class="row"><div class="row-l"><div class="row-t">Loaded range</div>'
       + '<div class="row-s">'+(adpLoaded ? esc(ap.fileName||'Employee Daily Totals')+' · '+esc(agoText(ap.importedAt)||'') : 'nothing imported yet — tap ADP on Today or drop the xls')+'</div></div>'
@@ -13229,7 +13303,8 @@ function renderSet(){
       + (adpLoaded ? '<button class="act ghost" id="sAdpClear">Clear ADP</button>' : '')
       + '</div>'
       + '<input type="file" id="sAdpFile" accept=".xlsx,.xlsm,.xls,.csv" style="display:none">'
-      + '<div class="legend">Re-importing the same month replaces that date range and leaves the dispatch log alone. '
+      + '<div class="legend">Closed days use ADP; today stays estimated unless you re-drop after close ('+ADP_TODAY_CLOSE_HOUR+':00). '
+      + 'Re-importing the same month replaces that date range and leaves the dispatch log alone. '
       + 'Diesel, Queue scoring, missing-rates, and Worker settings are not touched.</div></div>';
   }
 
@@ -14494,9 +14569,9 @@ SHADOW_TIMELINE_TEXT['2026-07-28'] = "**PARTIAL DAY — Phase 2 diff loop stoppe
 const SHADOW_CHANGELOG = [
   { ver:'v2.1.33-adp-actuals', date:'2026-08-24', changes:[
     'Drop the ADP Workforce Now Employee Daily Totals report (xls/xlsx) on Today — same drop as dispatch / Verizon. Parser only; the pay file never goes into git',
-    'When that file covers a day, Today / DAY / contribution / variable use the real field-driver ADP dollars for that date instead of hours × loaded $/hr. Fuel, wear, and sub-haul fees stay on the model. Days with no ADP stay estimated, marked EST vs ADP',
-    'MTD and WTD do the same thing per day, then add — August MTD moves when August ADP is loaded. Office names (Kelly, Leah, Jeremy, Vince, Rene) stay off load cost; they are an office-pay total, not per-load driver cost',
-    'Pay rows persist in IndexedDB (not localStorage), keyed apart from dispatch. Re-import replaces that date range and does not wipe the dispatch log. Wrapped pay-code rows, Villeda., and Jose Saucedo match the roster. Does not change diesel, Queue scoring, missing-rates, PNG-for-scoring, or Worker canonical settings'
+    'Today is still in progress: a 2pm ADP pull is a partial clock, not the day P&L. Closed days (and MTD/WTD through yesterday) use field-driver ADP dollars. Today stays on hours × loaded $/hr (EST) unless you re-drop after close (after 8pm). Fuel, wear, and sub-haul stay on the model',
+    'MTD and WTD apply ADP per closed day, then add — August MTD moves when August ADP is loaded, without baking a partial today into the month. Office names (Kelly, Leah, Jeremy, Vince, Rene) stay off load cost',
+    'Pay rows persist in IndexedDB (not localStorage), keyed apart from dispatch. Re-import replaces that date range and does not wipe the dispatch log. Wrapped pay-code rows, Villeda., and Jose Saucedo match the roster. File import only — no live ADP API. Does not change diesel, Queue scoring, missing-rates, PNG-for-scoring, or Worker canonical settings'
   ]},
   { ver:'v2.1.32-queue-tomorrow-preloads', date:'2026-08-24', changes:[
     'Queue now surfaces tomorrow\'s pre-6am preloads the same way Today does — they were already on the sheet, but only at the bottom as a flat list, so they were easy to miss',
