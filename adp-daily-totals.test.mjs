@@ -84,7 +84,8 @@ runInContext(datePrelude + html.slice(start, end), ctx);
 const {
   parseAdpDailyTotals, matchAdpPerson, applyAdpToModeled,
   looksLikeAdpAoa, mergeAdpRowsForRange, summarizeAdpRows,
-  adpAppliesToDate, adpFileIsEndOfDay
+  adpAppliesToDate, adpFileIsEndOfDay, adpFieldDriversForDate,
+  rebuildAdpIndex, pnlDriverSource
 } = sandbox;
 
 function blank(n){ return Array(n).fill(''); }
@@ -221,6 +222,22 @@ assert.equal(looksLikeAdpAoa([['Date','Driver','Grower','FB','Commodity']]), fal
     '2pm local is not end of day');
   assert.equal(adpFileIsEndOfDay('2026-08-24T20:00:00', '2026-08-24'), true,
     '8pm local re-drop counts as end of day');
+}
+
+{
+  /* P&L board helpers: by-driver rollup (not pay-code rows) + mixed source chip. */
+  const parsed = parseAdpDailyTotals(fixture, { rosters:rosters, matchPerson: matchAdpPerson });
+  rebuildAdpIndex(parsed.rows);
+  const day1 = adpFieldDriversForDate('2026-08-01', parsed.rows);
+  assert.equal(day1.length, 3, 'Andrade, Villeda, Saucedo — not Kelly/Vincent, not pay-code rows');
+  const andrade = day1.find(d => d.name === 'Marcos Andrade');
+  assert.ok(andrade);
+  assert.equal(Math.round(andrade.dollars*100)/100, 188+52.88+12+8.5);
+  assert.equal(andrade.hours, 8+1.5);
+  assert.equal(day1[0].dollars >= day1[1].dollars, true, 'sorted by dollars');
+  assert.equal(pnlDriverSource(20, 1), 'ADP+EST');
+  assert.equal(pnlDriverSource(21, 0), 'ADP');
+  assert.equal(pnlDriverSource(0, 21), 'EST');
 }
 
 console.log('adp-daily-totals.test.mjs: ok');

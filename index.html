@@ -11,7 +11,7 @@
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<meta name="app-version" content="2026-08-24-fct-calc-v2.1.33-adp-actuals">
+<meta name="app-version" content="2026-08-24-fct-calc-v2.1.34-pnl-board">
 <title data-id="th-modified">FCT Load Profitability — French Camp Transport</title>
 <link rel="manifest" href='data:application/manifest+json,{"name":"FCT Load Profitability","short_name":"FCT Calc","start_url":".","display":"standalone","background_color":"%2312100e","theme_color":"%2312100e","icons":[{"src":"data:image/svg%2Bxml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 192 192%27%3E%3Crect width=%27192%27 height=%27192%27 fill=%27%2312100e%27/%3E%3Ctext x=%2796%27 y=%27124%27 font-size=%2772%27 font-family=%27sans-serif%27 font-weight=%27700%27 fill=%27%238fb590%27 text-anchor=%27middle%27%3EFCT%3C/text%3E%3C/svg%3E","sizes":"192x192","type":"image/svg+xml"}]}'>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -176,6 +176,38 @@
   .chip.a{color:var(--amber);background:var(--amber-bg)}
   .chip.r{color:var(--red);background:var(--red-bg)}
   .chip.b{color:var(--blue);background:var(--blue-bg)}
+
+  /* v2.1.34: Today P&L board — one scannable card, not a trophy chip. */
+  .pnl-board{padding:12px 14px;margin-bottom:12px}
+  .pnl-board .pnl-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:4px}
+  .pnl-board .pnl-title{font:700 16px/1.2 var(--display);letter-spacing:-.01em}
+  .pnl-board .pnl-lede{font:400 11.5px/1.45 var(--body);color:var(--text-faint);margin:0 0 10px;max-width:46em}
+  .pnl-cols{display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px 18px}
+  .pnl-col-h{font:700 10px/1 var(--body);letter-spacing:.08em;text-transform:uppercase;color:var(--text-faint);
+    padding:0 0 7px;margin:0 0 4px;border-bottom:1px solid var(--border)}
+  .pnl-col-h b{color:var(--text);font:700 12px/1.2 var(--display);letter-spacing:0;text-transform:none;display:block;margin-top:3px}
+  .pnl-row{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:5px 0;font-size:13px;line-height:1.25}
+  .pnl-row .pnl-lab{color:var(--text-muted);min-width:0}
+  .pnl-row .pnl-amt{font-family:var(--mono);font-variant-numeric:tabular-nums;font-weight:600;display:flex;align-items:center;gap:6px;white-space:nowrap}
+  .pnl-row .pnl-amt .chip{font-size:8.5px;padding:3px 5px;letter-spacing:.04em}
+  .pnl-row.tot{border-top:1px solid var(--border);margin-top:4px;padding-top:8px;font-weight:700}
+  .pnl-row.tot .pnl-lab{color:var(--text)}
+  .pnl-row.net{border-top:1px dashed var(--border-strong);padding-top:8px;margin-top:2px}
+  .pnl-foot{margin-top:10px;padding-top:8px;border-top:1px solid var(--border);font-size:12px;color:var(--text-muted)}
+  .pnl-drv{display:flex;align-items:baseline;justify-content:space-between;gap:8px;padding:3px 0;font-size:12.5px}
+  .pnl-drv .n{font-family:var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap;color:var(--text)}
+  .pnl-drv .hrs{color:var(--text-faint);font-family:var(--mono);font-size:11px;margin-left:6px}
+  @media (max-width:720px){
+    .pnl-cols{grid-template-columns:1fr 1fr;gap:14px 16px}
+    .pnl-col-wtd{grid-column:1 / -1}
+  }
+  @media (max-width:520px){
+    .pnl-board{padding:12px 12px}
+    .pnl-cols{grid-template-columns:1fr;gap:16px}
+    .pnl-col-wtd{grid-column:auto}
+    .pnl-row{font-size:14px;padding:6px 0}
+    .pnl-row .pnl-amt .chip{font-size:9px}
+  }
 
   /* ---- Forms ---- */
   label{display:block;font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em;font-weight:600;margin-bottom:5px}
@@ -1384,7 +1416,7 @@
    still exposes the Import JSON box for future refreshes.
    ============================================================= */
 
-const APP_VERSION = '2026-08-24-fct-calc-v2.1.33-adp-actuals';
+const APP_VERSION = '2026-08-24-fct-calc-v2.1.34-pnl-board';
 const STORAGE_KEY = 'fct-calc:state';
 const IDB_NAME = 'fct-calc-db';
 const IDB_STORE = 'kv';
@@ -7556,6 +7588,45 @@ function applyAdpDayTotals(dateISO, T){
   T.cm = T.revenue - T.varCost;
   return T;
 }
+
+/* Compact by-driver rollup for the P&L board — name / hours / dollars,
+   not the raw pay-code rows. Optional `rows` so tests can pass a fixture. */
+function adpFieldDriversForDate(dateISO, rows){
+  const map = Object.create(null);
+  const src = Array.isArray(rows) ? rows : __adpRows;
+  (src||[]).forEach(r=>{
+    if(!r || r.date!==dateISO || r.role!=='field') return;
+    const n = r.rosterName || [r.first, r.last].filter(Boolean).join(' ') || 'Unknown';
+    const rec = map[n] || (map[n] = { name:n, hours:0, dollars:0 });
+    rec.hours += Number(r.hours)||0;
+    rec.dollars += Number(r.dollars)||0;
+  });
+  return Object.keys(map).map(k=>map[k]).sort((a,b)=> b.dollars - a.dollars || a.name.localeCompare(b.name));
+}
+
+function adpOfficeDollarsForDate(dateISO){
+  const d = __adpByDate[dateISO];
+  return d ? (Number(d.officeDollars)||0) : 0;
+}
+
+function adpOfficeInRange(from, to){
+  let dollars = 0;
+  const names = Object.create(null);
+  Object.keys(__adpByDate||{}).forEach(d=>{
+    if((from && d<from) || (to && d>to)) return;
+    if(!adpAppliesToDate(d)) return;
+    const x = __adpByDate[d];
+    dollars += Number(x.officeDollars)||0;
+    Object.keys(x.officeNames||{}).forEach(n=>{ names[n]=1; });
+  });
+  return { dollars:dollars, names:Object.keys(names).sort() };
+}
+
+function pnlDriverSource(adpDays, estDays){
+  if(adpDays && estDays) return 'ADP+EST';
+  if(adpDays) return 'ADP';
+  return 'EST';
+}
 /* END ADP_ACTUALS */
 
 /* "PRELOADER / DELIVERY" — the delivery driver owns the on-clock hours. */
@@ -8001,29 +8072,38 @@ function computeDayRow(r){
      track what the trucks actually drive on this lane in the last 7 days.
      Sub-hauls and override rows are exempt (they don't cost off miles). */
   const laneCal = laneCalibrationFactor(r.origin, r.deliveryPoint || r.destination);
-  let driverCost = 0;
+  let driverCost = 0, fuelCost = 0, wearCost = 0, otherCost = 0, subHaulCost = 0;
+  const takeComps = (comps, scale)=>{
+    const sc = (scale!=null && isFinite(scale)) ? scale : 1;
+    (comps||[]).forEach(c=>{
+      const a = (Number(c.amount)||0) * sc;
+      if(c.k==='fuel') fuelCost += a;
+      else if(c.k==='driver') driverCost += a;
+      else if(c.k==='wear') wearCost += a;
+      else if(c.k==='other') otherCost += a;
+      else if(c.k==='subhauler') subHaulCost += a;
+    });
+  };
   if(varOv>0){
     varCost = varOv;
+    otherCost = varOv; // override is a lump — cannot split
   } else if(isSubHaul){
     varCost = 150;
+    subHaulCost = 150;
   } else {
     // v2.1.18: prefer lane-specific miles when we have them (accurate fuel + wear
     // per specific origin→destination). Falls back to tier miles otherwise.
     const rawLaneMi = laneMilesFor(r.origin, r.deliveryPoint || r.destination);
-    const driverOf = (comps)=> (comps.find(c=>c.k==='driver')||{amount:0}).amount;
     if(rawLaneMi > 0 && tierV){
       const calibratedMi = rawLaneMi * laneCal.factor;
-      const comps = variableComponents(calibratedMi, tierV.hours);
-      varCost = comps.reduce((a,c)=>a+c.amount, 0);
-      driverCost = driverOf(comps);
+      takeComps(variableComponents(calibratedMi, tierV.hours), 1);
     } else {
       // No lane match — fleet factor is the best we can do. Apply to the tier
       // model's implicit miles by scaling the variable output. Skip if factor=1.
-      const comps = variableComponents(tierV ? tierV.miles : null, tierV ? tierV.hours : null);
       const scale = (laneCal.source !== 'none') ? laneCal.factor : 1;
-      varCost = comps.reduce((a,c)=>a+c.amount, 0) * scale;
-      driverCost = driverOf(comps) * scale;
+      takeComps(variableComponents(tierV ? tierV.miles : null, tierV ? tierV.hours : null), scale);
     }
+    varCost = fuelCost + driverCost + wearCost + otherCost + subHaulCost;
   }
 
   const cm = revenue - varCost;
@@ -8058,7 +8138,9 @@ function computeDayRow(r){
            tier: tierV? tierV.k : '',
            linehaul:linehaul, fsc:fsc, fscRule:rule, cardRevenue:cardRevenue,
            revenue:revenue, billed:billed>0, rateEst:rev.est, rateBasis:rev.basis,
-           varCost:varCost, driverCost:driverCost, varOverride:varOv>0, subHaul:isSubHaul,
+           varCost:varCost, driverCost:driverCost,
+           fuelCost:fuelCost, wearCost:wearCost, otherCost:otherCost, subHaulCost:subHaulCost,
+           varOverride:varOv>0, subHaul:isSubHaul,
            laneCal:laneCal,   // v2.1.21: {factor, source, laneKey, loadsInWindow?}
            cm:cm, cmPerHour: hours>0? cm/hours : 0, fixedAlloc:0, net:cm };
 }
@@ -8487,6 +8569,264 @@ function runningTotals(refDate){
   };
   return { week:agg(weekStart,refDate), month:agg(monthStart,refDate),
            weekStart:weekStart, monthStart:monthStart };
+}
+
+/* =============================================================
+   v2.1.34 P&L board (James 2026-08-24)
+   -------------------------------------------------------------
+   The landing-strip DAY/WTD/MTD chips were too small — payroll looked
+   buried. This board is the thing to LOOK at: revenue, driver wages,
+   fuel, wear/other, fixed, contribution, net. Each line says ADP /
+   Verizon / EST. Day-in-view follows the picker; MTD/WTD stay locked
+   to today (same as runningTotals). Today stays EST while open.
+   ============================================================= */
+function verizonFuelDollarsForDate(dateISO){
+  if(!dateISO) return null;
+  const fpm = fuelPerMile();
+  const v = state.verizonMilesToday || {};
+  const vDate = String(v.date||'').slice(0,10);
+  if(v.ok && Number(v.fleetMiles)>0 && (vDate===dateISO || (!vDate && dateISO===isoLocal(new Date()))))
+    return Number(v.fleetMiles) * fpm;
+  const hist = Array.isArray(state.milesHistory) ? state.milesHistory : [];
+  const hit = hist.find(x=> x && x.date===dateISO && Number(x.fleetMiles)>0);
+  if(hit) return Number(hit.fleetMiles) * fpm;
+  return null;
+}
+
+function emptyPnlDay(){
+  return { rev:0, billed:0, rateEst:0, fuel:0, driver:0, wear:0, other:0, sub:0,
+           hours:0, loads:0, fuelSrc:'EST', driverSrc:'EST', office:0 };
+}
+
+function seedPnlDayFromAdp(dateISO){
+  const b = emptyPnlDay();
+  b.office = (typeof adpOfficeDollarsForDate==='function') ? adpOfficeDollarsForDate(dateISO) : 0;
+  const adp = (typeof adpFieldDay==='function') ? adpFieldDay(dateISO) : null;
+  if(adp && adpAppliesToDate(dateISO)){
+    b.driver = adp.dollars; b.driverSrc = 'ADP'; b.hours = adp.hours;
+  }
+  const vf = verizonFuelDollarsForDate(dateISO);
+  if(vf!=null){ b.fuel = vf; b.fuelSrc = 'Verizon'; }
+  return b;
+}
+
+function accumulatePnlByDay(){
+  const byDay = Object.create(null);
+  const li = state.dayRollup && state.dayRollup.lastImport;
+  const rows = (li && Array.isArray(li.rows)) ? li.rows : [];
+  rows.forEach(raw=>{
+    if(!raw || !raw.date) return;
+    const r = computeDayRow(raw);
+    if(!r.active) return;
+    const b = byDay[raw.date] || (byDay[raw.date] = emptyPnlDay());
+    b.rev += Number(r.revenue)||0;
+    if(r.billed) b.billed += Number(r.revenue)||0;
+    if(r.rateEst) b.rateEst++;
+    b.fuel += Number(r.fuelCost)||0;
+    b.driver += Number(r.driverCost)||0;
+    b.wear += Number(r.wearCost)||0;
+    b.other += Number(r.otherCost)||0;
+    b.sub += Number(r.subHaulCost)||0;
+    b.hours += Number(r.hours)||0;
+    b.loads++;
+  });
+  Object.keys(byDay).forEach(d=>{
+    const b = byDay[d];
+    const adp = (typeof adpFieldDay==='function') ? adpFieldDay(d) : null;
+    if(adp && adpAppliesToDate(d)){
+      b.driver = adp.dollars;
+      b.driverSrc = 'ADP';
+      b.hours = adp.hours;
+    } else {
+      b.driverSrc = 'EST';
+    }
+    const vf = verizonFuelDollarsForDate(d);
+    if(vf!=null){ b.fuel = vf; b.fuelSrc = 'Verizon'; }
+    else b.fuelSrc = 'EST';
+    b.office = (typeof adpOfficeDollarsForDate==='function') ? adpOfficeDollarsForDate(d) : 0;
+  });
+  return byDay;
+}
+
+function pnlSumRange(byDay, from, to){
+  const out = { rev:0, billed:0, rateEst:0, fuel:0, driver:0, wearOther:0,
+                varCost:0, cm:0, loads:0, nDays:0, adpDays:0, estDriverDays:0,
+                verizonFuelDays:0, office:0 };
+  Object.keys(byDay).forEach(d=>{
+    if((from && d<from) || (to && d>to)) return;
+    const b = byDay[d];
+    const wearOther = (Number(b.wear)||0)+(Number(b.other)||0)+(Number(b.sub)||0);
+    const driver = Number(b.driver)||0;
+    const fuel = Number(b.fuel)||0;
+    const varCost = fuel + driver + wearOther;
+    out.rev += Number(b.rev)||0;
+    out.billed += Number(b.billed)||0;
+    out.rateEst += Number(b.rateEst)||0;
+    out.fuel += fuel; out.driver += driver; out.wearOther += wearOther;
+    out.varCost += varCost; out.cm += (Number(b.rev)||0) - varCost;
+    out.loads += Number(b.loads)||0;
+    out.nDays++;
+    out.office += Number(b.office)||0;
+    if(b.driverSrc==='ADP') out.adpDays++; else out.estDriverDays++;
+    if(b.fuelSrc==='Verizon') out.verizonFuelDays++;
+  });
+  const fpd = fixedCostPerDay();
+  out.fixed = out.nDays * fpd;
+  out.net = out.cm - out.fixed;
+  return out;
+}
+
+function pnlWrapDay(b){
+  b = b || emptyPnlDay();
+  const wearOther = (Number(b.wear)||0)+(Number(b.other)||0)+(Number(b.sub)||0);
+  const driver = Number(b.driver)||0;
+  const fuel = Number(b.fuel)||0;
+  const varCost = fuel + driver + wearOther;
+  const cm = (Number(b.rev)||0) - varCost;
+  const fpd = fixedCostPerDay();
+  return {
+    rev: Number(b.rev)||0, billed: Number(b.billed)||0, rateEst: Number(b.rateEst)||0,
+    fuel:fuel, driver:driver, wearOther:wearOther, varCost:varCost, cm:cm,
+    loads: Number(b.loads)||0, nDays:1,
+    adpDays: b.driverSrc==='ADP' ? 1 : 0,
+    estDriverDays: b.driverSrc==='ADP' ? 0 : 1,
+    verizonFuelDays: b.fuelSrc==='Verizon' ? 1 : 0,
+    office: Number(b.office)||0,
+    fixed: fpd, net: cm - fpd
+  };
+}
+
+function pnlRevChip(x){
+  if(!(x.rev>0)) return { label:'—', cls:'y' };
+  if(x.billed>0 && x.billed >= x.rev - 0.5) return { label:'Invoiced', cls:'g' };
+  if(x.billed>0) return { label:'Invoiced + EST', cls:'y' };
+  if(x.rateEst>0) return { label:'EST', cls:'y' };
+  return { label:'Rate card', cls:'b' };
+}
+function pnlDriverChip(x){
+  const src = (typeof pnlDriverSource==='function')
+    ? pnlDriverSource(x.adpDays, x.estDriverDays)
+    : (x.adpDays ? (x.estDriverDays ? 'ADP+EST' : 'ADP') : 'EST');
+  if(src==='ADP') return { label:'ADP', cls:'g' };
+  if(src==='ADP+EST') return { label:'ADP + EST', cls:'a' };
+  return { label:'EST', cls:'y' };
+}
+function pnlFuelChip(x){
+  if(x.verizonFuelDays && x.nDays && x.verizonFuelDays===x.nDays) return { label:'Verizon', cls:'g' };
+  if(x.verizonFuelDays) return { label:'Verizon + EST', cls:'a' };
+  return { label:'EST', cls:'y' };
+}
+
+function buildPnlBoard(dateISO){
+  const todayISO = isoLocal(new Date());
+  const shown = dateISO || todayISO;
+  const d0 = new Date(todayISO+'T00:00:00');
+  const mon = new Date(d0); mon.setDate(d0.getDate() - ((d0.getDay()+6)%7));
+  const weekStart = isoLocal(mon);
+  const monthStart = todayISO.slice(0,8)+'01';
+  const byDay = accumulatePnlByDay();
+  if(!Object.keys(byDay).length){
+    Object.keys(__adpByDate||{}).forEach(d=>{
+      if(d<monthStart || d>todayISO) return;
+      if(!adpAppliesToDate(d)) return;
+      byDay[d] = seedPnlDayFromAdp(d);
+    });
+  }
+  const dayBucket = byDay[shown] || seedPnlDayFromAdp(shown);
+  const officeMtd = (typeof adpOfficeInRange==='function')
+    ? adpOfficeInRange(monthStart, todayISO) : { dollars:0, names:[] };
+  const officeWtd = (typeof adpOfficeInRange==='function')
+    ? adpOfficeInRange(weekStart, todayISO) : { dollars:0, names:[] };
+  const officeDay = (adpAppliesToDate(shown) && typeof adpOfficeDollarsForDate==='function')
+    ? adpOfficeDollarsForDate(shown) : 0;
+  return {
+    shown:shown, todayISO:todayISO, weekStart:weekStart, monthStart:monthStart,
+    day: pnlWrapDay(dayBucket),
+    wtd: pnlSumRange(byDay, weekStart, todayISO),
+    mtd: pnlSumRange(byDay, monthStart, todayISO),
+    officeDay:officeDay, officeWtd:officeWtd, officeMtd:officeMtd,
+    drivers: (adpAppliesToDate(shown) && typeof adpFieldDriversForDate==='function')
+      ? adpFieldDriversForDate(shown) : []
+  };
+}
+
+function pnlChipHTML(chip){
+  if(!chip || !chip.label) return '';
+  return '<span class="chip '+(chip.cls||'y')+'">'+esc(chip.label)+'</span>';
+}
+function pnlAmtHTML(n, chip, opts){
+  opts = opts || {};
+  const color = opts.color
+    ? ('color:'+(n>=0?'var(--green)':'var(--red)'))
+    : '';
+  const sign = opts.signed ? ((n>0?'+':'')) : '';
+  return '<span class="pnl-amt"'+(color?' style="'+color+'"':'')+'>'
+    + (chip ? pnlChipHTML(chip)+' ' : '')
+    + '<span>'+sign+money2(n)+'</span></span>';
+}
+function pnlColHTML(title, sub, x, extraClass){
+  const revC = pnlRevChip(x);
+  const drvC = pnlDriverChip(x);
+  const fuelC = pnlFuelChip(x);
+  const wearC = { label:'EST', cls:'y' };
+  const fixC = { label:'Pro-rata', cls:'b' };
+  return '<div class="pnl-col'+(extraClass?(' '+extraClass):'')+'">'
+    + '<div class="pnl-col-h">'+esc(title)+'<b>'+esc(sub)+'</b></div>'
+    + '<div class="pnl-row"><span class="pnl-lab">Revenue</span>'+pnlAmtHTML(x.rev, revC)+'</div>'
+    + '<div class="pnl-row"><span class="pnl-lab">Driver wages</span>'+pnlAmtHTML(x.driver, drvC)+'</div>'
+    + '<div class="pnl-row"><span class="pnl-lab">Fuel</span>'+pnlAmtHTML(x.fuel, fuelC)+'</div>'
+    + '<div class="pnl-row"><span class="pnl-lab">Wear / other</span>'+pnlAmtHTML(x.wearOther, wearC)+'</div>'
+    + '<div class="pnl-row tot"><span class="pnl-lab">Contribution</span>'+pnlAmtHTML(x.cm, null, {color:true, signed:true})+'</div>'
+    + '<div class="pnl-row"><span class="pnl-lab">Fixed</span>'+pnlAmtHTML(x.fixed, fixC)+'</div>'
+    + '<div class="pnl-row tot net"><span class="pnl-lab">Net</span>'+pnlAmtHTML(x.net, null, {color:true, signed:true})+'</div>'
+    + '</div>';
+}
+
+function pnlBoardHTML(dateISO){
+  const m = buildPnlBoard(dateISO);
+  const dayLbl = (typeof dowDateLabel==='function') ? dowDateLabel(m.shown) : m.shown;
+  const todayMark = m.shown===m.todayISO ? ' · today' : '';
+  const wtdSub = 'Mon '+((typeof shortDateLabel==='function')?shortDateLabel(m.weekStart):m.weekStart)
+    + ' → today';
+  const mtdSub = ((typeof shortDateLabel==='function')?shortDateLabel(m.monthStart):m.monthStart)
+    + ' → today';
+  const openNote = (m.shown===m.todayISO && state.adpPay && state.adpPay.dateMin && !(state.adpPay.endOfDay))
+    ? ' Today is still open — driver wages on this day are hours × loaded $/hr (EST) until you re-drop after close.'
+    : '';
+  let h = '<div class="card pnl-board" id="pnlBoard">'
+    + '<div class="pnl-head"><div class="pnl-title">P&amp;L</div></div>'
+    + '<p class="pnl-lede">Actual profit and loss for the day in view, plus week and month through today. '
+    + 'Closed days use ADP field-driver dollars. Fuel uses Verizon fleet miles when we have them, otherwise the lane estimate. '
+    + 'Wear / other stays estimated. Office payroll is listed underneath — it is not inside load variable.'
+    + openNote+'</p>'
+    + '<div class="pnl-cols">'
+    + pnlColHTML('Day in view', dayLbl+todayMark, m.day)
+    + pnlColHTML('Month to date', mtdSub, m.mtd)
+    + pnlColHTML('Week to date', wtdSub, m.wtd, 'pnl-col-wtd')
+    + '</div>';
+
+  if(m.officeDay>0 || (m.officeMtd && m.officeMtd.dollars>0)){
+    const names = (m.officeMtd && m.officeMtd.names && m.officeMtd.names.length)
+      ? m.officeMtd.names.join(', ') : '';
+    h += '<div class="pnl-foot">Office ADP (not in load P&amp;L) — day '+money2(m.officeDay)
+      + ' · MTD '+money2((m.officeMtd&&m.officeMtd.dollars)||0)
+      + (names ? ' · '+esc(names) : '')
+      + '</div>';
+  }
+
+  if(m.drivers && m.drivers.length){
+    h += '<div class="pnl-foot" style="border-top-style:dashed"><div style="font:700 10px/1 var(--body);letter-spacing:.08em;text-transform:uppercase;color:var(--text-faint);margin-bottom:6px">Drivers this day · ADP</div>';
+    m.drivers.forEach(d=>{
+      h += '<div class="pnl-drv"><span>'+esc(d.name)
+        + '<span class="hrs">'+num(d.hours,1)+' hr</span></span>'
+        + '<span class="n">'+money2(d.dollars)+'</span></div>';
+    });
+    h += '</div>';
+  } else if(m.shown===m.todayISO && !(state.adpPay && state.adpPay.endOfDay) && __adpRows && __adpRows.length){
+    h += '<div class="pnl-foot" style="border-top-style:dashed">Driver list for today is held — the day is still open, so those clocked rows are a partial day. Closed days show name / hours / dollars here.</div>';
+  }
+
+  return h + '</div>';
 }
 
 /* The sheet's Time column is a mix of typed text ("9am", "ASAP", "PRE") and
@@ -9746,6 +10086,10 @@ function renderDayRollup(){
         + '<div class="btn-row" style="margin-top:8px"><button class="act ghost" id="dispFetch">Fetch</button></div></div>';
     }
     h += '<div id="dispStatus" style="font-size:11px;color:var(--text-faint);margin-top:10px"></div></div>';
+    /* v2.1.34: P&L board still shows on the empty screen so dropping ADP
+       immediately moves closed-day wages and MTD net — payroll is not
+       buried in Settings. */
+    h += pnlBoardHTML(shown);
     /* Single hero, full stop. With no file and no what-if rows there is
        nothing to total, so the sheet, the day totals, the column mapping and
        the what-if block are all suppressed — an empty grid of zeros is noise,
@@ -9918,9 +10262,12 @@ function renderDayRollup(){
   }
 
 
-  /* Week/month to date now live in the compact header strip at the top of the
-     page. The detailed two-box version that used to sit here duplicated it and
-     pushed the load list below the fold. */
+  /* v2.1.34: P&L board is the thing James looks at — revenue, ADP driver
+     wages, Verizon fuel, wear, fixed, contribution, net. Above the sheet
+     so payroll is not a trophy chip or a Settings page. Day follows the
+     picker; MTD/WTD stay locked to today. Empty-state already rendered
+     this card above; loaded state adds it here. */
+  if(li) h += pnlBoardHTML(shown);
 
   /* ---- 4. The dispatch sheet ----
      Laid out to mirror the 2026 FCT Dispatch Log: same column order, same
@@ -13284,8 +13631,9 @@ function renderSet(){
     const ap = state.adpPay || defaultAdpPay();
     const adpLoaded = !!(__adpRows && __adpRows.length && ap.dateMin);
     h += '<div class="card"><h2>ADP driver pay '
-      + '<span style="font-size:10px;color:var(--green);text-transform:none;letter-spacing:0">v2.1.33</span></h2>'
+      + '<span style="font-size:10px;color:var(--green);text-transform:none;letter-spacing:0">v2.1.34</span></h2>'
       + '<div class="hint" style="margin-bottom:12px">Drop the ADP Workforce Now <b>Employee Daily Totals</b> report on Today. '
+      + 'Then look at the <b>P&amp;L board on Today</b> — not this page — for revenue, driver wages, fuel, wear, fixed, and net. '
       + 'Field-driver dollars replace modelled driver wages on <b>closed days</b> and on MTD/WTD through yesterday. '
       + 'Today stays on the estimate until you re-drop after close — a 2pm pull is not the day P&amp;L. '
       + 'Office names stay off load cost. Pay rows live in IndexedDB on this phone — not in git, not in localStorage.</div>'
@@ -14567,6 +14915,12 @@ SHADOW_TIMELINE_TEXT['2026-07-28'] = "**PARTIAL DAY — Phase 2 diff loop stoppe
 
 /* ---- v2.0 DATA: Changelog (in-app version history) ---- */
 const SHADOW_CHANGELOG = [
+  { ver:'v2.1.34-pnl-board', date:'2026-08-24', changes:[
+    'Today now has a P&L board you can actually read — revenue, driver wages, fuel, wear/other, fixed, contribution, and net — for the day in view plus month-to-date (and week). Each line says ADP, Verizon, or EST. Not a trophy chip, not buried in Settings',
+    'Closed-day driver wages still come from the ADP Employee Daily Totals drop (same rule as v2.1.33): today stays EST while open; MTD/WTD use ADP through yesterday. Dropping the August file moves closed-day wages and MTD net on this board',
+    'Fuel uses Verizon fleet miles when that day has them, otherwise the lane estimate. Wear / other stays estimated. Office ADP is listed under the board and is not inside load variable. Optional by-driver list (name, hours, dollars) for the day in view — not 2,796 pay-code rows',
+    'Does not change diesel, Queue scoring, missing-rates, PNG-for-scoring, or Worker canonical settings. Pay rows still stay on this phone in IndexedDB, never in git'
+  ]},
   { ver:'v2.1.33-adp-actuals', date:'2026-08-24', changes:[
     'Drop the ADP Workforce Now Employee Daily Totals report (xls/xlsx) on Today — same drop as dispatch / Verizon. Parser only; the pay file never goes into git',
     'Today is still in progress: a 2pm ADP pull is a partial clock, not the day P&L. Closed days (and MTD/WTD through yesterday) use field-driver ADP dollars. Today stays on hours × loaded $/hr (EST) unless you re-drop after close (after 8pm). Fuel, wear, and sub-haul stay on the model',
