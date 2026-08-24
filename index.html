@@ -11,7 +11,7 @@
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<meta name="app-version" content="2026-08-21-fct-calc-v2.1.24-mtd-lock-drift-warn">
+<meta name="app-version" content="2026-08-23-fct-calc-v2.1.25-auto-sync-canonical">
 <title data-id="th-modified">FCT Load Profitability — French Camp Transport</title>
 <link rel="manifest" href='data:application/manifest+json,{"name":"FCT Load Profitability","short_name":"FCT Calc","start_url":".","display":"standalone","background_color":"%2312100e","theme_color":"%2312100e","icons":[{"src":"data:image/svg%2Bxml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 192 192%27%3E%3Crect width=%27192%27 height=%27192%27 fill=%27%2312100e%27/%3E%3Ctext x=%2796%27 y=%27124%27 font-size=%2772%27 font-family=%27sans-serif%27 font-weight=%27700%27 fill=%27%238fb590%27 text-anchor=%27middle%27%3EFCT%3C/text%3E%3C/svg%3E","sizes":"192x192","type":"image/svg+xml"}]}'>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -1149,7 +1149,7 @@
    still exposes the Import JSON box for future refreshes.
    ============================================================= */
 
-const APP_VERSION = '2026-08-21-fct-calc-v2.1.24-mtd-lock-drift-warn';
+const APP_VERSION = '2026-08-23-fct-calc-v2.1.25-auto-sync-canonical';
 const STORAGE_KEY = 'fct-calc:state';
 const IDB_NAME = 'fct-calc-db';
 const IDB_STORE = 'kv';
@@ -12906,7 +12906,29 @@ window.addEventListener('resize',closeSugPop);
         if(old) old.remove();
         return;
       }
-      __showDriftBanner(diffs, canon);
+      // v2.1.25: auto-apply canonical so phone + computer don't sit on different
+      // diesel/MPG/driver-rate numbers until someone taps a banner.
+      try{
+        diffs.forEach(d=>{
+          if(d.settingsKey === 'fuelPricePerGal'){
+            state.settings.currentDieselPricePerGal = Number(d.canonical);
+            state.settings.fuelPriceConfirmed = true;
+            state.settings.lastFuelPriceUpdate = (canon.computedAt||'').slice(0,10) || isoLocal(new Date());
+          } else if(d.settingsKey === 'fleetAvgMPG'){
+            state.settings.fleetAvgMPG = Number(d.canonical);
+          } else if(d.settingsKey === 'defaultDriverRate'){
+            state.settings.defaultDriverRate = Number(d.canonical);
+          }
+        });
+        save();
+        try{ renderDash(); }catch(_){}
+        try{ renderCalc(); }catch(_){}
+        try{ renderSet();  }catch(_){}
+        try{ toast('Synced settings from company defaults (phone/computer now match).'); }catch(_){}
+      }catch(err){
+        __showDriftBanner(diffs, canon);
+        return;
+      }
     }catch(_){/* offline or transient — silent skip */}
   }
   function __showDriftBanner(diffs, canon){
