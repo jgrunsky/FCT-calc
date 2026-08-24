@@ -1,0 +1,18 @@
+name = "fct-verizon"
+main = "src/index.js"
+compatibility_date = "2026-08-17"
+workers_dev = true
+
+# Existing FCT_VERIZON KV namespace (already bound on the live worker).
+[[kv_namespaces]]
+binding = "FCT_VERIZON"
+id = "16f9a49d06e74445be0d7a433e2f75c0"
+
+# Live GPS snapshot refresh. Do not remove — /latest and /miles depend on it.
+[triggers]
+crons = ["*/10 * * * *"]
+
+# Secrets already set in the Cloudflare dashboard (do not put values here):
+#   VERIZON_APP_ID
+#   VERIZON_USERNAME
+#   VERIZON_PASSWORD

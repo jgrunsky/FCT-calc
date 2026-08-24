@@ -1,0 +1,9 @@
+{
+  "name": "fct-verizon",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node src/canonical-settings.test.mjs",
+    "deploy": "wrangler deploy"
+  }
+}

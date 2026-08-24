@@ -11,7 +11,7 @@
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<meta name="app-version" content="2026-08-23-fct-calc-v2.1.25-auto-sync-canonical">
+<meta name="app-version" content="2026-08-24-fct-calc-v2.1.26-push-canonical-settings">
 <title data-id="th-modified">FCT Load Profitability — French Camp Transport</title>
 <link rel="manifest" href='data:application/manifest+json,{"name":"FCT Load Profitability","short_name":"FCT Calc","start_url":".","display":"standalone","background_color":"%2312100e","theme_color":"%2312100e","icons":[{"src":"data:image/svg%2Bxml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 192 192%27%3E%3Crect width=%27192%27 height=%27192%27 fill=%27%2312100e%27/%3E%3Ctext x=%2796%27 y=%27124%27 font-size=%2772%27 font-family=%27sans-serif%27 font-weight=%27700%27 fill=%27%238fb590%27 text-anchor=%27middle%27%3EFCT%3C/text%3E%3C/svg%3E","sizes":"192x192","type":"image/svg+xml"}]}'>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -1149,7 +1149,7 @@
    still exposes the Import JSON box for future refreshes.
    ============================================================= */
 
-const APP_VERSION = '2026-08-23-fct-calc-v2.1.25-auto-sync-canonical';
+const APP_VERSION = '2026-08-24-fct-calc-v2.1.26-push-canonical-settings';
 const STORAGE_KEY = 'fct-calc:state';
 const IDB_NAME = 'fct-calc-db';
 const IDB_STORE = 'kv';
@@ -3091,7 +3091,7 @@ const VERIZON_MILES_URL      = 'https://fct-verizon.jamesgrunsky.workers.dev/mil
 const VERIZON_MILES_REAL_URL = 'https://fct-verizon.jamesgrunsky.workers.dev/miles-real';   // v2.1.20 (real odo via Verizon Segments API)
 const VERIZON_CALIBRATION_URL = 'https://fct-verizon.jamesgrunsky.workers.dev/calibration'; // v2.1.21 (per-lane rolling actual/predicted)
 const VERIZON_DISPATCH_LOG_URL = 'https://fct-verizon.jamesgrunsky.workers.dev/dispatch-log'; // v2.1.21 (POST — feeds calibration)
-const VERIZON_CANONICAL_SETTINGS_URL = 'https://fct-verizon.jamesgrunsky.workers.dev/canonical-settings'; // v2.1.24 (device-drift check)
+const VERIZON_CANONICAL_SETTINGS_URL = 'https://fct-verizon.jamesgrunsky.workers.dev/canonical-settings'; // v2.1.24 pull · v2.1.26 push
 /* The order the Office Script writes, which is the workbook's own column order
    A..I. Kept as an explicit list rather than Object.values() so the mapping to
    defaultColumnMap() (time:0 … trailer2:8) is stated, not implied by whatever
@@ -10046,6 +10046,50 @@ async function refreshLaneCalibration(){
   }
 }
 
+/* v2.1.26 (2026-08-24): after diesel / MPG / default driver rate is saved
+   locally, POST the same numbers to /canonical-settings so the other device
+   (phone vs computer) picks them up on next open via the v2.1.25 auto-pull.
+   Local save already happened — this never blocks Settings. Offline or a
+   dead worker just toasts; the number on THIS device still sticks. */
+function pushCanonicalSettings(){
+  try{
+    const s = (state && state.settings) || {};
+    const fuel = Number(s.currentDieselPricePerGal);
+    const mpg  = Number(s.fleetAvgMPG);
+    const rate = Number(s.defaultDriverRate);
+    if(!(fuel>0) || !(mpg>0) || !(rate>0)) return;
+    if(typeof navigator !== 'undefined' && navigator.onLine === false){
+      try{ toast('Saved on this device. Other devices update when you are back online.'); }catch(_){}
+      return;
+    }
+    const ctrl = new AbortController();
+    const to = setTimeout(()=>ctrl.abort(), 8000);
+    fetch(VERIZON_CANONICAL_SETTINGS_URL, {
+      method: 'POST',
+      cache: 'no-store',
+      signal: ctrl.signal,
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      body: JSON.stringify({
+        fuelPricePerGal: fuel,
+        fleetAvgMPG: mpg,
+        defaultDriverRate: rate,
+        source: 'fct-calc',
+        appVersion: APP_VERSION
+      })
+    }).then(function(r){
+      clearTimeout(to);
+      if(!r.ok) throw new Error('HTTP '+r.status);
+      return r.json();
+    }).then(function(j){
+      if(!j || j.ok !== true) throw new Error('no write path');
+      try{ toast('Saved for all devices — phone and computer will match.'); }catch(_){}
+    }).catch(function(){
+      clearTimeout(to);
+      try{ toast('Saved on this device. Couldn\'t update the other one — try again on Wi-Fi.'); }catch(_){}
+    });
+  }catch(_){ /* never block Settings */ }
+}
+
 /* v2.1.21: POST the last N days of dispatch rows to the worker so it can
    compute calibration on its side (worker doesn't have Excel access). Sent
    once per boot after imports settle, plus after every successful sync.
@@ -12324,12 +12368,12 @@ function renderSet(){
   $('#p-set').innerHTML = h;
 
   /* --- wiring --- */
-  const bindNum=(id,key)=>{ const el=document.getElementById(id); if(!el) return; el.addEventListener('change',()=>{
-    const v=parseFloat(el.value); if(!isNaN(v)){ s[key]=v; save(); renderSet(); renderDash(); }
+  const bindNum=(id,key,after)=>{ const el=document.getElementById(id); if(!el) return; el.addEventListener('change',()=>{
+    const v=parseFloat(el.value); if(!isNaN(v)){ s[key]=v; save(); renderSet(); renderDash(); if(typeof after==='function') after(); }
   }); };
   bindNum('sRate','ratePerLb'); bindNum('sFsc','fscPerMile'); bindNum('sDet','detentionPerHr');
   bindNum('sTgt','targetPct'); bindNum('sWear','wearPerMile');
-  bindNum('sDrvDef','defaultDriverRate'); bindNum('sDays','operatingDaysPerYear');
+  bindNum('sDrvDef','defaultDriverRate', pushCanonicalSettings); bindNum('sDays','operatingDaysPerYear');
   bindNum('sTHrs','hoursPerTruckDay');
   bindNum('sMiles','annualMiles'); bindNum('sLoad','driverLoadingFactor');
   bindNum('sFscPct','defaultFscPercent');
@@ -12589,6 +12633,7 @@ function renderSet(){
       s.fuelPriceConfirmed = true;
       save(); renderSet(); renderDash(); renderCalc();
       toast('Fuel now '+money2(fuelPerMile())+'/mi');
+      pushCanonicalSettings();
     }); };
   stampFuel('sDiesel','currentDieselPricePerGal');
   stampFuel('sMPG','fleetAvgMPG');
@@ -12869,13 +12914,12 @@ window.addEventListener('resize',closeSugPop);
   /* v2.1.24 (2026-08-21): DEVICE-DRIFT WARNING.
      Fetches /canonical-settings from the worker, compares against this
      device's local state.settings for the "load-bearing" numbers
-     (fuel price, MPG, driver rate, sub flat rate). If ANY differ, drops
-     a red banner at the top that says exactly what drifted; tap to
-     overwrite local with canonical + re-render.
-     Motive: two devices (phone + laptop) can diverge if one manually
-     edits a number in Settings and the other never opens Settings.
-     Prior to v2.1.24 there was no signal a device was stale — you had
-     to know to compare. Boot-time check + tap-fix ends the guessing. */
+     (fuel price, MPG, driver rate). If ANY differ:
+       v2.1.25 auto-applies canonical so phone + computer match without a tap.
+       Banner remains as fallback if auto-apply throws.
+     v2.1.26: Settings edits POST the same fields back to the worker (see
+     pushCanonicalSettings) so the next device to open the app pulls them.
+     Auto-apply does NOT push — that would fight a just-saved edit. */
   setTimeout(__checkDeviceDrift, 3500);
   async function __checkDeviceDrift(){
     try{
@@ -13183,6 +13227,15 @@ SHADOW_TIMELINE_TEXT['2026-07-28'] = "**PARTIAL DAY — Phase 2 diff loop stoppe
 
 /* ---- v2.0 DATA: Changelog (in-app version history) ---- */
 const SHADOW_CHANGELOG = [
+  { ver:'v2.1.26-push-canonical-settings', date:'2026-08-24', changes:[
+    'Phone and computer now SHARE diesel price, fleet MPG, and default driver rate — not just pull a hardcoded copy',
+    'Saving those fields in Settings also updates the company copy on the worker (toast confirms, or says this device saved if the network is down)',
+    'Opening the app still auto-pulls (v2.1.25) so the other device matches without tapping anything',
+    'If the share toast says it could not update the other device, this phone/computer still saved — try again on Wi-Fi'
+  ]},
+  { ver:'v2.1.25-auto-sync-canonical', date:'2026-08-23', changes:[
+    'Opening the app auto-applies company diesel / MPG / driver rate when this device differs — no banner tap required'
+  ]},
   { ver:'v2.0.10-diamond-fcge-fix', date:'2026-08-14', changes:[
     'Fix 1 — Killed the Diamond standard-tier $508 T12M flat shortcut. defaultDiamondTiers().standard now bills off actual card math: $0.00650/lb × 52,000 lb min-weight × 1.33 FSC = $449.54/load. useT12M flipped to false and a per-tier minWeight:52000 field was added (honored by an updated tierCardRevenue). The old T12M average included Harris ($1,100) and Fosters ($575) premium loads in the numerator, pulling the standard baseline up by ~$60/load — the biggest single driver of the Aug 1-12 over-count.',
     'Fix 2 — Added FCGE-origin lanes for ARDENT / PURINA / FARMERS to POC_LANE_RATES as twins of their FCG-origin counterparts (0.00425/32, 0.00525/32, 0.00525/32). Dispatch shows FCGE (elevator) origin; invoice bills the FCG chain — need both origin keys to match dispatch input.',
@@ -13611,7 +13664,7 @@ function renderV2WageSection(){
   }, 200);
   // Update the header version pill
   const verEl = document.getElementById('hdrVer');
-  if (verEl) verEl.textContent = 'v2.1.23-tiles-interactive-adm-port';
+  if (verEl) verEl.textContent = 'v2.1.26-push-canonical-settings';
 })();
 </script>
 </body>
