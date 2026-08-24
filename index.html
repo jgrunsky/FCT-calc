@@ -15399,7 +15399,7 @@ function renderV2WageSection(){
   }, 200);
   // Update the header version pill
   const verEl = document.getElementById('hdrVer');
-  if (verEl) verEl.textContent = 'v2.1.32-queue-tomorrow-preloads';
+  if (verEl) verEl.textContent = APP_VERSION.replace(/^\d{4}-\d{2}-\d{2}-/,'');
 })();
 </script>
 </body>
