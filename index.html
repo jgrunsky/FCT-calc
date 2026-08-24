@@ -11,7 +11,7 @@
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<meta name="app-version" content="2026-08-24-fct-calc-v2.1.28-shift-start-suggestions">
+<meta name="app-version" content="2026-08-24-fct-calc-v2.1.29-fill-missing-rates">
 <title data-id="th-modified">FCT Load Profitability — French Camp Transport</title>
 <link rel="manifest" href='data:application/manifest+json,{"name":"FCT Load Profitability","short_name":"FCT Calc","start_url":".","display":"standalone","background_color":"%2312100e","theme_color":"%2312100e","icons":[{"src":"data:image/svg%2Bxml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 192 192%27%3E%3Crect width=%27192%27 height=%27192%27 fill=%27%2312100e%27/%3E%3Ctext x=%2796%27 y=%27124%27 font-size=%2772%27 font-family=%27sans-serif%27 font-weight=%27700%27 fill=%27%238fb590%27 text-anchor=%27middle%27%3EFCT%3C/text%3E%3C/svg%3E","sizes":"192x192","type":"image/svg+xml"}]}'>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -680,6 +680,33 @@
   .missing-rates .mr-lead{font:600 12px/1.3 var(--body); color:var(--yellow)}
   .missing-rates .mr-sub{font:400 11px/1.3 var(--body); color:var(--text-muted); margin-top:2px}
   .missing-rates .mr-arrow{color:var(--yellow); font-size:14px; flex-shrink:0}
+  /* v2.1.29: editable missing-rates cards inside the bottom sheet */
+  .mr-edit{
+    background:var(--bg-inset);
+    border:1px solid var(--border);
+    border-radius:var(--radius);
+    padding:12px;
+    margin-bottom:10px;
+  }
+  .mr-edit .mr-lane{font:700 13.5px/1.3 var(--body); color:var(--text)}
+  .mr-edit .mr-meta{font:400 11.5px/1.4 var(--body); color:var(--text-muted); margin-top:3px}
+  .mr-edit .mr-using{font:400 11.5px/1.4 var(--body); color:var(--yellow); margin:8px 0 10px}
+  .mr-edit .fld{margin-bottom:8px}
+  .mr-adv{margin-top:4px}
+  .mr-adv summary{
+    font:600 11.5px/1.3 var(--body); color:var(--text-muted);
+    cursor:pointer; list-style:none; padding:4px 0;
+  }
+  .mr-adv summary::-webkit-details-marker{display:none}
+  .mr-adv summary:before{content:'▸ '; color:var(--text-faint)}
+  .mr-adv[open] summary:before{content:'▾ '}
+  .mr-adv .fld2{margin-top:8px}
+  .mr-save-bar{
+    position:sticky; bottom:0;
+    background:linear-gradient(180deg, transparent, var(--bg-elev) 18%);
+    padding:12px 0 0;
+    margin-top:4px;
+  }
 </style>
 <meta property="og:title" content="FCT Load Profitability — French Camp Transport" data-id="th-modified" ><meta name="description" content="index" data-id="th-modified" ><meta property="og:description" content="index" data-id="th-modified" ><meta property="og:image" content="https://tiiny.host/assets/logo-purple-bg.png" data-id="th-modified" ><meta property="og:image:width" content="1501" data-id="th-modified" ><meta property="og:image:height" content="1501" data-id="th-modified" ><meta property="og:image:type" content="image/png" data-id="th-modified" ><meta property="og:url" content="https://fct-calc-jax.tiiny.site/" data-id="th-modified" ><meta property="og:type" content="website" data-id="th-modified" ><script defer data-domain="fct-calc-jax.tiiny.site" src="https://analytics.tiiny.net/js/plausible.js"></script></head>
 <body>
@@ -1149,7 +1176,7 @@
    still exposes the Import JSON box for future refreshes.
    ============================================================= */
 
-const APP_VERSION = '2026-08-24-fct-calc-v2.1.28-shift-start-suggestions';
+const APP_VERSION = '2026-08-24-fct-calc-v2.1.29-fill-missing-rates';
 const STORAGE_KEY = 'fct-calc:state';
 const IDB_NAME = 'fct-calc-db';
 const IDB_STORE = 'kv';
@@ -1676,6 +1703,12 @@ const EXTRA_CUSTOMERS = ['Foster Farms'];
    loads sampled). Verified rates for the lanes we see running
    weekly; other POC-brokered lanes fall through to the customer
    avgRevenue.
+
+   v2.1.29: operator-typed fills from the missing-rates card live on
+   state.laneRateOverrides (localStorage via save()), not in this
+   table. pocLaneRevenue() consults those overrides after this
+   constant and before the blended $425 fallback. Do not bake live
+   fills into the source.
    ============================================================= */
 const POC_LANE_RATES_ASOF = '2026-08-14';
 const POC_MIN_WEIGHT = 52000;  // Min-weight billing floor seen on Coleman/Victoria/Spinella invoices.
@@ -1777,8 +1810,7 @@ function pocLaneRateFor(origin, destination, commodity){
   }
   return null;
 }
-function pocLaneRevenue(origin, destination, lbs, commodity){
-  const rule = pocLaneRateFor(origin, destination, commodity);
+function applyLaneRateRule(rule, lbs){
   if(!rule) return null;
   // v1.9: some POC lanes bill a flat per-load rate regardless of weight
   // (Perdue Farms FCGE→Diestel is $500 flat; the invoiced $/lb is just
@@ -1787,12 +1819,122 @@ function pocLaneRevenue(origin, destination, lbs, commodity){
   if(Number(rule.flatRate)>0){
     return { amount: Number(rule.flatRate), linehaul:Number(rule.flatRate), fsc:0, rule:rule, minWeightApplied:false };
   }
+  if(!(Number(rule.ratePerLb)>0)) return null;
   const raw = Number(lbs)||0;
   const w = raw > 0 ? Math.max(raw, POC_MIN_WEIGHT) : POC_MIN_WEIGHT;  // 52,000 lb billing floor.
   const linehaul = w * rule.ratePerLb;
   const fsc = linehaul * ((rule.fscPct||0)/100);
   return { amount: linehaul+fsc, linehaul:linehaul, fsc:fsc, rule:rule,
            minWeightApplied: raw > 0 && raw < POC_MIN_WEIGHT };
+}
+function pocLaneRevenue(origin, destination, lbs, commodity){
+  /* Compile-time matrix first; operator fills (missing-rates card)
+     next; caller falls back to blended avg when both miss. */
+  const rule = pocLaneRateFor(origin, destination, commodity)
+            || laneRateOverrideFor(origin, destination, commodity);
+  if(!rule) return null;
+  return applyLaneRateRule(rule, lbs);
+}
+
+/* =============================================================
+   OPERATOR LANE-RATE OVERRIDES (v2.1.29)
+   -------------------------------------------------------------
+   James types missing rates in the landing-page card. They persist
+   on state.laneRateOverrides via save() — not in POC_LANE_RATES.
+   Keyed by origin|dest|optional commodity (uppercase). Lookup is
+   consulted after the compile-time matrix and before the blended
+   $425 / bucket placeholder.
+   ============================================================= */
+function laneOverrideKey(origin, dest, commodity){
+  return String(origin||'').trim().toUpperCase()
+       + '|' + String(dest||'').trim().toUpperCase()
+       + '|' + String(commodity||'').trim().toUpperCase();
+}
+function mergeLaneRateOverrides(saved){
+  const out = {};
+  if(!saved || typeof saved !== 'object' || Array.isArray(saved)) return out;
+  Object.keys(saved).forEach(function(k){
+    try{
+      const v = saved[k];
+      if(!v || typeof v !== 'object') return;
+      const billing = v.billing === 'perLb' ? 'perLb' : 'flat';
+      const flatRate = Number(v.flatRate);
+      const ratePerLb = Number(v.ratePerLb);
+      const fscPct = Number(v.fscPct);
+      if(billing === 'flat' && !(flatRate > 0)) return;
+      if(billing === 'perLb' && !(ratePerLb > 0)) return;
+      const origin = String(v.origin||'');
+      const dest = String(v.dest||'');
+      const commodity = String(v.commodity||'');
+      const key = k || laneOverrideKey(origin, dest, commodity);
+      if(!key || key === '||') return;
+      out[key] = {
+        origin: origin, dest: dest, commodity: commodity,
+        billing: billing,
+        flatRate: billing === 'flat' ? flatRate : 0,
+        ratePerLb: billing === 'perLb' ? ratePerLb : 0,
+        fscPct: billing === 'perLb' && isFinite(fscPct) && fscPct >= 0 ? fscPct : 0,
+        savedAt: String(v.savedAt||'')
+      };
+    }catch(_){}
+  });
+  return out;
+}
+function laneOverrideOriginTrials(origin){
+  const raw = (typeof normOrigin === 'function') ? normOrigin(origin) : String(origin||'').toUpperCase().trim();
+  const asIs = String(origin||'').trim().toUpperCase();
+  const trials = [];
+  if(asIs) trials.push(asIs);
+  if(raw && trials.indexOf(raw) < 0) trials.push(raw);
+  if(!raw) return trials;
+  const beforeDash = raw.split(' - ')[0].trim();
+  if(beforeDash && trials.indexOf(beforeDash) < 0) trials.push(beforeDash);
+  const twoWord = raw.split(/\s+/).slice(0,2).join(' ');
+  if(twoWord && trials.indexOf(twoWord) < 0) trials.push(twoWord);
+  const firstWord = raw.split(/\s+/)[0];
+  if(firstWord && trials.indexOf(firstWord) < 0) trials.push(firstWord);
+  return trials;
+}
+function laneRateOverrideFor(origin, destination, commodity){
+  const map = state && state.laneRateOverrides;
+  if(!map) return null;
+  const dest = destination;
+  const comm = String(commodity||'');
+  const keys = [];
+  const push = function(o, d, c){
+    const k = laneOverrideKey(o, d, c);
+    if(k && keys.indexOf(k) < 0) keys.push(k);
+  };
+  laneOverrideOriginTrials(origin).forEach(function(o){
+    push(o, dest, comm);
+    if(comm) push(o, dest, '');
+  });
+  for(let i=0;i<keys.length;i++){
+    const v = map[keys[i]];
+    if(!v) continue;
+    if(v.billing === 'perLb' && Number(v.ratePerLb)>0){
+      return { origin:v.origin||origin, dest:v.dest||destination, commodity:v.commodity||'',
+               ratePerLb:Number(v.ratePerLb), fscPct:Number(v.fscPct)||0, flatRate:0, operator:true };
+    }
+    if(Number(v.flatRate)>0){
+      return { origin:v.origin||origin, dest:v.dest||destination, commodity:v.commodity||'',
+               flatRate:Number(v.flatRate), ratePerLb:0, fscPct:0, operator:true };
+    }
+  }
+  return null;
+}
+function laneRateBasisText(lane){
+  const rule = (lane && lane.rule) || {};
+  const src = rule.operator ? 'saved rate ' : 'POC lane ';
+  const o = rule.origin || '';
+  const d = rule.dest || '';
+  if(Number(rule.flatRate)>0){
+    return src + o + ' → ' + d + ' — $' + Number(rule.flatRate).toFixed(2) + ' flat per load';
+  }
+  return src + o + ' → ' + d
+       + ' — $' + Number(rule.ratePerLb).toFixed(5) + '/lb'
+       + (rule.fscPct ? ' + ' + rule.fscPct + '% FSC' : ' (no FSC)')
+       + (lane.minWeightApplied ? ' — min-weight floor 52,000 lb applied' : '');
 }
 
 /* =============================================================
@@ -2307,18 +2449,12 @@ function revenueForRow(r){
        ADM Port RICE) can be enforced — other commodities on the same lane
        fall through to the blended average. */
     const lane = pocLaneRevenue(r.origin, dest, r.lbs, r.commodity);
-    if(lane) return { amount: lane.amount, est:false,
-             basis: 'POC lane ' + lane.rule.origin + ' → ' + lane.rule.dest
-                  + (Number(lane.rule.flatRate)>0
-                       ? ' — $' + Number(lane.rule.flatRate).toFixed(2) + ' flat per load'
-                       : ' — $' + lane.rule.ratePerLb.toFixed(5) + '/lb'
-                         + (lane.rule.fscPct ? ' + ' + lane.rule.fscPct + '% FSC' : ' (no FSC)')
-                         + (lane.minWeightApplied ? ' — min-weight floor 52,000 lb applied' : '')) };
+    if(lane) return { amount: lane.amount, est:false, basis: laneRateBasisText(lane) };
     // No lane match: fall through to POC customer avgRevenue.
     const custRev = revenuePerLoad("Phil O'Connell Grain");
     if(custRev > 0) return { amount: custRev, est:true,
              basis: "POC — no lane match for origin '" + (r.origin||'?') + "' → '" + (dest||'?')
-                  + "' — using blended avg $" + custRev + '/load. Add this lane to POC_LANE_RATES.' };
+                  + "' — using blended avg $" + custRev + '/load.' };
   }
 
   if(label && T.labels[label]!=null && Number(T.labels[label])>0)
@@ -2331,6 +2467,14 @@ function revenueForRow(r){
   }
   const br = Number(T.buckets[b]);
   const placeholder = Number(state.settings.nonDiamondRevenuePerLoad)||500;
+  /* v2.1.29: operator-typed lane rates apply to non-POC placeholder
+     rows the same way they fill POC gaps — before the $500 guess. */
+  const dest2 = r.destLabel || r.destination || r.custLabel || '';
+  const ovRule = laneRateOverrideFor(r.origin, dest2, r.commodity);
+  if(ovRule){
+    const ovLane = applyLaneRateRule(ovRule, r.lbs);
+    if(ovLane) return { amount: ovLane.amount, est:false, basis: laneRateBasisText(ovLane) };
+  }
   return { amount: br>0?br:placeholder, est:true,
            basis: bucketMeta(b).label+' placeholder — no verified rate yet' };
 }
@@ -3351,6 +3495,10 @@ function defaultState(){
            diamondTiers:defaultDiamondTiers(), dispatchOps:defaultDispatchOps(),
            verizon:defaultVerizon(), verizonLive:defaultVerizonLive(),
            companyInfo:defaultCompanyInfo(), sms:defaultSmsConfig(),
+           /* v2.1.29: operator-typed missing-lane rates. Empty on a fresh
+              install; mergeLaneRateOverrides() unions a saved map on boot
+              the same way customerRates does. Never baked into POC_LANE_RATES. */
+           laneRateOverrides:{},
            /* v2.1.19: runtime-only fleet-day miles from the Verizon /miles
               endpoint. Not persisted — pulled fresh on boot / date change. */
            verizonMilesToday:{ fleetMiles:0, ok:false, error:null, fetchedAt:null, date:null },
@@ -3379,6 +3527,9 @@ function loadState(){
          and the new rate card would never take effect. Runs unconditionally
          and is idempotent; see reconcileCustomerRateCard(). */
       state.customerRates   = reconcileCustomerRateCard(mergeCustomerRates(p.customerRates), p.customerRates);
+      /* v2.1.29: same merge-over-empty-default pattern as customerRates —
+         a saved fill survives refresh/upgrade; a missing key lands {}. */
+      state.laneRateOverrides = mergeLaneRateOverrides(p.laneRateOverrides);
       state.dayRollup       = normalizeDayRollup(p.dayRollup);
       state.laneDefaults    = normalizeLaneDefaults(p.laneDefaults);
       state.dispatchImport  = normalizeDispatchImport(p.dispatchImport);
@@ -8468,13 +8619,14 @@ function drillContributionBody(){
 }
 
 /* =============================================================
-   v2.1.23 Missing-rates scanner
+   v2.1.23 Missing-rates scanner  ·  v2.1.29 fill-in editor
    -------------------------------------------------------------
    Walks today's active rows and flags any that priced off a
    fallback ("no lane match" / "placeholder — no verified rate").
    Groups by origin→destination so a single lane with 6 loads
    surfaces as one row, not six. Rendered as an amber alert card
-   on the landing view; tap to see the list.
+   on the landing view; tap to FILL the rates (saved on
+   state.laneRateOverrides). Do not edit POC_LANE_RATES for this.
    ============================================================= */
 function scanMissingRates(){
   const d = state.dayRollup;
@@ -8490,9 +8642,16 @@ function scanMissingRates(){
     );
     if(!isFallback) return;
     const raw = d.currentRows[idx] || {};
-    const key = (raw.origin||'?') + ' → ' + (raw.destLabel || raw.destination || raw.custLabel || '?')
-              + (raw.commodity ? ' · ' + raw.commodity : '');
-    if(!gaps[key]) gaps[key] = { key:key, origin:raw.origin, dest:raw.destLabel||raw.destination||raw.custLabel||'', commodity:raw.commodity||'', basis:basis, count:0, revenue:0 };
+    const origin = raw.origin || '';
+    const dest = raw.destLabel || raw.destination || raw.custLabel || '';
+    const commodity = raw.commodity || '';
+    const key = (origin||'?') + ' → ' + (dest||'?')
+              + (commodity ? ' · ' + commodity : '');
+    if(!gaps[key]) gaps[key] = {
+      key:key, origin:origin, dest:dest, commodity:commodity,
+      ovKey: laneOverrideKey(origin, dest, commodity),
+      basis:basis, count:0, revenue:0
+    };
     gaps[key].count += 1;
     gaps[key].revenue += r.revenue;
   });
@@ -8504,24 +8663,153 @@ function missingRatesCardHTML(){
   if(!gaps.length) return '';
   const total = gaps.reduce((a,g)=>a+g.count,0);
   return '<div class="missing-rates" id="missingRatesCard" data-tile="missing"'
-       + ' title="Tap to review the lanes falling back to the blended average or bucket placeholder.">'
+       + ' title="Tap to type the missing rates. Saved on this phone.">'
        + '<div>'
        + '<div class="mr-lead">⚠ ' + total + ' load' + (total===1?'':'s') + ' on ' + gaps.length + ' lane' + (gaps.length===1?'':'s') + ' using default rate</div>'
-       + '<div class="mr-sub">Tap to see which origin→destination pairs need a rate added.</div>'
+       + '<div class="mr-sub">Tap to add the missing rates.</div>'
        + '</div><div class="mr-arrow">→</div></div>';
+}
+
+function missingUsingLabel(g){
+  const per = g.count ? (g.revenue / g.count) : 0;
+  const why = /blended avg/i.test(g.basis||'') ? 'blended average'
+            : /placeholder/i.test(g.basis||'') ? 'placeholder'
+            : 'default rate';
+  return 'Currently using ' + why + ' ' + money(per) + '/load';
 }
 
 function drillMissingBody(){
   const gaps = scanMissingRates();
   if(!gaps.length) return '<p style="color:var(--green)">All active loads today matched a specific rate. No gaps.</p>';
-  let h = '<h4>Lanes falling back to defaults</h4>';
-  gaps.forEach(g => {
-    h += '<div class="row"><div class="k">' + esc(g.key) + '</div>'
-       + '<div class="v">' + g.count + ' load' + (g.count===1?'':'s') + ' · ' + money(g.revenue) + '</div></div>';
-    h += '<div class="row" style="border-bottom:none;padding:0 0 8px"><div class="k" style="font-size:10px;color:var(--text-faint);font-style:italic">' + esc(g.basis) + '</div><div class="v"></div></div>';
+  let h = '<h4>Type the rate FCT bills</h4>';
+  gaps.forEach((g, i) => {
+    const lane = (g.origin||'?') + ' → ' + (g.dest||'?');
+    const meta = (g.commodity ? esc(g.commodity) + ' · ' : '')
+               + g.count + ' load' + (g.count===1?'':'s');
+    h += '<div class="mr-edit" data-mr-card="1"'
+      + ' data-origin="'+esc(g.origin||'')+'"'
+      + ' data-dest="'+esc(g.dest||'')+'"'
+      + ' data-commodity="'+esc(g.commodity||'')+'">'
+      + '<div class="mr-lane">'+esc(lane)+'</div>'
+      + '<div class="mr-meta">'+meta+'</div>'
+      + '<div class="mr-using">'+esc(missingUsingLabel(g))+'</div>'
+      + '<div class="fld"><label for="mrFlat'+i+'">Rate per load ($)</label>'
+      + '<input id="mrFlat'+i+'" type="number" inputmode="decimal" step="1" min="0"'
+      + ' placeholder="e.g. 500" data-mr-flat autocomplete="off"></div>'
+      + '<details class="mr-adv"><summary>Or bill by pound ($/lb + FSC%)</summary>'
+      + '<div class="fld2">'
+      + '<div class="fld"><label for="mrLb'+i+'">$ per lb</label>'
+      + '<input id="mrLb'+i+'" type="number" inputmode="decimal" step="0.00001" min="0"'
+      + ' placeholder="e.g. 0.00525" data-mr-lb autocomplete="off"></div>'
+      + '<div class="fld"><label for="mrFsc'+i+'">FSC %</label>'
+      + '<input id="mrFsc'+i+'" type="number" inputmode="decimal" step="1" min="0"'
+      + ' placeholder="0" data-mr-fsc autocomplete="off"></div>'
+      + '</div></details>'
+      + '</div>';
   });
-  h += '<div class="sub">Add these to POC_LANE_RATES (or the customer rate card) so revenue prices off a real number instead of a placeholder.</div>';
+  h += '<div class="mr-save-bar"><button type="button" class="act" id="mrSaveAll">Save rates</button></div>'
+    + '<div class="sub">Dollar per load is what most FCT bills look like. Saved on this phone — survives refresh. Cancel / × just closes.</div>';
   return h;
+}
+
+function parseMoneyInput(raw){
+  const s = String(raw==null?'':raw).trim().replace(/[$,%\s]/g,'').replace(/,/g,'');
+  if(!s) return { empty:true };
+  const n = parseFloat(s);
+  if(!isFinite(n)) return { error:true };
+  return { value:n };
+}
+
+function readMissingRateCard(card){
+  if(!card) return { skip:true };
+  const origin = card.getAttribute('data-origin') || '';
+  const dest = card.getAttribute('data-dest') || '';
+  const commodity = card.getAttribute('data-commodity') || '';
+  const lane = (origin||'?') + ' → ' + (dest||'?');
+  const flatEl = card.querySelector('[data-mr-flat]');
+  const lbEl = card.querySelector('[data-mr-lb]');
+  const fscEl = card.querySelector('[data-mr-fsc]');
+  const lb = parseMoneyInput(lbEl && lbEl.value);
+  const flat = parseMoneyInput(flatEl && flatEl.value);
+  const fsc = parseMoneyInput(fscEl && fscEl.value);
+  if(lb.error) return { error: 'Check $ per lb on ' + lane };
+  if(flat.error) return { error: 'Check $ per load on ' + lane };
+  if(fsc.error) return { error: 'Check FSC % on ' + lane };
+  if(fsc.value != null && fsc.value < 0) return { error: 'FSC % cannot be negative on ' + lane };
+  if(!lb.empty && !(lb.value > 0)) return { error: 'Enter a $ per lb greater than 0 on ' + lane };
+  if(!flat.empty && !(flat.value > 0)) return { error: 'Enter a $ per load greater than 0 on ' + lane };
+  if(lb.empty && flat.empty) return { skip:true, origin:origin, dest:dest, commodity:commodity };
+  if(!lb.empty){
+    return {
+      origin:origin, dest:dest, commodity:commodity,
+      billing:'perLb', ratePerLb:lb.value,
+      fscPct: fsc.empty ? 0 : fsc.value,
+      flatRate:0
+    };
+  }
+  return {
+    origin:origin, dest:dest, commodity:commodity,
+    billing:'flat', flatRate:flat.value, ratePerLb:0, fscPct:0
+  };
+}
+
+function saveFilledMissingRates(){
+  try{
+    const modal = document.getElementById('lsModal');
+    if(!modal) return;
+    const cards = Array.prototype.slice.call(modal.querySelectorAll('[data-mr-card]'));
+    if(!cards.length){ toast('Nothing to save'); return; }
+    const filled = [];
+    for(let i=0;i<cards.length;i++){
+      const parsed = readMissingRateCard(cards[i]);
+      if(parsed.error){ toast(parsed.error); return; }
+      if(parsed.skip) continue;
+      filled.push(parsed);
+    }
+    if(!filled.length){ toast('Type a dollar amount first'); return; }
+    if(!state.laneRateOverrides || typeof state.laneRateOverrides !== 'object'){
+      state.laneRateOverrides = {};
+    }
+    const now = new Date().toISOString();
+    filled.forEach(function(v){
+      const key = laneOverrideKey(v.origin, v.dest, v.commodity);
+      state.laneRateOverrides[key] = {
+        origin:v.origin, dest:v.dest, commodity:v.commodity,
+        billing:v.billing, flatRate:v.flatRate||0,
+        ratePerLb:v.ratePerLb||0, fscPct:v.fscPct||0,
+        savedAt: now
+      };
+    });
+    save();
+    let left = 0;
+    try { renderDayRollup(); } catch(_){}
+    try { renderQueue(); } catch(_){}
+    try { left = scanMissingRates().length; } catch(_){}
+    const n = filled.length;
+    toast(n===1 ? 'Rate saved' : n + ' rates saved');
+    try {
+      if(left){
+        openLsModal('Add missing rates', drillMissingBody());
+        wireMissingRatesEditor();
+      } else {
+        closeLsModal();
+      }
+    } catch(_){}
+  }catch(e){
+    toast('Could not save that rate');
+  }
+}
+
+function wireMissingRatesEditor(){
+  const btn = document.getElementById('mrSaveAll');
+  if(btn) btn.addEventListener('click', saveFilledMissingRates);
+  const modal = document.getElementById('lsModal');
+  if(!modal) return;
+  modal.querySelectorAll('[data-mr-flat],[data-mr-lb],[data-mr-fsc]').forEach(function(el){
+    el.addEventListener('keydown', function(e){
+      if(e.key === 'Enter'){ e.preventDefault(); saveFilledMissingRates(); }
+    });
+  });
 }
 
 /* Dispatch a tile click to the right drill-in generator. */
@@ -8532,7 +8820,7 @@ function openTileDrill(tile){
     case 'calibration':  openLsModal('Calibration', drillCalibrationBody()); break;
     case 'trucks':       openLsModal('Trucks reporting', drillTrucksBody()); break;
     case 'contribution': openLsModal("Today's contribution — top / bottom loads", drillContributionBody()); break;
-    case 'missing':      openLsModal('Missing rates', drillMissingBody()); break;
+    case 'missing':      openLsModal('Add missing rates', drillMissingBody()); wireMissingRatesEditor(); break;
     default: break;
   }
 }
@@ -13245,6 +13533,11 @@ SHADOW_TIMELINE_TEXT['2026-07-28'] = "**PARTIAL DAY — Phase 2 diff loop stoppe
 
 /* ---- v2.0 DATA: Changelog (in-app version history) ---- */
 const SHADOW_CHANGELOG = [
+  { ver:'v2.1.29-fill-missing-rates', date:'2026-08-24', changes:[
+    'The brown “using default rate” card on the landing page is now something you can fill, not just a list of origin→destination pairs',
+    'Tap it, type the $ per load FCT bills (or optional $/lb + FSC% if that is how the lane invoices), tap Save rates. That number is stored on this phone and today’s loads reprice off it — the lane drops off the card',
+    'Does not change the built-in POC rate table. Queue scoring, diesel, and PNG-as-Diamond for driver suggestions stay as v2.1.28 left them'
+  ]},
   { ver:'v2.1.28-shift-start-suggestions', date:'2026-08-24', changes:[
     'Queue was putting Greg on every open load. That was a regression, not how dispatch is supposed to work',
     'Cause: v2.1.23 added PNG to the POC origin list so Perdue corn could find a rate. Combined with the Diamond/POC driver split, that made every PNG driver look like a POC driver and emptied the suggestion list. The dropdown then fell through to the roster, and Greg is first on that list',
@@ -13694,7 +13987,7 @@ function renderV2WageSection(){
   }, 200);
   // Update the header version pill
   const verEl = document.getElementById('hdrVer');
-  if (verEl) verEl.textContent = 'v2.1.28-shift-start-suggestions';
+  if (verEl) verEl.textContent = 'v2.1.29-fill-missing-rates';
 })();
 </script>
 </body>
