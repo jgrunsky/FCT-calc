@@ -10,16 +10,20 @@
 
 export const KV_KEY_CANONICAL_SETTINGS = "canonical_settings";
 
-/** Shipped defaults — same numbers the live worker served as hardcoded JSON. */
+/** Shipped defaults — QBO-aligned live pricing, not EIA retail.
+ *  $4.50/gal ÷ 6 MPG = $0.75/mi ≈ QBO T12M fuel ~$724k / ~965k miles.
+ *  EIA CA weekly avg lives on eiaCaRetailFuelPricePerGal as REFERENCE ONLY.
+ *  Do not copy that field into live fuelPricePerGal. */
 export const CANONICAL_SETTINGS_DEFAULTS = {
-  fuelPricePerGal: 6.919,
-  fleetAvgMPG: 6.3,
+  fuelPricePerGal: 4.50,
+  fleetAvgMPG: 6.0,
   defaultDriverRate: 22.28,
   subFlatRate: 150,
+  eiaCaRetailFuelPricePerGal: 6.919,
   laneMilesHash: "v2.1.23-adm-port",
   rateTableHash: "v2.1.23-perdue-org-corn",
   computedAt: "2026-08-21T00:00:00Z",
-  note: "Company-wide settings. Phone and computer both read and write this."
+  note: "Live diesel/MPG are QBO-aligned ($4.50 / 6 MPG). eiaCaRetailFuelPricePerGal is EIA CA retail — reference only, do not use for load pricing. Operator Settings edits overwrite live fields via POST."
 };
 
 const POSITIVE_FIELDS = ["fuelPricePerGal", "fleetAvgMPG", "defaultDriverRate"];

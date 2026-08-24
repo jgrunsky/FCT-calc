@@ -1,6 +1,7 @@
 /* fct-verizon Worker
- * Production snapshot (Cloudflare, 2026-08-21) plus v0.13 KV-backed
+ * Production snapshot (Cloudflare, 2026-08-21) plus KV-backed
  * /canonical-settings (GET from FCT_VERIZON KV, POST/PUT write).
+ * v0.14: live fuel defaults are QBO $4.50 / 6 MPG, not EIA $6.919.
  *
  * Original deploy was wrangler/esbuild-bundled (hence __name helpers).
  * Keep /latest, /miles, /signals, /calibration, /dispatch-log, /health.
@@ -167,7 +168,7 @@ var index_default = {
       if (url.pathname === "/") {
         return json({
           service: "fct-verizon",
-          version: "v0.13-canonical-settings-kv-2026-08-24",
+          version: "v0.14-canonical-settings-qbo-defaults-2026-08-24",
           endpoints: ["/health", "/latest", "/miles", "/miles-real", "/miles-today", "/miles-yesterday", "/miles/range", "/signals", "/calibration", "/canonical-settings (GET+POST/PUT)", "/dispatch-log (POST)", "/debug/auth", "/debug/token", "/debug/refresh", "/debug/miles-probe", "/debug/calibration-inputs"]
         });
       }

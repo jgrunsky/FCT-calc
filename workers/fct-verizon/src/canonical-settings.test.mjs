@@ -66,12 +66,13 @@ function envWith(kv) {
 // --- load fallback ---
 {
   const loaded = await loadCanonicalSettings({});
-  assert.equal(loaded.fuelPricePerGal, 6.919);
+  assert.equal(loaded.fuelPricePerGal, 4.50);
 }
 {
   const loaded = await loadCanonicalSettings(envWith(new MockKV({ fuelPricePerGal: 6.5 })));
   assert.equal(loaded.fuelPricePerGal, 6.5);
-  assert.equal(loaded.fleetAvgMPG, 6.3, "missing KV fields fall back to defaults");
+  assert.equal(loaded.fleetAvgMPG, 6.0, "missing KV fields fall back to QBO-aligned defaults");
+  assert.equal(loaded.eiaCaRetailFuelPricePerGal, 6.919, "EIA reference is not live fuel");
 }
 
 // --- HTTP GET fallback ---
@@ -82,8 +83,9 @@ function envWith(kv) {
   );
   assert.equal(res.status, 200);
   const body = await res.json();
-  assert.equal(body.fuelPricePerGal, 6.919);
-  assert.equal(body.fleetAvgMPG, 6.3);
+  assert.equal(body.fuelPricePerGal, 4.50);
+  assert.equal(body.fleetAvgMPG, 6.0);
+  assert.equal(body.eiaCaRetailFuelPricePerGal, 6.919);
   assert.ok(body.servedAt);
   assert.equal(res.headers.get("access-control-allow-origin"), "*");
 }
@@ -110,6 +112,7 @@ function envWith(kv) {
   assert.equal(saved.ok, true);
   assert.equal(saved.fuelPricePerGal, 7.01);
   assert.equal(saved.updatedFrom, "fct-calc");
+  assert.equal(saved.eiaCaRetailFuelPricePerGal, 6.919, "operator push must not wipe EIA reference");
 
   const get = await handleCanonicalSettingsRequest(
     new Request("https://example/canonical-settings"),
