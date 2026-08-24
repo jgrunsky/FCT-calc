@@ -194,15 +194,14 @@ assert.equal(looksLikeAdpAoa([['Date','Driver','Grower','FB','Commodity']]), fal
 
 {
   // Modelled: $400 var of which $144 is driver. ADP field $677.38 → var = 400-144+677.38
-  // No other-plug arg → same as v2.1.33/34 (other stays).
   const next = applyAdpToModeled(400, 144, 677.38);
   assert.equal(Math.round(next*100)/100, 933.38);
   assert.equal(applyAdpToModeled(400, 144, null), 400);
-  // v2.1.35: ADP days drop the EST other plug (~$35/load). Wear/sub are not in this swap.
+  // Leftover other plug still drops on ADP days (v2.1.36 default other is $0).
   const withPlug = applyAdpToModeled(400, 144, 677.38, 35);
   assert.equal(Math.round(withPlug*100)/100, 898.38);
-  assert.equal(stripAdpOtherPlug(350, 350, true), 0, 'ADP day: other plug drops to 0');
-  assert.equal(stripAdpOtherPlug(350, 350, false), 350, 'EST day: other plug stays');
+  assert.equal(stripAdpOtherPlug(350, 350, true), 0, 'ADP day: leftover other plug drops to 0');
+  assert.equal(stripAdpOtherPlug(0, 0, false), 0, 'EST day with settings other=0 stays 0');
   assert.equal(stripAdpOtherPlug(500, 350, true), 150, 'ADP day: keep override lump, drop plug only');
   assert.equal(stripAdpOtherPlug(150, 0, true), 150, 'ADP day: Lopez/Prado $150 is not the other plug');
 }
@@ -266,6 +265,18 @@ assert.equal(looksLikeAdpAoa([['Date','Driver','Grower','FB','Commodity']]), fal
   assert.equal(Math.round((mtd.opsNet - mtd.net)*100)/100, 49106.18, 'gap is exactly wear/other');
   const estDay = pnlFinishLines({ rev: 20217.68, driver: 5191.24, fuel: 1515.84, wearOther: 2877.23, fixed: 6008 });
   assert.ok(estDay.opsNet > estDay.net, 'EST day still gets an Ops net above After wear');
+}
+
+{
+  /* v2.1.36: other ships at $0; wear is 2025 QBO 313.2+3+4 / 900k mi. */
+  assert.ok(/otherVariablePerLoad:\s*0\b/.test(html), 'default otherVariablePerLoad is 0');
+  assert.ok(/wearPerMile:\s*0\.478\b/.test(html), 'default wearPerMile is $0.478');
+  assert.ok(!/otherVariablePerLoad:\s*35/.test(html), 'shipped $35 other plug is gone');
+  const wearAnnual = 0.478 * 900000;
+  assert.equal(wearAnnual, 430200);
+  assert.ok(Math.abs(wearAnnual - 430491) < 500, '900k mi × $0.478 ≈ $430k last-year shop');
+  const shop = 319811 + 75893 + 34787;
+  assert.equal(shop, 430491);
 }
 
 console.log('adp-daily-totals.test.mjs: ok');

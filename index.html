@@ -11,7 +11,7 @@
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<meta name="app-version" content="2026-08-24-fct-calc-v2.1.35-ops-net">
+<meta name="app-version" content="2026-08-24-fct-calc-v2.1.36-wear-qbo">
 <title data-id="th-modified">FCT Load Profitability — French Camp Transport</title>
 <link rel="manifest" href='data:application/manifest+json,{"name":"FCT Load Profitability","short_name":"FCT Calc","start_url":".","display":"standalone","background_color":"%2312100e","theme_color":"%2312100e","icons":[{"src":"data:image/svg%2Bxml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 192 192%27%3E%3Crect width=%27192%27 height=%27192%27 fill=%27%2312100e%27/%3E%3Ctext x=%2796%27 y=%27124%27 font-size=%2772%27 font-family=%27sans-serif%27 font-weight=%27700%27 fill=%27%238fb590%27 text-anchor=%27middle%27%3EFCT%3C/text%3E%3C/svg%3E","sizes":"192x192","type":"image/svg+xml"}]}'>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -1420,7 +1420,7 @@
    still exposes the Import JSON box for future refreshes.
    ============================================================= */
 
-const APP_VERSION = '2026-08-24-fct-calc-v2.1.35-ops-net';
+const APP_VERSION = '2026-08-24-fct-calc-v2.1.36-wear-qbo';
 const STORAGE_KEY = 'fct-calc:state';
 const IDB_NAME = 'fct-calc-db';
 const IDB_STORE = 'kv';
@@ -2555,7 +2555,7 @@ function defaultFixedStack(){
   return [
     { k:'insurance',    label:'Insurance (liability + health + life, WC moved to variable)', amount:598000, on:true,  verified:true,
       note:'v2.1.17c: recalibrated. QBO 304 YTD-Aug $446,731 / 232 days × 365 = $703K/yr TOTAL insurance. WC (~$104K) moved to variable side. Non-WC insurance = $703K - $104K = ~$599K. Liability ~$465K, Health ~$130K, Life ~$2K, other ~$2K.' },
-    { k:'truckLease',   label:'Truck lease',          amount:470000, on:true,  verified:true, note:'v2.0.6: QBO 313.8 long-term lease, matches 2025 ($469,251) + 2026 pace ($472K) — extraordinarily stable' },
+    { k:'truckLease',   label:'Truck lease',          amount:470000, on:true,  verified:true, note:'v2.0.6: QBO 313.8 long-term lease, matches 2025 ($469,251) + 2026 pace ($472K) — extraordinarily stable. v2.1.36 FLAG only: James 2025 P&L screenshot showed ~$171k on 313.8 — amount NOT changed in this build.' },
     { k:'officeWages',  label:'Office wages + taxes', amount:267821, on:true,  verified:true,
       note:'v2.0.6: 4 hourly office staff (Vince $24/hr + Jeremy $25 + Kelly $26 + Rene $20 = $197,600 base) × 1.3553 loading. Was a plug line pre-v2.0.6.' },
     { k:'officerWages', label:'Officer wages',        amount:332241, on:true,  verified:true,
@@ -2637,12 +2637,11 @@ function variableComponents(milesOv, hoursOv, rateOv){
      reconciliation view — this line just stops charging it to every load.
      James note 2026-08-12: Sunday sub volume trending down, so the stale
      historical amortization is even further from current reality. */
-  /* EST days keep this $35 plug. On closed days that use ADP field
-     dollars, accumulatePnlByDay / applyAdpToModeled drop it to 0 —
-     ADP already includes REGULAR/OT/meals/sick/vacation, tarps+wash
-     already live in wearPerMile, and there is no tarps/tow residue
-     setting. Do not zero this here: Queue scoring and open-today EST
-     still need the plug. Wear and the $150 Lopez/Prado sub stay. */
+  /* v2.1.36: otherVariablePerLoad ships at $0. The old $35 plug is not
+     in 2025 QBO shop bills (313.2/3/4). Tarps $510 already sit inside
+     313.2, so they are in wearPerMile. A leftover operator-typed other
+     still drops on ADP days via applyAdpToModeled. Wear and the $150
+     Lopez/Prado sub stay. */
   const other= Number(s.otherVariablePerLoad)||0;
   return [
     { k:'fuel',   label:'Fuel',              amount: mi*fuelPerMile(),
@@ -2650,11 +2649,11 @@ function variableComponents(milesOv, hoursOv, rateOv){
     { k:'driver', label:'Driver',            amount: hrs*rate,
       basis: num(hrs,2)+' hr × '+money2(rate)+' loaded' },
     { k:'wear',   label:'Wear / maintenance',amount: mi*wear,
-      basis: num(mi)+' mi × '+money2(wear)+'/mi — R&M $302K + tires $55K + wash $35K ÷ 965K mi ≈ $0.41/mi, held at $0.35' },
+      basis: num(mi)+' mi × '+money2(wear)+'/mi — 2025 QBO 313.2 R&M $319,811 + 313.3 tires $75,893 + 313.4 wash $34,787 = $430,491 ÷ 900,000 fleet mi = $0.478/mi' },
     { k:'subhauler', label:'Subhauler pro-rata', amount: 0,
       basis: 'v2.0.9: subhauler now tracked per-load ($150/load for Lopez/<name> · Prado/<name> subs, applied in computeDayRow); historical pool baseline '+money(Number(s.subhaulerPerYear)||0)+'/yr disabled here to prevent double-count with the per-load charge' },
     { k:'other',  label:'Other / unallocated', amount: other,
-      basis: 'EST plug: driver non-productive paid time + tarps/wash/tow. Dropped on ADP field-dollar days (v2.1.35) so it does not double-count clocked pay. Tarps/wash already sit in wearPerMile; no separate tarps/tow residue setting' },
+      basis: 'v2.1.36: $0. Not in 2025 QBO 313.2/3/4. Tarps $510 live in 313.2 (wear). Old $35/load plug was fake on EST and ADP days' },
   ];
 }
 function variableCostPerLoad(){ return variableComponents().reduce((a,c)=>a+c.amount,0); }
@@ -3100,7 +3099,7 @@ function defaultSettings(){
     // R&M + tires + wash line is $302K + $55K + $35K = $392K over ~965K
     // miles = $0.41/mi; held at $0.35 because part of that sits in the
     // subhauler line, which is booked separately below.
-    wearPerMile: 0.53,   // v2.0.6: QBO 313.2+.3+.4+.9+.10 2025 sum $475,365 / ~900K fleet mi = $0.53/mi
+    wearPerMile: 0.478,  // v2.1.36: 2025 QBO 313.2 $319,811 + 313.3 $75,893 + 313.4 $34,787 = $430,491 ÷ 900,000 fleet mi (same divisor as v2.0.6's $0.53) = $0.478/mi → $430,200/yr. Excludes 313.6 tolls, 313.7 licenses, 313.8 lease.
     // v1.2: fuel cost per mile is DERIVED from diesel price ÷ fleet MPG
     // (see fuelPerMile()), not stored, so it tracks the pump instead of
     // drifting. $4.50/gal ÷ 6.0 MPG = $0.75/mi.
@@ -3137,7 +3136,7 @@ function defaultSettings(){
     avgMilesPerLoad: 50,         // v2.1.17c: James 2026-08-20 corrected — real FC→PNG→Ripon→FC round trip = ~50 mi (FC→Stockton ~15, Stockton→Ripon ~22, Ripon→FC ~13). Was 80 based on total fleet-mile/load-count ratio which included Harris + longer-haul loads.
     hoursPerLoad: 5,             // total time on load, Diamond dispatch
     subhaulerPerYear: 363000,    // QBO 326 — booked as its own per-load line
-    otherVariablePerLoad: 35.00, // v2.1.17b: was $21.02. Bumped to absorb WC (moved from Insurance fixed) at ~$14/load. Real WC = $104K/yr ÷ ~7500 loads = $13.87/load. Plus small residuals. v2.1.35: EST days only — ADP field-dollar days drop this plug (no tarps/tow residue setting; tarps/wash already in wearPerMile).
+    otherVariablePerLoad: 0,     // v2.1.36: was $35 (then $21.02). Not in 2025 QBO shop bills. Tarps $510 already in 313.2 / wearPerMile. Fake on EST and ADP days.
     /* Non-Diamond revenue is a PLACEHOLDER. Diamond is calibrated to T12M and
        bills off the 30% FSC card; the other three buckets have no verified
        rate yet, so they ship at $500 and are flagged EST wherever they land.
@@ -4030,6 +4029,25 @@ function loadState(){
         state.settings.migrated_v206 = true;
         try { save(); } catch(_){}
         window.__v206MigrationJustRan = true;
+      }
+
+      /* v2.1.36 (2026-08-24, James 2025 QBO shop actuals):
+         otherVariablePerLoad $35 was not in 313.2/3/4 — drop shipped plugs
+         to $0 (EST and ADP). Recalibrate wearPerMile from the old $0.53
+         ($475k / 900k mi, a bit high) to $0.478 so 900k mi × rate ≈ $430k
+         (313.2 $319,811 + 313.3 $75,893 + 313.4 $34,787). Do not touch
+         diesel, MPG, 313.7 licenses, or 313.8 lease. */
+      if(!state.settings.migrated_v2136){
+        const oth = Number(state.settings.otherVariablePerLoad);
+        const SHIPPED_OTHER = [21.02, 35];
+        if(state.settings.otherVariablePerLoad == null || SHIPPED_OTHER.indexOf(oth) >= 0)
+          state.settings.otherVariablePerLoad = 0;
+        const w = Number(state.settings.wearPerMile);
+        const SHIPPED_WEAR36 = [0.20, 0.26, 0.35, 0.53];
+        if(state.settings.wearPerMile == null || SHIPPED_WEAR36.indexOf(w) >= 0)
+          state.settings.wearPerMile = 0.478;
+        state.settings.migrated_v2136 = true;
+        try { save(); } catch(_){}
       }
 
       /* v2.0.5 (2026-08-05, James directive "both devices must match"):
@@ -7296,11 +7314,9 @@ function findAdpColumns(aoa){
 }
 
 /* Day-level rule: replace modelled driver wages with ADP field-driver
-   dollars. Fuel / wear / sub-haul stay. The EST otherVariablePerLoad
-   plug (~$35: non-productive paid time + tarps/wash/tow) drops — ADP
-   already includes REGULAR/OT/meals/sick/vacation, and tarps/wash
-   already live in wearPerMile. No tarps/tow residue setting exists.
-   Do not invent a $/hr from ADP. */
+   dollars. Fuel / wear / sub-haul stay. otherVariablePerLoad ships at
+   $0 (v2.1.36) — if a leftover plug is still on the save, drop it when
+   ADP field dollars apply. Do not invent a $/hr from ADP. */
 function stripAdpOtherPlug(otherCost, otherPlug, usesAdp){
   const o = Number(otherCost)||0;
   if(!usesAdp) return o;
@@ -7591,7 +7607,7 @@ function applyAdpDayTotals(dateISO, T){
      Only swap when the day has loads; otherwise ADP would become a
      no-revenue labor charge on an empty picker. Today (openDate) stays
      on the model unless this file was an after-close re-drop.
-     Fuel / wear / $150 sub stay. The EST other plug drops (v2.1.35). */
+     Fuel / wear / $150 sub stay. A leftover other plug still drops. */
   const adp = adpFieldDay(dateISO);
   T.adp = adp;
   T.estVarCost = T.varCost;
@@ -8126,9 +8142,9 @@ function computeDayRow(r){
     }
     varCost = fuelCost + driverCost + wearCost + otherCost + subHaulCost;
   }
-  /* The $35 otherVariablePerLoad plug only — not a varCostOverride lump
-     and not the Lopez/Prado $150. ADP days subtract this so clocked pay
-     is not double-counted; wear and sub stay. */
+  /* The otherVariablePerLoad plug only — not a varCostOverride lump
+     and not the Lopez/Prado $150. Ships at $0 (v2.1.36). ADP days still
+     subtract a leftover so clocked pay is not double-counted. */
   const otherPlug = (varOv>0 || isSubHaul) ? 0 : (Number(otherCost)||0);
 
   const cm = revenue - varCost;
@@ -8178,7 +8194,7 @@ function computeDay(){
   act.forEach(r=>{ T.revenue+=r.revenue; T.varCost+=r.varCost; T.cm+=r.cm; T.hours+=r.hours; T.cardRevenue+=r.cardRevenue; T.driverCost+=(Number(r.driverCost)||0); T.otherPlug+=(Number(r.otherPlug)||0); });
   /* v2.1.33: when ADP field-driver actuals cover a CLOSED date, swap the
      modelled driver-wage component for that day's ADP dollars. Fuel,
-     wear, and sub-haul stay. v2.1.35 also drops the EST other plug.
+     wear, and sub-haul stay. A leftover other plug still drops.
      Today stays on the model unless the file was re-dropped after close.
      Hours on a closed day become ADP hours. */
   applyAdpDayTotals(d.date, T);
@@ -8342,7 +8358,6 @@ function dayTotalsHTML(d){
     + line('Total revenue', T.loads+' load'+(T.loads===1?'':'s')+' at bucket rates', money2(T.revenue))
     + line('Total variable cost', T.varSource==='ADP'
         ? '<span class="chip g">ADP</span> field-driver '+money(T.driverCost)+' + modelled fuel/wear/sub'
-          + ' (the $35 other plug is off — ADP already has that paid time)'
           + (T.estDriverCost!=null ? ' · was '+money(T.estDriverCost)+' estimated driver' : '')
         : T.loads+' × '+money(variableCostPerLoad())+'/load — fuel + driver + wear + subhauler + unallocated',
         '−'+money2(T.varCost),'var(--red)')
@@ -8604,8 +8619,9 @@ function runningTotals(refDate){
    v2.1.34 P&L board (James 2026-08-24)
    v2.1.35: two nets — Ops (rev − wages − fuel − fixed) is the
    headline James means; After wear is fully loaded (still subtracts
-   wear + remaining other + Lopez/Prado $150). ADP days drop the
-   $35 otherVariablePerLoad plug so clocked pay is not double-counted.
+   wear + remaining other + Lopez/Prado $150).
+   v2.1.36: otherVariablePerLoad is $0 (not in 2025 QBO 313.2/3/4).
+   Wear is $0.478/mi so 900k fleet mi × rate ≈ $430k last-year shop.
    -------------------------------------------------------------
    The landing-strip DAY/WTD/MTD chips were too small — payroll looked
    buried. This board is the thing to LOOK at: revenue, driver wages,
@@ -8672,7 +8688,7 @@ function accumulatePnlByDay(){
       b.driver = adp.dollars;
       b.driverSrc = 'ADP';
       b.hours = adp.hours;
-      /* Drop the EST $35 other plug only. Wear and Lopez/Prado $150 stay.
+      /* Drop a leftover other plug. Wear and Lopez/Prado $150 stay.
          varCostOverride lumps are not in otherPlug, so they remain in other. */
       b.other = stripAdpOtherPlug(b.other, b.otherPlug, true);
       b.otherPlug = 0;
@@ -8861,8 +8877,8 @@ function pnlBoardHTML(dateISO){
     + '<p class="pnl-lede">Actual profit and loss for the day in view, plus week and month through today. '
     + 'Closed days use ADP field-driver dollars. Fuel uses Verizon fleet miles when we have them, otherwise the lane estimate. '
     + '<b>Ops net</b> is revenue minus driver wages, fuel, and fixed — that is the number to look at for the month. '
-    + '<b>After wear</b> still subtracts wear / other / sub-haul. Wear stays on the board so nothing is hidden. '
-    + 'On ADP days the $35 other plug is off (clocked pay already includes that time); EST days keep it. '
+    + '<b>After wear</b> still subtracts wear and any sub-haul. Wear stays on the board so nothing is hidden. '
+    + 'Wear is last-year shop actuals (313.2+313.3+313.4 ≈ $430k/yr). There is no $35 other plug — that was not in QBO. '
     + 'Office payroll is listed underneath — it is not inside load variable.'
     + openNote+'</p>'
     + '<div class="pnl-cols">'
@@ -13336,7 +13352,7 @@ function renderSet(){
       + nf('sHrsLoad','Hours / load', s.hoursPerLoad,'0.25','Total time on load. Drives the driver line.')
       + '</div><div class="fld fld2">'
       + nf('sSubYr','Subhauler $/yr', s.subhaulerPerYear,'1000','QBO 326. Booked as its own per-load line rather than folded into a rate you can influence.')
-      + nf('sOtherVar','Other / unallocated $/load', s.otherVariablePerLoad,'0.01','EST plug: driver non-productive paid time, tarps, wash, tow. On ADP days this drops to $0 so it does not stack on clocked field-driver dollars. Wear $/mile and the $150 sub fee are separate.')
+      + nf('sOtherVar','Other / unallocated $/load', s.otherVariablePerLoad,'0.01','v2.1.36: $0. Not in 2025 QBO 313.2/3/4. Tarps $510 already sit in 313.2 (wear). The old $35/load plug was fake on EST and ADP days.')
       + '</div>';
     comps.forEach(c=>{
       h += '<div class="row"><div class="row-l"><div class="row-t">'+esc(c.label)+'</div>'
@@ -13697,7 +13713,7 @@ function renderSet(){
     const ap = state.adpPay || defaultAdpPay();
     const adpLoaded = !!(__adpRows && __adpRows.length && ap.dateMin);
     h += '<div class="card"><h2>ADP driver pay '
-      + '<span style="font-size:10px;color:var(--green);text-transform:none;letter-spacing:0">v2.1.35</span></h2>'
+      + '<span style="font-size:10px;color:var(--green);text-transform:none;letter-spacing:0">v2.1.36</span></h2>'
       + '<div class="hint" style="margin-bottom:12px">Drop the ADP Workforce Now <b>Employee Daily Totals</b> report on Today. '
       + 'Then look at the <b>P&amp;L board on Today</b> — not this page — for revenue, driver wages, fuel, wear, fixed, Ops net, and After wear. '
       + 'Field-driver dollars replace modelled driver wages on <b>closed days</b> and on MTD/WTD through yesterday. '
@@ -13800,7 +13816,7 @@ function renderSet(){
     + '<div><label>Fuel cost $/mile</label>'
     + '<input type="number" value="'+fuelPerMile().toFixed(4)+'" disabled style="opacity:.75">'
     + '<div class="hint">Derived — '+fuelBasisText()+'. Set the diesel price in the <b>Diesel price</b> card below.</div></div>'
-    + nf('sWear','Wear $/mile', s.wearPerMile,'0.01','v1.3: R&M $302K + tires $55K + wash $35K = $392K ÷ ~965K mi ≈ $0.41/mi, held at $0.35 because part of that sits in the separately-booked subhauler line. v1.2 used $0.26, which was maintenance alone.')
+    + nf('sWear','Wear $/mile', s.wearPerMile,'0.001','v2.1.36: 2025 QBO shop actuals — 313.2 R&amp;M $319,811 + 313.3 tires $75,893 + 313.4 wash $34,787 = $430,491 ÷ 900,000 fleet mi = $0.478/mi ($430,200/yr). Same 900k divisor as the old $0.53. Does not include 313.6 tolls, 313.7 licenses, or 313.8 lease.')
     + '</div><div class="fld fld2">'
     + nf('sMiles','Annual fleet miles', s.annualMiles,'10000','Editable — drives fuel/wear per mile. Default 1.2M.')
     + nf('sLoad','Driver loading factor', s.driverLoadingFactor,'0.01','QBO payroll taxes $715,939 / wages $1,882,434 = 1.31.')
@@ -14981,6 +14997,12 @@ SHADOW_TIMELINE_TEXT['2026-07-28'] = "**PARTIAL DAY — Phase 2 diff loop stoppe
 
 /* ---- v2.0 DATA: Changelog (in-app version history) ---- */
 const SHADOW_CHANGELOG = [
+  { ver:'v2.1.36-wear-qbo', date:'2026-08-24', changes:[
+    'Wear $/mile is now last-year (2025) QBO shop actuals: 313.2 R&M $319,811 + 313.3 tires $75,893 + 313.4 wash $34,787 = $430,491 ÷ 900,000 fleet mi = $0.478/mi ($430,200/yr). Same 900k divisor the old $0.53 used. $0.53 × 900k was ~$477k (a bit high vs $430k). Does not include 313.6 tolls, 313.7 licenses, or 313.8 lease',
+    'otherVariablePerLoad is $0 on EST and ADP days. That $35/load plug (~$420k/yr) is not in these QBO accounts. Tarps $510 already live inside 313.2, so they are in wear, not other. Saved $35 / $21.02 defaults migrate to $0',
+    'P&L board still shows both nets: Ops net (rev − wages − fuel − fixed) and After wear (also subtracts wear / sub). Wear line stays visible',
+    'FLAG only — 313.8 lease on James\'s 2025 screenshot showed ~$171k vs $470k in the app. Not changed. 313.7 licenses $66,461 already match the fixed stack. Diesel, MPG, Queue, ADP parser, office, and OT inclusion are unchanged'
+  ]},
   { ver:'v2.1.35-ops-net', date:'2026-08-24', changes:[
     'P&L board now shows two nets so James does not have to skip a line in his head: Ops net (headline) is revenue − driver wages − fuel − fixed; After wear is the fully-loaded number that still subtracts wear / other / sub-haul. Wear / other stays visible. Day, MTD, and WTD all get both',
     'ADP days no longer add the $35 other/unallocated plug on top of field-driver dollars — that plug was non-productive paid time + tarps/wash/tow, and ADP already has REGULAR, OT, meals, sick, and vacation. Tarps and wash already sit in wear $/mile; there is no separate tarps/tow setting, so the residue is $0. Wear and the $150 Lopez/Prado sub fee stay. EST days (including open today) keep the $35 plug',
