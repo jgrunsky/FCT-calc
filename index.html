@@ -11,7 +11,7 @@
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<meta name="app-version" content="2026-08-24-fct-calc-v2.1.36-wear-qbo">
+<meta name="app-version" content="2026-08-24-fct-calc-v2.1.37-wc-nut">
 <title data-id="th-modified">FCT Load Profitability — French Camp Transport</title>
 <link rel="manifest" href='data:application/manifest+json,{"name":"FCT Load Profitability","short_name":"FCT Calc","start_url":".","display":"standalone","background_color":"%2312100e","theme_color":"%2312100e","icons":[{"src":"data:image/svg%2Bxml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 192 192%27%3E%3Crect width=%27192%27 height=%27192%27 fill=%27%2312100e%27/%3E%3Ctext x=%2796%27 y=%27124%27 font-size=%2772%27 font-family=%27sans-serif%27 font-weight=%27700%27 fill=%27%238fb590%27 text-anchor=%27middle%27%3EFCT%3C/text%3E%3C/svg%3E","sizes":"192x192","type":"image/svg+xml"}]}'>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -1420,7 +1420,7 @@
    still exposes the Import JSON box for future refreshes.
    ============================================================= */
 
-const APP_VERSION = '2026-08-24-fct-calc-v2.1.36-wear-qbo';
+const APP_VERSION = '2026-08-24-fct-calc-v2.1.37-wc-nut';
 const STORAGE_KEY = 'fct-calc:state';
 const IDB_NAME = 'fct-calc-db';
 const IDB_STORE = 'kv';
@@ -2553,13 +2553,15 @@ function defaultFixedStack(){
      confirmed employee contract rate. See the full audit table in the
      v2.0.6 changelog entry. Total ≈ $2,101,564/yr → fpd $6,736. */
   return [
-    { k:'insurance',    label:'Insurance (liability + health + life, WC moved to variable)', amount:598000, on:true,  verified:true,
-      note:'v2.1.17c: recalibrated. QBO 304 YTD-Aug $446,731 / 232 days × 365 = $703K/yr TOTAL insurance. WC (~$104K) moved to variable side. Non-WC insurance = $703K - $104K = ~$599K. Liability ~$465K, Health ~$130K, Life ~$2K, other ~$2K.' },
-    { k:'truckLease',   label:'Truck lease',          amount:470000, on:true,  verified:true, note:'v2.0.6: QBO 313.8 long-term lease, matches 2025 ($469,251) + 2026 pace ($472K) — extraordinarily stable. v2.1.36 FLAG only: James 2025 P&L screenshot showed ~$171k on 313.8 — amount NOT changed in this build.' },
+    { k:'insurance',    label:'Insurance (liability + health + life)', amount:598000, on:true,  verified:true,
+      note:'v2.1.17c: non-WC insurance. v2.1.37: workers comp is its own line below (2025 304.2 $92,922) — not inside this $598k and not in other/wear/ADP.' },
+    { k:'workersComp',  label:'Workers comp (304.2)', amount:92922, on:true,  verified:true,
+      note:'v2.1.37: 2025 QBO 304.2 actual $92,922.15. Counted once in the fixed nut. Not in otherVariablePerLoad ($0), not in wear, not in ADP gross wages, not in the 1.31 payroll-tax loading.' },
+    { k:'truckLease',   label:'Truck lease',          amount:470000, on:true,  verified:true, note:'v2.1.37: 2025 QBO 313.8 true total ≈ $469,251 = parent $171,128 + Equity Lease (LTO) $295,677 + Replacement Rental $2,446. Matches this $470k line. The $171k parent alone is not the lease. Amount unchanged.' },
     { k:'officeWages',  label:'Office wages + taxes', amount:267821, on:true,  verified:true,
-      note:'v2.0.6: 4 hourly office staff (Vince $24/hr + Jeremy $25 + Kelly $26 + Rene $20 = $197,600 base) × 1.3553 loading. Was a plug line pre-v2.0.6.' },
+      note:'v2.0.6: 4 hourly office staff (Vince $24/hr + Jeremy $25 + Kelly $26 + Rene $20 = $197,600 base) × 1.3553 loading. BASE ONLY — bonuses are discretionary, not modeled. ADP daily totals stay as that day\'s actuals; do not bake an annual bonus into this line.' },
     { k:'officerWages', label:'Officer wages',        amount:332241, on:true,  verified:true,
-      note:'v2.0.6: James $102,375 (2024 actual bi-weekly base) + Steve $77,780 + Jolene $65,000 = $245,155 base × 1.3553 loading. BASE ONLY per James directive — bonuses are discretionary, not modeled.' },
+      note:'v2.0.6: James $102,375 (2024 actual bi-weekly base) + Steve $77,780 + Jolene $65,000 = $245,155 base × 1.3553 loading. BASE ONLY per James directive — bonuses are discretionary, not modeled. Do not bake an annual bonus into this line or into otherVariablePerLoad.' },
     { k:'truckLicense', label:'Truck licenses',       amount: 66000, on:true,  verified:true, note:'v2.0.6: QBO 313.7 2025 annual ($66,461). 2026 YTD trails but Nov renewal cycle not yet hit.' },
     { k:'telephone',    label:'Telephone',            amount: 28000, on:true,  verified:true, note:'v2.0.6: QBO 310 avg of 2025 ($33,481) and 2026 annualized ($25,758)' },
     { k:'rent',         label:'Rent',                 amount: 30000, on:false, verified:true,
@@ -2570,7 +2572,7 @@ function defaultFixedStack(){
     { k:'interest',     label:'Interest',             amount: 22000, on:true,  verified:true, note:'v2.0.6: QBO 306 avg of 2025 ($23,254) and 2026 ($21,001)' },
     { k:'serviceCharges',label:'Service charges',     amount: 28000, on:true,  verified:true, note:'v2.0.6: QBO 322 stable — 2025 $28,899, 2026 $27,650' },
     { k:'otherMisc',    label:'Other misc',           amount: 62000, on:true,  verified:true,
-      note:'v2.0.6: QBO 325+311+314+316+318+308+307 annualized ex-legal-lawsuit. 2025 included $192K one-time lawsuit legal fees; excluded from baseline.' },
+      note:'v2.0.6: QBO 325+311+314+316+318+308+307 annualized ex-legal-lawsuit. 2025 legal was unusually high (lawsuit) and stays OUT of this line and out of the P&L board. Do not raise otherMisc or otherVariablePerLoad to absorb it. v2.1.37: still excluded — do not calibrate go-forward net to the printed 2025 P&L (~$271k), which includes bonuses and fat legal.' },
   ];
 }
 function normalizeFixedStack(saved){
@@ -2649,11 +2651,11 @@ function variableComponents(milesOv, hoursOv, rateOv){
     { k:'driver', label:'Driver',            amount: hrs*rate,
       basis: num(hrs,2)+' hr × '+money2(rate)+' loaded' },
     { k:'wear',   label:'Wear / maintenance',amount: mi*wear,
-      basis: num(mi)+' mi × '+money2(wear)+'/mi — 2025 QBO 313.2 R&M $319,811 + 313.3 tires $75,893 + 313.4 wash $34,787 = $430,491 ÷ 900,000 fleet mi = $0.478/mi' },
+      basis: num(mi)+' mi × '+money2(wear)+'/mi — 2025 QBO 313.2 R&M $319,811 + 313.3 tires $75,893 + 313.4 wash $34,787 + 313.9 tarps $17,874 = $448,365 ÷ 900,000 fleet mi = $0.498/mi' },
     { k:'subhauler', label:'Subhauler pro-rata', amount: 0,
       basis: 'v2.0.9: subhauler now tracked per-load ($150/load for Lopez/<name> · Prado/<name> subs, applied in computeDayRow); historical pool baseline '+money(Number(s.subhaulerPerYear)||0)+'/yr disabled here to prevent double-count with the per-load charge' },
     { k:'other',  label:'Other / unallocated', amount: other,
-      basis: 'v2.1.36: $0. Not in 2025 QBO 313.2/3/4. Tarps $510 live in 313.2 (wear). Old $35/load plug was fake on EST and ADP days' },
+      basis: 'v2.1.36: $0. Not in 2025 QBO shop bills. Tarps $17,874 live in 313.9 (wear). Old $35/load plug was fake on EST and ADP days. Bonuses and 2025 lawsuit legal are not absorbed here' },
   ];
 }
 function variableCostPerLoad(){ return variableComponents().reduce((a,c)=>a+c.amount,0); }
@@ -3099,7 +3101,7 @@ function defaultSettings(){
     // R&M + tires + wash line is $302K + $55K + $35K = $392K over ~965K
     // miles = $0.41/mi; held at $0.35 because part of that sits in the
     // subhauler line, which is booked separately below.
-    wearPerMile: 0.478,  // v2.1.36: 2025 QBO 313.2 $319,811 + 313.3 $75,893 + 313.4 $34,787 = $430,491 ÷ 900,000 fleet mi (same divisor as v2.0.6's $0.53) = $0.478/mi → $430,200/yr. Excludes 313.6 tolls, 313.7 licenses, 313.8 lease.
+    wearPerMile: 0.498,  // v2.1.37: 2025 QBO 313.2 $319,811 + 313.3 $75,893 + 313.4 $34,787 + 313.9 tarps $17,874 = $448,365 ÷ 900,000 fleet mi = $0.498/mi → $448,200/yr. Tarps are in wear, not other. Excludes 313.6 tolls, 313.7 licenses, 313.8 lease.
     // v1.2: fuel cost per mile is DERIVED from diesel price ÷ fleet MPG
     // (see fuelPerMile()), not stored, so it tracks the pump instead of
     // drifting. $4.50/gal ÷ 6.0 MPG = $0.75/mi.
@@ -3109,7 +3111,7 @@ function defaultSettings(){
     // False until James actually types a price. A shipped guess must not
     // present itself as a confirmed number.
     fuelPriceConfirmed: false,
-    driverLoadingFactor: 1.50,  // v2.0.6: payroll taxes 35.53% + WC ~5% + health ~6% + benefits ≈ 1.50 total loading (was 1.31 - taxes only)
+    driverLoadingFactor: 1.50,  // v2.0.6: payroll taxes 35.53% + health/benefits. v2.1.37: WC is NOT in this loading for P&L — it sits once in the fixed nut at $92,922 (2025 304.2). ADP is gross wages; employer WC premium is not in those dollars.
     defaultDriverRate: 22.28,   // v2.0.6: mean of 9 QBO-sampled active driver contract rates ($21-$24 range, all >$20)
     // v1.8.7: 312 -> 350. James confirmed 2026-07-29 the fleet runs 7 days
     // most weeks (Sat + Sun), not just 6. 350 = 7 × 50 weeks, leaving room
@@ -4047,6 +4049,29 @@ function loadState(){
         if(state.settings.wearPerMile == null || SHIPPED_WEAR36.indexOf(w) >= 0)
           state.settings.wearPerMile = 0.478;
         state.settings.migrated_v2136 = true;
+        try { save(); } catch(_){}
+      }
+
+      /* v2.1.37 (2026-08-24): WC once in the nut at 2025 304.2 $92,922.
+         Insurance stays non-WC $598k. If a save still has the old all-in
+         $648,808, peel it back to $598k so WC is not inside insurance AND
+         on the new line. Wear adds 313.9 tarps ($17,874) on the same 900k
+         mi → $0.498/mi. Do not raise otherMisc (2025 lawsuit legal stays
+         one-time). Bonuses stay out of office/officer/driver modelled wages. */
+      if(!state.settings.migrated_v2137){
+        try {
+          if(Array.isArray(state.fixedStack)){
+            const ins = state.fixedStack.find(function(l){ return l && l.k==='insurance'; });
+            if(ins && Number(ins.amount)===648808) ins.amount = 598000;
+            const wc = state.fixedStack.find(function(l){ return l && l.k==='workersComp'; });
+            if(wc){ wc.amount = 92922; wc.on = true; }
+          }
+        } catch(_){}
+        const w37 = Number(state.settings.wearPerMile);
+        const SHIPPED_WEAR37 = [0.20, 0.26, 0.35, 0.53, 0.478];
+        if(state.settings.wearPerMile == null || SHIPPED_WEAR37.indexOf(w37) >= 0)
+          state.settings.wearPerMile = 0.498;
+        state.settings.migrated_v2137 = true;
         try { save(); } catch(_){}
       }
 
@@ -8094,13 +8119,13 @@ function computeDayRow(r){
      load at the fleet average would flatter the long lanes and punish the short. */
   const tierV = (r.bucket==='diamond' || !r.bucket) ? diamondTier(r.origin, r.truck) : null;
   const varOv   = Number(r.varCostOverride)||0;
-  /* v2.0.9: sub-haul detection. Driver format `Lopez/<name>` or `Prado/<name>`
-     (surname + slash + sub company's driver) means the load was run by an
-     outside carrier — flat $150 sub fee, ZERO in-house fuel/driver/wear.
-     NOT to be confused with in-house W-2 drivers `Carlos Prado` ($21.50) or
-     `Rafael Lopez` ($24.00), which have no slash — the leading-anchor +
-     literal slash in the regex is what separates them. Explicit
-     varCostOverride still wins (operator can force a number). */
+  /* v2.0.9 / v2.1.37: sub-haul as used only. Driver format `Lopez/<name>`
+     or `Prado/<name>` (surname + slash + sub company's driver) means the
+     load was run by an outside carrier — flat $150 sub fee, ZERO in-house
+     fuel/driver/wear. Not amortized through otherVariablePerLoad or the
+     pooled QBO 326 line. NOT to be confused with in-house W-2 drivers
+     `Carlos Prado` ($21.50) or `Rafael Lopez` ($24.00), which have no
+     slash. Explicit varCostOverride still wins (operator can force a number). */
   const drvStr    = String(r.driver||'');
   const isSubHaul = /^(Lopez|Prado)\//i.test(drvStr);
   let varCost;
@@ -8620,8 +8645,9 @@ function runningTotals(refDate){
    v2.1.35: two nets — Ops (rev − wages − fuel − fixed) is the
    headline James means; After wear is fully loaded (still subtracts
    wear + remaining other + Lopez/Prado $150).
-   v2.1.36: otherVariablePerLoad is $0 (not in 2025 QBO 313.2/3/4).
-   Wear is $0.478/mi so 900k fleet mi × rate ≈ $430k last-year shop.
+   v2.1.36: otherVariablePerLoad is $0 (not in 2025 QBO shop bills).
+   v2.1.37: wear is $0.498/mi (313.2+3+4+9 tarps ≈ $448k). WC $92,922
+   once in the fixed nut. Sub $150 as used only.
    -------------------------------------------------------------
    The landing-strip DAY/WTD/MTD chips were too small — payroll looked
    buried. This board is the thing to LOOK at: revenue, driver wages,
@@ -8878,7 +8904,8 @@ function pnlBoardHTML(dateISO){
     + 'Closed days use ADP field-driver dollars. Fuel uses Verizon fleet miles when we have them, otherwise the lane estimate. '
     + '<b>Ops net</b> is revenue minus driver wages, fuel, and fixed — that is the number to look at for the month. '
     + '<b>After wear</b> still subtracts wear and any sub-haul. Wear stays on the board so nothing is hidden. '
-    + 'Wear is last-year shop actuals (313.2+313.3+313.4 ≈ $430k/yr). There is no $35 other plug — that was not in QBO. '
+    + 'Wear is last-year shop actuals (313.2+313.3+313.4+313.9 tarps ≈ $448k/yr). There is no $35 other plug — that was not in QBO. '
+    + 'Bonuses are not in this board (base pay / ADP daily wages only). 2025 lawsuit legal stays out. '
     + 'Office payroll is listed underneath — it is not inside load variable.'
     + openNote+'</p>'
     + '<div class="pnl-cols">'
@@ -13352,7 +13379,7 @@ function renderSet(){
       + nf('sHrsLoad','Hours / load', s.hoursPerLoad,'0.25','Total time on load. Drives the driver line.')
       + '</div><div class="fld fld2">'
       + nf('sSubYr','Subhauler $/yr', s.subhaulerPerYear,'1000','QBO 326. Booked as its own per-load line rather than folded into a rate you can influence.')
-      + nf('sOtherVar','Other / unallocated $/load', s.otherVariablePerLoad,'0.01','v2.1.36: $0. Not in 2025 QBO 313.2/3/4. Tarps $510 already sit in 313.2 (wear). The old $35/load plug was fake on EST and ADP days.')
+      + nf('sOtherVar','Other / unallocated $/load', s.otherVariablePerLoad,'0.01','v2.1.37: $0. Not in 2025 QBO shop bills. Tarps $17,874 sit in 313.9 (wear). Bonuses and 2025 lawsuit legal are not absorbed here.')
       + '</div>';
     comps.forEach(c=>{
       h += '<div class="row"><div class="row-l"><div class="row-t">'+esc(c.label)+'</div>'
@@ -13713,7 +13740,7 @@ function renderSet(){
     const ap = state.adpPay || defaultAdpPay();
     const adpLoaded = !!(__adpRows && __adpRows.length && ap.dateMin);
     h += '<div class="card"><h2>ADP driver pay '
-      + '<span style="font-size:10px;color:var(--green);text-transform:none;letter-spacing:0">v2.1.36</span></h2>'
+      + '<span style="font-size:10px;color:var(--green);text-transform:none;letter-spacing:0">v2.1.37</span></h2>'
       + '<div class="hint" style="margin-bottom:12px">Drop the ADP Workforce Now <b>Employee Daily Totals</b> report on Today. '
       + 'Then look at the <b>P&amp;L board on Today</b> — not this page — for revenue, driver wages, fuel, wear, fixed, Ops net, and After wear. '
       + 'Field-driver dollars replace modelled driver wages on <b>closed days</b> and on MTD/WTD through yesterday. '
@@ -13816,7 +13843,7 @@ function renderSet(){
     + '<div><label>Fuel cost $/mile</label>'
     + '<input type="number" value="'+fuelPerMile().toFixed(4)+'" disabled style="opacity:.75">'
     + '<div class="hint">Derived — '+fuelBasisText()+'. Set the diesel price in the <b>Diesel price</b> card below.</div></div>'
-    + nf('sWear','Wear $/mile', s.wearPerMile,'0.001','v2.1.36: 2025 QBO shop actuals — 313.2 R&amp;M $319,811 + 313.3 tires $75,893 + 313.4 wash $34,787 = $430,491 ÷ 900,000 fleet mi = $0.478/mi ($430,200/yr). Same 900k divisor as the old $0.53. Does not include 313.6 tolls, 313.7 licenses, or 313.8 lease.')
+    + nf('sWear','Wear $/mile', s.wearPerMile,'0.001','v2.1.37: 2025 QBO shop — 313.2 R&amp;M $319,811 + 313.3 tires $75,893 + 313.4 wash $34,787 + 313.9 tarps $17,874 = $448,365 ÷ 900,000 fleet mi = $0.498/mi ($448,200/yr). Tarps live in wear, not other. Does not include 313.6 tolls, 313.7 licenses, or 313.8 lease.')
     + '</div><div class="fld fld2">'
     + nf('sMiles','Annual fleet miles', s.annualMiles,'10000','Editable — drives fuel/wear per mile. Default 1.2M.')
     + nf('sLoad','Driver loading factor', s.driverLoadingFactor,'0.01','QBO payroll taxes $715,939 / wages $1,882,434 = 1.31.')
@@ -14997,6 +15024,13 @@ SHADOW_TIMELINE_TEXT['2026-07-28'] = "**PARTIAL DAY — Phase 2 diff loop stoppe
 
 /* ---- v2.0 DATA: Changelog (in-app version history) ---- */
 const SHADOW_CHANGELOG = [
+  { ver:'v2.1.37-wc-nut', date:'2026-08-24', changes:[
+    'Wear $/mile includes 313.9 tarps ($17,874) with 313.2+3+4: $448,365 ÷ 900,000 mi = $0.498/mi ($448,200/yr). Tarps are not in other. 313.10 std logistics was not in the v2.1.36 wear comment, so it stays out. 313.8 lease true total is $469,251 (parent $171k + Equity Lease $296k + replacement rental) — matches the $470k line; leave it alone',
+    'Workers comp counted once: new fixed-stack line 2025 QBO 304.2 $92,922, on. Insurance stays non-WC $598k — WC is not inside that figure, not in other ($0), not in wear, not in ADP gross wages, not in the 1.31 payroll-tax loading',
+    'Bonuses stay out of modelled driver / office / officer wages (base only). ADP daily totals remain that day\'s actual wages/hours — we do not bake an annual bonus into the fixed stack or the other plug. 2025 lawsuit legal stays one-time: otherMisc is not raised, and the P&L board does not absorb it. Do not calibrate go-forward net to last year\'s printed P&L (~$6.21M − ~$5.94M ≈ $271k), which includes bonuses and fat legal',
+    'Subhaulers only as used: still $150 only on Lopez/ / Prado/ rows. Not in other, not in variableComponents pooled amount, not a per-load amortization of QBO 326',
+    'Wear stays $0.498/mi (313.2+3+4+9 tarps ≈ $448k). otherVariablePerLoad stays $0. Both P&L nets stay. Diesel, lease amount, Queue, ADP parser unchanged'
+  ]},
   { ver:'v2.1.36-wear-qbo', date:'2026-08-24', changes:[
     'Wear $/mile is now last-year (2025) QBO shop actuals: 313.2 R&M $319,811 + 313.3 tires $75,893 + 313.4 wash $34,787 = $430,491 ÷ 900,000 fleet mi = $0.478/mi ($430,200/yr). Same 900k divisor the old $0.53 used. $0.53 × 900k was ~$477k (a bit high vs $430k). Does not include 313.6 tolls, 313.7 licenses, or 313.8 lease',
     'otherVariablePerLoad is $0 on EST and ADP days. That $35/load plug (~$420k/yr) is not in these QBO accounts. Tarps $510 already live inside 313.2, so they are in wear, not other. Saved $35 / $21.02 defaults migrate to $0',

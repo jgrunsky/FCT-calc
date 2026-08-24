@@ -268,15 +268,26 @@ assert.equal(looksLikeAdpAoa([['Date','Driver','Grower','FB','Commodity']]), fal
 }
 
 {
-  /* v2.1.36: other ships at $0; wear is 2025 QBO 313.2+3+4 / 900k mi. */
+  /* v2.1.37: wear is 313.2+3+4+9 tarps / 900k mi. */
   assert.ok(/otherVariablePerLoad:\s*0\b/.test(html), 'default otherVariablePerLoad is 0');
-  assert.ok(/wearPerMile:\s*0\.478\b/.test(html), 'default wearPerMile is $0.478');
+  assert.ok(/wearPerMile:\s*0\.498\b/.test(html), 'default wearPerMile is $0.498');
   assert.ok(!/otherVariablePerLoad:\s*35/.test(html), 'shipped $35 other plug is gone');
-  const wearAnnual = 0.478 * 900000;
-  assert.equal(wearAnnual, 430200);
-  assert.ok(Math.abs(wearAnnual - 430491) < 500, '900k mi × $0.478 ≈ $430k last-year shop');
-  const shop = 319811 + 75893 + 34787;
-  assert.equal(shop, 430491);
+  const wearAnnual = 0.498 * 900000;
+  assert.equal(wearAnnual, 448200);
+  const shop = 319811 + 75893 + 34787 + 17874;
+  assert.equal(shop, 448365);
+  assert.ok(Math.abs(wearAnnual - shop) < 300, '900k mi × $0.498 ≈ $448k shop+tarps');
+}
+
+{
+  /* v2.1.37: WC once in the nut; sub as-used; legal/bonuses stay out. */
+  assert.ok(/k:'workersComp'/.test(html), 'workersComp line exists in the fixed stack');
+  assert.ok(/amount:92922/.test(html), 'WC is 2025 304.2 $92,922');
+  assert.ok(/amount:598000/.test(html), 'insurance stays non-WC $598k');
+  assert.ok(/k:'subhauler'[\s\S]{0,80}amount:\s*0/.test(html), 'pooled subhauler in variableComponents is 0');
+  assert.ok(/subHaulCost = 150/.test(html), 'Lopez/Prado rows still charge $150 as used');
+  assert.ok(/excludeFromBaseline:true/.test(html), '2025 legal stays out of the recurring nut');
+  assert.ok(/otherMisc'[\s\S]{0,120}amount:\s*62000/.test(html), 'otherMisc not raised to absorb lawsuit legal');
 }
 
 console.log('adp-daily-totals.test.mjs: ok');
