@@ -11,7 +11,7 @@
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<meta name="app-version" content="2026-08-24-fct-calc-v2.1.29-fill-missing-rates">
+<meta name="app-version" content="2026-08-24-fct-calc-v2.1.30-excel-sheet-layout">
 <title data-id="th-modified">FCT Load Profitability — French Camp Transport</title>
 <link rel="manifest" href='data:application/manifest+json,{"name":"FCT Load Profitability","short_name":"FCT Calc","start_url":".","display":"standalone","background_color":"%2312100e","theme_color":"%2312100e","icons":[{"src":"data:image/svg%2Bxml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 192 192%27%3E%3Crect width=%27192%27 height=%27192%27 fill=%27%2312100e%27/%3E%3Ctext x=%2796%27 y=%27124%27 font-size=%2772%27 font-family=%27sans-serif%27 font-weight=%27700%27 fill=%27%238fb590%27 text-anchor=%27middle%27%3EFCT%3C/text%3E%3C/svg%3E","sizes":"192x192","type":"image/svg+xml"}]}'>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -253,12 +253,12 @@
     font:700 13px/1 var(--body);padding:8px 9px;cursor:pointer;
   }
   /* ================================================================
-     DISPATCH SHEET MIRROR (v1.3)
+     DISPATCH SHEET MIRROR (v1.3, polished v2.1.30)
      The day rollup is laid out to look like the 2026 FCT Dispatch Log
-     itself — same column order, same banner-row grouping, loosely the
-     same fill colours — with three economics columns bolted on the
-     right. Operator looks at this sheet every day; the familiar shape
-     is the point.
+     itself — orange date banner, D.P. LATHROP / D.P. RIPON section
+     banners, same column order — with three economics columns bolted on
+     the right. Phone uses the same grouping in a compact scan; desktop
+     keeps the full wide table.
      ================================================================ */
   .sheet-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;margin:0 -16px;padding:0 16px}
   /* v2.0.8: table-layout:fixed + explicit col widths in colgroup — was table-layout:auto
@@ -266,15 +266,15 @@
      column and the horizontal scroll landed on different cells day-to-day. min-width
      bumped to cover the col-width sum so cols always take their explicit sizes when the
      viewport is narrower than the table. */
-  table.sheet{width:100%;min-width:1890px;border-collapse:separate;border-spacing:0;font-size:12px;table-layout:fixed}
+  table.sheet{width:100%;min-width:1890px;border-collapse:separate;border-spacing:0;font-size:11.5px;table-layout:fixed}
   table.sheet th{
     position:sticky;top:0;z-index:3;
     background:var(--bg-inset);color:var(--text-muted);
     font:600 9.5px/1.2 var(--body);letter-spacing:.05em;text-transform:uppercase;
-    padding:7px 6px;border-bottom:1px solid var(--border-strong);white-space:nowrap;text-align:left;
+    padding:6px;border-bottom:1px solid var(--border-strong);white-space:nowrap;text-align:left;
   }
   table.sheet th.n,table.sheet td.n{text-align:right}
-  table.sheet td{padding:6px;border-bottom:1px solid var(--border);white-space:nowrap;vertical-align:middle}
+  table.sheet td{padding:4px 6px;border-bottom:1px solid var(--border);white-space:nowrap;vertical-align:middle}
   table.sheet td.money{font-family:var(--mono);text-align:right;font-variant-numeric:tabular-nums}
   /* keep the Time column pinned — it is the operator's row anchor on a phone */
   table.sheet td.c-time,table.sheet th.c-time{
@@ -283,16 +283,17 @@
   }
   table.sheet th.c-time{z-index:4;background:var(--bg-inset)}
 
-  /* --- banner rows --- */
+  /* --- banner rows (Excel date / D.P. LATHROP / D.P. RIPON fills) --- */
   tr.bnr td{
-    font:700 12px/1.2 var(--display);letter-spacing:.04em;
-    padding:8px 10px;border-bottom:1px solid var(--border-strong);
+    font:700 12.5px/1.2 var(--display);letter-spacing:.06em;
+    padding:8px 12px;border-bottom:1px solid var(--border-strong);
+    text-transform:uppercase;
   }
-  tr.bnr-date td{background:linear-gradient(90deg,#7a4a1e,#4a2e14);color:#ffd9a8}
-  tr.bnr-lath td{background:linear-gradient(90deg,#1d3a5c,#152a42);color:#a8cdf0}
-  tr.bnr-ripo td{background:linear-gradient(90deg,#1e4a2a,#14301c);color:#a8e0b4}
+  tr.bnr-date td{background:#c45a12;color:#fff8ee}
+  tr.bnr-lath td{background:#1f4e79;color:#e8f2fc}
+  tr.bnr-ripo td{background:#375623;color:#eaf6e4}
   tr.bnr-other td{background:var(--bg-inset);color:var(--text-muted)}
-  tr.bnr td .bnr-n{float:right;font-family:var(--mono);font-weight:700;opacity:.85}
+  tr.bnr td .bnr-n{float:right;font-family:var(--mono);font-weight:700;opacity:.85;letter-spacing:0;text-transform:none}
   tr.bnr.sticky-date td{position:sticky;top:26px;z-index:2}
   /* --- v1.7 preload split ---
      Section 2 (tomorrow's preloads, prepped today PM) and the PRELOADED block
@@ -333,6 +334,38 @@
   tr.sheet-tot td.money{font-family:var(--mono)}
   tr.sheet-sub td{background:color-mix(in oklab,var(--bg-inset) 60%,transparent);color:var(--text-muted);
     font-size:11px;padding:5px 6px;border-bottom:1px solid var(--border)}
+
+  /* Economics bolted on the right — same sheet, not the hero columns */
+  table.sheet th.c-rev,table.sheet th.c-var,table.sheet th.c-cm,
+  table.sheet td.c-rev,table.sheet td.c-var,table.sheet td.c-cm{
+    background:color-mix(in oklab,var(--bg-inset) 70%,transparent);
+  }
+  table.sheet th.c-rev,table.sheet td.c-rev{
+    border-left:2px solid color-mix(in oklab,var(--yellow) 40%,var(--border-strong));
+  }
+  table.sheet td.c-cm{font-weight:700}
+  .sheet-meta{display:none}
+  .drv-sec{color:var(--text-muted);font-weight:500}
+
+  /* Trailer status lives UNDER the sheet (v2.1.30). Collapsed by default so
+     the Excel date + LATHROP/RIPON blocks are what you scan first. Summary
+     still shows the counts. */
+  details.trl-fold>summary{
+    cursor:pointer;list-style:none;display:flex;align-items:baseline;
+    justify-content:space-between;gap:10px;flex-wrap:wrap;
+    font:600 12px/1.3 var(--body);letter-spacing:.09em;text-transform:uppercase;
+    color:var(--text-muted);
+  }
+  details.trl-fold>summary::-webkit-details-marker{display:none}
+  details.trl-fold>summary::before{
+    content:'▸';display:inline-block;margin-right:6px;color:var(--text-faint);
+    font-size:11px;letter-spacing:0;text-transform:none;
+  }
+  details.trl-fold[open]>summary::before{content:'▾'}
+  details.trl-fold>summary .trl-sum-n{
+    font:500 11px/1.4 var(--body);letter-spacing:0;text-transform:none;color:var(--text-faint);
+  }
+  details.trl-fold .trl-body{margin-top:10px}
 
   /* inline edit inputs that sit flush in a sheet cell */
   table.sheet input.cell,table.sheet select.cell{
@@ -425,6 +458,104 @@
   table.sheet td.dr-avar,table.sheet td.dr-acm,
   table.sheet td.vz-none{background:color-mix(in oklab,var(--blue) 5%,transparent)}
   table.sheet td.vz-none{text-align:center;color:var(--text-faint);font-weight:700;cursor:help}
+
+  /* v2.1.30 phone scan: same date → LATHROP / RIPON sheet, without a 1890px
+     horizontal hunt. Time, Driver, Origin, Status stay on screen; PO / FB /
+     commodity / truck fold onto a second line; contribution stays bolted on
+     the right. Desktop keeps the full wide table. */
+  @media (max-width:860px){
+    .sheet-card{padding:10px 8px 12px}
+    .sheet-wrap{overflow-x:visible;margin:0 -4px;padding:0}
+    table.sheet{
+      min-width:0;width:100%;table-layout:auto;font-size:12px;
+      display:block;
+    }
+    table.sheet colgroup{display:none}
+    table.sheet thead,table.sheet tbody{display:block;width:100%}
+    table.sheet thead tr{
+      display:grid;
+      grid-template-columns:3.5rem minmax(0,1fr) minmax(3.6rem,.7fr) auto 3.4rem;
+      grid-template-areas:"time drv orig st money";
+      gap:0 6px;align-items:end;
+      padding:4px 6px 4px 0;
+      border-bottom:1px solid var(--border-strong);
+    }
+    table.sheet thead th{position:static;padding:4px 2px;white-space:normal}
+    table.sheet thead th.c-time{grid-area:time}
+    table.sheet thead th.c-drv{grid-area:drv}
+    table.sheet thead th.c-orig{grid-area:orig}
+    table.sheet thead th.c-st{grid-area:st;text-align:right}
+    table.sheet thead th.c-cm{grid-area:money;text-align:right;border-left:0;background:transparent;font-size:8.5px}
+    table.sheet thead th.c-po,
+    table.sheet thead th.c-fb,
+    table.sheet thead th.c-comm,
+    table.sheet thead th.c-truck,
+    table.sheet thead th.c-sug,
+    table.sheet thead th.c-rev,
+    table.sheet thead th.c-var,
+    table.sheet thead th.vz-h{display:none}
+    table.sheet tr.bnr{display:block;width:100%}
+    table.sheet tr.bnr td{
+      display:block;width:100%;box-sizing:border-box;
+      white-space:normal;padding:8px 10px;letter-spacing:.05em;
+    }
+    table.sheet tr.bnr.sticky-date td{top:0}
+    table.sheet tr.sheet-load{
+      display:grid;
+      grid-template-columns:3.5rem minmax(0,1fr) minmax(3.6rem,.7fr) auto 3.4rem;
+      grid-template-areas:"time drv orig st money";
+      column-gap:6px;
+      padding:5px 6px 6px 0;align-items:start;
+      border-bottom:1px solid var(--border);
+      width:100%;box-sizing:border-box;
+    }
+    table.sheet tr.sheet-load td{
+      white-space:normal;overflow:hidden;padding:1px 2px;border-bottom:0;
+    }
+    table.sheet tr.sheet-load td.c-time{
+      grid-area:time;position:static;box-shadow:none;
+      font-size:11px;padding:1px 4px 1px 8px;white-space:nowrap;
+      background:var(--bg-elev);
+    }
+    table.sheet tr.sheet-load td.c-drv{grid-area:drv;font-weight:600;min-width:0}
+    table.sheet tr.sheet-load td.c-orig{grid-area:orig;min-width:0;white-space:nowrap;text-overflow:ellipsis}
+    table.sheet tr.sheet-load td.c-st{grid-area:st;text-align:right;font-size:11px}
+    table.sheet tr.sheet-load td.c-cm{
+      grid-area:money;text-align:right;font-size:11px;border-left:0;
+      background:transparent;padding-top:1px;
+    }
+    table.sheet tr.sheet-load .sheet-meta{
+      display:block;font:400 10px/1.3 var(--body);color:var(--text-faint);
+      font-weight:400;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+      margin-top:1px;
+    }
+    table.sheet tr.sheet-load td.c-po,
+    table.sheet tr.sheet-load td.c-fb,
+    table.sheet tr.sheet-load td.c-comm,
+    table.sheet tr.sheet-load td.c-truck,
+    table.sheet tr.sheet-load td.c-sug,
+    table.sheet tr.sheet-load td.c-rev,
+    table.sheet tr.sheet-load td.c-var,
+    table.sheet tr.sheet-load td.dr-ahr,
+    table.sheet tr.sheet-load td.dr-ami,
+    table.sheet tr.sheet-load td.dr-avar,
+    table.sheet tr.sheet-load td.dr-acm,
+    table.sheet tr.sheet-load td.vz-none{display:none}
+    table.sheet.editing tr.sheet-load td.c-rev,
+    table.sheet.editing tr.sheet-load td.c-var{display:block;grid-column:2 / -1}
+    .drv-pri{display:inline}
+    .drv-sec{display:inline;font-size:10.5px}
+    table.sheet tr.sheet-tot,
+    table.sheet tr.sheet-sub{
+      display:block;width:100%;padding:8px 10px;box-sizing:border-box;
+    }
+    table.sheet tr.sheet-tot td,
+    table.sheet tr.sheet-sub td{
+      display:inline;border:0;padding:0 8px 0 0;white-space:normal;
+      background:transparent;
+    }
+    .rchips{flex-direction:row;flex-wrap:wrap;gap:3px;margin-top:2px}
+  }
 
   /* --- v1.4 queue --- */
   .q-row{display:flex;align-items:flex-start;gap:11px;padding:11px 0;border-bottom:1px solid var(--border)}
@@ -1176,7 +1307,7 @@
    still exposes the Import JSON box for future refreshes.
    ============================================================= */
 
-const APP_VERSION = '2026-08-24-fct-calc-v2.1.29-fill-missing-rates';
+const APP_VERSION = '2026-08-24-fct-calc-v2.1.30-excel-sheet-layout';
 const STORAGE_KEY = 'fct-calc:state';
 const IDB_NAME = 'fct-calc-db';
 const IDB_STORE = 'kv';
@@ -7620,6 +7751,33 @@ let dayDiamondOnly = false;
 /* v1.7 Section 2, derived per render and deliberately NOT in state — see the
    note in renderDayRollup. refreshDay() reads it to fill the money cells. */
 let dayPreloadRows = [];
+/* v2.1.30: Trailer status is collapsed under the sheet. Remember open/shut
+   across re-renders so tapping ✓ done does not slam the panel closed. */
+let trailerStatusOpen = false;
+
+function driverSheetHTML(r){
+  const raw = String((r && (r.driverRaw || r.driver)) || '').trim();
+  if(!raw) return '—';
+  const parts = raw.split(/\s*\/\s*/).filter(Boolean);
+  if(parts.length >= 2){
+    return '<span class="drv-pri">'+esc(parts[0])+'</span>'
+      + '<span class="drv-sec"> / '+esc(parts.slice(1).join(' / '))+'</span>';
+  }
+  return '<span class="drv-pri">'+esc(raw)+'</span>';
+}
+function sheetMetaHTML(r){
+  if(!r) return '';
+  const bits = [];
+  if(r.po) bits.push(String(r.po));
+  const fb = String(r.fb||'').trim();
+  if(fb && fb !== '—') bits.push(fb);
+  const comm = String(r.commodity||'').trim();
+  if(comm) bits.push(comm.slice(0,22));
+  const trk = String(r.truck||'').trim();
+  if(trk && trk !== '—') bits.push(trk);
+  if(!bits.length) return '';
+  return '<div class="sheet-meta">'+esc(bits.join(' · '))+'</div>';
+}
 
 /* Split the day's rows into the sheet's sections, keeping the original
    sheet order inside each. Carries the row's index in currentRows so the
@@ -9091,10 +9249,10 @@ function renderDayRollup(){
   const vzM = verizonMatch();
   const showAct = !!(vzM && vzM.matched);
   const NCOL = showAct ? 16 : 12;
-  // v1.8.20: Trailer status card — In Use / Preloaded / In Yard, with
-  // manual "done" toggle per pair (moves that pair to Yard). Since real
-  // trailer return isn't tracked automatically, the toggle is how James
-  // reconciles the yard as drivers actually come back.
+  // v1.8.20 / v2.1.30: Trailer status — In Use / Preloaded / In Yard, with
+  // manual "done" toggle per pair (moves that pair to Yard). Rendered AFTER
+  // the dispatch sheet and collapsed by default so the Excel layout is what
+  // James scans first. Trailer math itself is unchanged.
   const trl = computeTrailerStatus(d.currentRows.concat(dayPreloadRows||[]), d.date);
   const allRows = d.currentRows.concat(dayPreloadRows||[]);
   const mkChip = (p, bg, color, mark) => {
@@ -9123,10 +9281,14 @@ function renderDayRollup(){
       + annoTxt
       + '</span>';
   };
-  h += '<div class="card" style="margin-bottom:12px"><h2>Trailer status'
-    + '<span style="float:right;font:500 11px/1.4 var(--body);color:var(--text-muted)">'
-    + trl.rosterSize+' in active roster</span></h2>'
-    + '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;margin-top:10px">'
+  const trlSumBits = [trl.inUse.length+' in use', trl.preloaded.length+' preloaded', trl.yard.length+' in yard'];
+  if(trl.atCustomer.length) trlSumBits.push(trl.atCustomer.length+' at customer');
+  if(trl.redTag.length) trlSumBits.push(trl.redTag.length+' red tag');
+  const trlHTML = '<details class="card trl-fold" id="trlStatusCard"'+(trailerStatusOpen?' open':'')+'>'
+    + '<summary>Trailer status'
+    + '<span class="trl-sum-n">'+esc(trlSumBits.join(' · '))+' · '+trl.rosterSize+' roster</span></summary>'
+    + '<div class="trl-body">'
+    + '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px">'
     + '<div style="background:var(--bg-inset);border-radius:6px;padding:12px">'
       + '<div style="font:600 11px/1.2 var(--body);color:var(--amber);text-transform:uppercase;letter-spacing:.05em">🚛 In Use ('+trl.inUse.length+')</div>'
       + '<div style="margin-top:8px;font:600 12px/1.7 var(--mono)">'
@@ -9157,8 +9319,8 @@ function renderDayRollup(){
     + (trl.done.length ? '<div style="margin-top:12px;font-size:11px;color:var(--text-muted)">Manually marked done: '+trl.done.map(p=>mkChip(p, '#252d38', 'var(--text-muted)', 'yard-restore')).join('')+'</div>' : '')
     + (trl.unknown.length ? '<div style="margin-top:10px;font-size:11px;color:var(--amber)">⚠ Unrecognized pair'+(trl.unknown.length>1?'s':'')+' on today\'s sheet: '+trl.unknown.map(esc).join(', ')+'. New equipment or typo — not counted against yard availability.</div>' : '')
     + '<div style="margin-top:10px;font-size:11px;color:var(--text-faint)">Tap ✓ done when a trailer\'s physically back at yard. Roster '+trl.rosterSize+' = In Use '+trl.inUse.length+' + Preloaded '+trl.preloaded.length+' + Yard '+trl.yard.length+' + At Customer '+trl.atCustomer.length+' + Red Tag '+trl.redTag.length+'.</div>'
-    + '</div>';
-  h += '<div class="card"><h2>Dispatch sheet'
+    + '</div></details>';
+  h += '<div class="card sheet-card"><h2>Dispatch sheet'
     + '<button type="button" id="daySheetEdit" style="float:right;all:unset;cursor:pointer;font:600 10px/1 var(--body);'
     + 'letter-spacing:.06em;padding:5px 9px;border-radius:4px;background:'+(dayEditMode?'var(--accent)':'var(--bg-inset)')
     + ';color:'+(dayEditMode?'var(--accent-fg)':'var(--text-muted)')+'">'+(dayEditMode?'✓ EDITING':'✎ EDIT')+'</button>'
@@ -9201,48 +9363,48 @@ function renderDayRollup(){
       const bTitle = (r.bucketWhy? bucketMeta(bucket).label+' — '+r.bucketWhy : bucketMeta(bucket).label);
       const drvWarn = (r.driverRaw && !r.driver)
         ? ' title="Sheet says &quot;'+esc(r.driverRaw)+'&quot; — no roster match, using the default rate"' : '';
-      const drv = r.driverRaw || r.driver || '—';
-      // v1.8.16: Driver cell mirrors the dispatch Excel — blank/— until
-      // James actually assigns someone. Suggestions live only in the
-      // Suggested column now that the sheet fits without scrolling.
+      // v1.8.16 / v2.1.30: Driver cell mirrors the dispatch Excel — PRIMARY /
+      // SECONDARY pairing, blank/— until James actually assigns someone.
       /* v1.8: a stable per-row DOM id so an alert chip can scroll to and flash
          the exact rows it counted. Section 2 gets its own prefix — its index
          addresses dayPreloadRows, not currentRows, and a collision would flash
          the wrong load. */
-      let row = '<tr id="'+(pre?'drPreRow':'drRow')+i+'" class="bk-'+bucket+(delivered?' row-del':'')+(pre?' pre-row':'')+'">'
+      let row = '<tr id="'+(pre?'drPreRow':'drRow')+i+'" class="sheet-load bk-'+bucket+(delivered?' row-del':'')+(pre?' pre-row':'')+'">'
         + '<td class="c-time" title="'+esc(bTitle)+'">'
         + (editable ? '<button type="button" class="del" data-del="'+i+'" style="padding:3px 6px;font-size:11px" title="Remove">✕</button> ' : '')
         + esc(r.time || r.timeRaw || '—')
         + ruleChipsHTML(r, mode)+'</td>'
-        + '<td>'+esc(r.po||'—')+'</td>'
-        + '<td'+drvWarn+'>'+esc(String(drv).slice(0,20))+((r.driverRaw&&!r.driver)?' <span style="color:var(--amber)">⚠</span>':'')+'</td>'
-        + '<td>'+esc(r.origin||'—')+'</td>'
-        + '<td>'+esc(r.fb||'—')+'</td>'
-        + '<td>'+esc(String(r.commodity||'—').slice(0,26))
+        + '<td class="c-po">'+esc(r.po||'—')+'</td>'
+        + '<td class="c-drv"'+drvWarn+'>'+driverSheetHTML(r)
+        + ((r.driverRaw&&!r.driver)?' <span style="color:var(--amber)">⚠</span>':'')
+        + sheetMetaHTML(r)+'</td>'
+        + '<td class="c-orig">'+esc(r.origin||'—')+'</td>'
+        + '<td class="c-fb">'+esc(r.fb||'—')+'</td>'
+        + '<td class="c-comm">'+esc(String(r.commodity||'—').slice(0,26))
         + (editable
             ? '<br><select class="cell" data-dr="bucket" data-i="'+i+'" style="margin-top:4px">'
               + LOAD_BUCKETS.map(b=>'<option value="'+b.k+'"'+(b.k===bucket?' selected':'')+'>'+esc(b.label)+'</option>').join('')
               + '</select>'
             : (r.custLabel?'<br><span style="font-size:10px;color:'+bucketMeta(bucket).color+'">'+esc(r.custLabel)+'</span>':''))
         + '</td>'
-        + '<td>'+esc(r.truck||'—')+'</td>'
-        + '<td class="'+stCls+'">'+esc(r.status||'')+'</td>'
+        + '<td class="c-truck">'+esc(r.truck||'—')+'</td>'
+        + '<td class="c-st'+(stCls?' '+stCls:'')+'">'+esc(r.status||'')+'</td>'
         /* The Send-dispatch stub rides in the Suggested-driver cell because it
            texts that suggestion. Section 2 is excluded: those trailers are
            being built tonight by the PM crew off tomorrow's list, so a
            "who takes this load" text against today's roster would be wrong. */
         + '<td class="c-sug">'+suggestCellHTML(r)+(pre?'':smsButtonHTML(r))+'</td>';
       if(editable){
-        row += '<td><input class="cell" type="number" inputmode="decimal" step="10" data-dr="revenueOverride" data-i="'+i+'" '
+        row += '<td class="c-rev"><input class="cell" type="number" inputmode="decimal" step="10" data-dr="revenueOverride" data-i="'+i+'" '
              + 'value="'+esc(r.revenueOverride)+'" placeholder="auto"></td>'
-             + '<td><input class="cell" type="number" inputmode="decimal" step="10" data-dr="varCostOverride" data-i="'+i+'" '
+             + '<td class="c-var"><input class="cell" type="number" inputmode="decimal" step="10" data-dr="varCostOverride" data-i="'+i+'" '
              + 'value="'+esc(r.varCostOverride)+'" placeholder="auto"></td>';
       } else {
         const t = pre ? ' title="'+esc('Booked to '+(r.date||'the delivery day')+', not today. Shown for the crew doing the prep.')+'"' : '';
-        row += '<td class="money dr-rev" data-i="'+key+'"'+t+'>—</td>'
-             + '<td class="money dr-var" data-i="'+key+'"'+t+'>—</td>';
+        row += '<td class="money c-rev dr-rev" data-i="'+key+'"'+t+'>—</td>'
+             + '<td class="money c-var dr-var" data-i="'+key+'"'+t+'>—</td>';
       }
-      row += '<td class="money dr-cm" data-i="'+key+'">—</td>';
+      row += '<td class="money c-cm dr-cm" data-i="'+key+'">—</td>';
       /* v1.5 actuals. A matched row gets four measured cells; an unmatched one
          gets a single "?" spanning them, so the reason it has no actuals is
          visible on the row rather than left as four blanks to interpret.
@@ -9275,7 +9437,7 @@ function renderDayRollup(){
        the live probe of the auto-layout table (Thu Aug 6) with ~5% padding so a day
        with slightly longer content in a column doesn't clip. Actual-hrs columns are
        only emitted when showAct is on, matching the header row exactly. */
-    h += '<div class="sheet-wrap"><table class="sheet">'
+    h += '<div class="sheet-wrap"><table class="sheet'+(dayEditMode?' editing':'')+'">'
       + '<colgroup>'
       + '<col style="width:260px"><col style="width:110px"><col style="width:190px">'
       + '<col style="width:165px"><col style="width:105px"><col style="width:220px">'
@@ -9286,9 +9448,9 @@ function renderDayRollup(){
           : '')
       + '</colgroup>'
       + '<thead><tr>'
-      + '<th class="c-time">Time</th><th>PO / Rel #</th><th>Driver</th><th>Origin</th><th>FB #</th>'
-      + '<th>Commodity</th><th>Truck</th><th>Status</th><th>Suggested driver</th>'
-      + '<th class="n">Est. Revenue</th><th class="n">Variable</th><th class="n">Contribution</th>'
+      + '<th class="c-time">Time</th><th class="c-po">PO / Rel #</th><th class="c-drv">Driver</th><th class="c-orig">Origin</th><th class="c-fb">FB #</th>'
+      + '<th class="c-comm">Commodity</th><th class="c-truck">Truck</th><th class="c-st">Status</th><th class="c-sug">Suggested driver</th>'
+      + '<th class="n c-rev">Est. Revenue</th><th class="n c-var">Variable</th><th class="n c-cm">Contribution</th>'
       + (showAct
           ? '<th class="n vz-h">Actual Hrs</th><th class="n vz-h">Actual Mi</th>'
             + '<th class="n vz-h">Actual Variable</th><th class="n vz-h">Actual Contribution</th>'
@@ -9400,6 +9562,9 @@ function renderDayRollup(){
           + 'entering Diamond. A <b>?</b> in those columns means the row could not be matched — hover it for the reason.'
         : '')
     + '</div></div>';
+  /* v2.1.30: trailer wall sits UNDER the sheet so the Excel date +
+     LATHROP / RIPON blocks are what you see first after the day strip. */
+  h += trlHTML;
 
   /* ---- 4b. Driver-hours (v1.7) ----
      The one card that reads BOTH sections, because driver-hours are the one
@@ -9524,6 +9689,10 @@ function wireDayRollup(){
     toggleTrailerDone(dateISO, pair);
     renderDayRollup();
   }));
+  const trlFold = document.getElementById('trlStatusCard');
+  if(trlFold){
+    trlFold.addEventListener('toggle',()=>{ trailerStatusOpen = !!trlFold.open; });
+  }
 
   /* --- v1.8 actionable-now strip ---
      Tapping a chip expands its detail AND jumps to the rows in one gesture,
@@ -13533,6 +13702,12 @@ SHADOW_TIMELINE_TEXT['2026-07-28'] = "**PARTIAL DAY — Phase 2 diff loop stoppe
 
 /* ---- v2.0 DATA: Changelog (in-app version history) ---- */
 const SHADOW_CHANGELOG = [
+  { ver:'v2.1.30-excel-sheet-layout', date:'2026-08-24', changes:[
+    'Today now opens on the dispatch sheet the way the Excel log is laid out: orange date banner, then D.P. LATHROP, then D.P. RIPON, then the load rows',
+    'Trailer Status moved under the sheet and starts collapsed. The summary line still shows in-use / preloaded / yard counts — tap to open the wall. Trailer ✓ done / yard logic is unchanged',
+    'Phone no longer forces a 1890px sideways scroll to read a load. Time, driver, origin, and status stay on screen; PO / trailer / commodity sit on a second line; contribution stays on the right. Full wide sheet is unchanged on a computer',
+    'Does not change missing-rates fill, Queue scoring, diesel/canonical sync, or the Worker'
+  ]},
   { ver:'v2.1.29-fill-missing-rates', date:'2026-08-24', changes:[
     'The brown “using default rate” card on the landing page is now something you can fill, not just a list of origin→destination pairs',
     'Tap it, type the $ per load FCT bills (or optional $/lb + FSC% if that is how the lane invoices), tap Save rates. That number is stored on this phone and today’s loads reprice off it — the lane drops off the card',
@@ -13987,7 +14162,7 @@ function renderV2WageSection(){
   }, 200);
   // Update the header version pill
   const verEl = document.getElementById('hdrVer');
-  if (verEl) verEl.textContent = 'v2.1.29-fill-missing-rates';
+  if (verEl) verEl.textContent = 'v2.1.30-excel-sheet-layout';
 })();
 </script>
 </body>
