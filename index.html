@@ -11,7 +11,7 @@
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<meta name="app-version" content="2026-08-24-fct-calc-v2.1.27-no-silent-canonical-overwrite">
+<meta name="app-version" content="2026-08-24-fct-calc-v2.1.28-shift-start-suggestions">
 <title data-id="th-modified">FCT Load Profitability — French Camp Transport</title>
 <link rel="manifest" href='data:application/manifest+json,{"name":"FCT Load Profitability","short_name":"FCT Calc","start_url":".","display":"standalone","background_color":"%2312100e","theme_color":"%2312100e","icons":[{"src":"data:image/svg%2Bxml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 192 192%27%3E%3Crect width=%27192%27 height=%27192%27 fill=%27%2312100e%27/%3E%3Ctext x=%2796%27 y=%27124%27 font-size=%2772%27 font-family=%27sans-serif%27 font-weight=%27700%27 fill=%27%238fb590%27 text-anchor=%27middle%27%3EFCT%3C/text%3E%3C/svg%3E","sizes":"192x192","type":"image/svg+xml"}]}'>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -1149,7 +1149,7 @@
    still exposes the Import JSON box for future refreshes.
    ============================================================= */
 
-const APP_VERSION = '2026-08-24-fct-calc-v2.1.27-no-silent-canonical-overwrite';
+const APP_VERSION = '2026-08-24-fct-calc-v2.1.28-shift-start-suggestions';
 const STORAGE_KEY = 'fct-calc:state';
 const IDB_NAME = 'fct-calc-db';
 const IDB_STORE = 'kv';
@@ -4791,6 +4791,29 @@ const DRIVER_SHORT_NAME = {
   'Rodolfo Segura':'Rudy', 'Silvino Ochoa':'Silvino', 'Victor Solorzano Navarro':'Victor',
 };
 function shortNameFor(fullName){ return DRIVER_SHORT_NAME[fullName] || String(fullName||''); }
+/* Reverse map so "GREG" / "Greg" / "Gregorio Martinez" collide on one key.
+   v2.1.28: the 2-load cap and Queue reserve were writing the roster full
+   name while seeded sheet rows sometimes stored the short name — Greg
+   never hit the cap because the log looked up a different string. */
+const DRIVER_FULL_NAME = (function(){
+  const m = Object.create(null);
+  Object.keys(DRIVER_SHORT_NAME).forEach(full => {
+    m[String(full).toUpperCase()] = full;
+    m[String(DRIVER_SHORT_NAME[full]).toUpperCase()] = full;
+  });
+  return m;
+})();
+function suggestionLogKey(name){
+  const raw = String(name||'').trim();
+  if(!raw) return '';
+  if(DRIVER_SHORT_NAME[raw]) return raw;
+  const upper = raw.toUpperCase().replace(/[^A-Z ]/g,' ').replace(/\s+/g,' ').trim();
+  if(DRIVER_FULL_NAME[upper]) return DRIVER_FULL_NAME[upper];
+  const roster = (state.settings && state.settings.drivers) || [];
+  const norm = s=>String(s||'').toUpperCase().replace(/[^A-Z ]/g,' ').replace(/\s+/g,' ').trim();
+  const hit = roster.find(d => norm(d.name) === upper);
+  return hit ? hit.name : raw;
+}
 
 /* ---- Shift patterns (driver_shifts.json, 2026-05-31) ----
    JJ ground truth for the six he named, cross-checked against Verizon
@@ -5049,9 +5072,25 @@ const POC_ORIGINS = ['ADAMS','ADAMS GIBSON','AMISTAD','MARTINS','MEZGER',
                         lanes were already priced via pocLaneRevenue on the
                         POC bucket path, this just guarantees the origin
                         triggers the POC lookup when the destination check
-                        hasn't already routed it). */
+                        hasn't already routed it).
+                        v2.1.28: these three stay here for RATE lookup only.
+                        They must NOT count as POC-signature origins when
+                        scoring which drivers are Diamond vs POC — that
+                        emptied the Queue (0/24 Diamond-eligible) and every
+                        open dropdown fell through to Greg, first on the roster. */
                      'ADM PORT','ADMPORT','PNG','PENNY NEWMAN','PENNY NEWMAN GRAIN'];
 function isPocOrigin(o){ return POC_ORIGINS.indexOf(String(o||'').toUpperCase()) >= 0; }
+/* Driver-bucket origins = the v1.8.9 / v1.9 list. PNG / Penny Newman / ADM
+   Port are Diamond (and mixed) pickup points that v2.1.23 added to
+   POC_ORIGINS so Perdue ORG CORN and ADM RICE find a lane rate. Counting
+   Francisco's 256 PNG runs as "POC history" made every Diamond driver look
+   POC-leaning and the v1.8.18 hard filter dropped the whole pool. */
+const DRIVER_POC_ORIGINS = ['ADAMS','ADAMS GIBSON','AMISTAD','MARTINS','MEZGER',
+                     'TAMAKI','POC','FRONTIER AG','COLEMAN FOLEY','VAN DYKES',
+                     'JAQUES','JACQUES','JACQUES BROS','GRIMES','PELICAN',
+                     'STOKES','STOKES FARMS','SH MERWIN','MERWIN',
+                     'VICTORIA','VICTORIA ISLAND','ART SPINELLA','SPINELLA'];
+function isDriverPocOrigin(o){ return DRIVER_POC_ORIGINS.indexOf(String(o||'').toUpperCase()) >= 0; }
 
 /* Fraction of a driver's total history spent on POC-signature origins.
    0 = pure Diamond driver, 1 = pure POC specialist. Cached per name so
@@ -5064,7 +5103,7 @@ function driverPocShare(name){
   for(const k in hist){
     const n = Number(hist[k]) || 0;
     total += n;
-    if(isPocOrigin(k)) poc += n;
+    if(isDriverPocOrigin(k)) poc += n;
   }
   const share = total ? poc/total : 0;
   __DRIVER_POC_SHARE[name] = share;
@@ -5367,6 +5406,26 @@ function shiftCovers(cls, mins){
   return w.from <= w.to ? (mins>=w.from && mins<=w.to)
                         : (mins>=w.from || mins<=w.to);   // wraps midnight
 }
+/* v2.1.28: shift-start matching. James 2026-08-24: suggest people as their
+   truck starts at the beginning of the day. DAY 6:00–6:45 starters need a
+   lead so a 6am PNG is theirs even though the baked average start is 6:22.
+   Evening wraps: a 2am load is after a 4pm start, not before it. */
+const SHIFT_START_LEAD_MIN  = 90;  // may take a load up to 90 min before official start
+const SHIFT_START_GRACE_MIN = 75;  // still "truck is starting" this long after start
+function shiftStartDelta(shift, mins){
+  if(!shift || mins==null || shift.start==null) return null;
+  let t = mins;
+  if(shift.cls === 'EVENING' && mins < shift.start) t = mins + 24*60;
+  return t - shift.start;
+}
+function shiftIsStarting(shift, mins){
+  const d = shiftStartDelta(shift, mins);
+  return d!=null && d >= -SHIFT_START_LEAD_MIN && d <= SHIFT_START_GRACE_MIN;
+}
+function shiftHasStarted(shift, mins){
+  const d = shiftStartDelta(shift, mins);
+  return d!=null && d >= -SHIFT_START_LEAD_MIN;
+}
 
 /* Stable pseudo-random. Math.random() would reshuffle the "no history"
    fallback on every re-render, which reads as the app changing its mind. */
@@ -5493,6 +5552,7 @@ window.setTruckDriverOverride = setTruckDriverOverride;
      - Preload cooldown: 2 hr (driver drops pre-built trailer, no load time)
    The log resets at the start of every renderDayRollup pass. */
 let __suggestionLog = new Map();  // driverName -> [minutes1, minutes2]
+let __precomputedSuggestions = new Map(); // row.id -> top picks (chrono walk)
 // James 2026-07-29 after my briefly bumping to 3: "We almost certainly
 // can't do 3 a guy. We will see how tomorrow goes." Keep at 2 — operator
 // ground truth, don't reopen without new data.
@@ -5509,23 +5569,48 @@ const COOLDOWN_PRELOAD_MIN  = 180;   // 3 hours — preload trailer drop + retur
 // Verify actual number from Verizon segment data when we have it.
 const COOLDOWN_HARRIS_MIN   = 600;   // 10 hours — full-day burn
 
-function resetSuggestionLog(){ __suggestionLog = new Map(); }
+function resetSuggestionLog(){
+  __suggestionLog = new Map();
+  __precomputedSuggestions = new Map();
+}
+
+function driverSlotLog(name){
+  return __suggestionLog.get(suggestionLogKey(name)) || [];
+}
+
+/* Duration of a prior reserved/assigned slot. Assigned rows use the real
+   load duration; suggested-only slots that are not yet on the sheet use
+   preloaded=3hr for pre-6am (those trailers are built the afternoon before)
+   and live Diamond=5hr otherwise. Same-clock-time loads always conflict. */
+function priorSlotDuration(name, prevMins){
+  if(prevMins == null) return COOLDOWN_DELIVERY_MIN;
+  const key = suggestionLogKey(name);
+  const rows = (state.dayRollup && state.dayRollup.currentRows) || [];
+  for(const r of rows){
+    if(!r || suggestionLogKey(r.driver) !== key) continue;
+    if(apptMinutes(r.time) === prevMins) return loadDurationMins(r);
+  }
+  if(prevMins >= 0 && prevMins < 360) return COOLDOWN_PRELOADED_MIN;
+  return COOLDOWN_DELIVERY_MIN;
+}
 
 /* v1.8.5: seed the log with rows that ALREADY have a driver assigned so those
    count against the cap. James's early-AM preloads are dispatched by JJ the
    night before — the suggestion engine has to see Francisco already has a 4am
-   load or it will suggest him for 2 MORE and blow past what's realistic. */
+   load or it will suggest him for 2 MORE and blow past what's realistic.
+   v2.1.28: always key the log on the roster full name so "GREG" / "Greg" /
+   "Gregorio Martinez" count as the same person. */
 function seedAssignedDriverSlots(rows){
   if(!Array.isArray(rows)) return;
   rows.forEach(r => {
-    const driverName = r && r.driver;
+    const driverName = r && (r.driver || r.driverRaw);
     if(!driverName) return;
     const mins = apptMinutes(r.time);
     reserveDriverSlot(driverName, mins);
     // if the row lists a separate preloader, count that person too
     if(r.preloader){
-      const preloadName = matchDriver(r.preloader);
-      if(preloadName && preloadName !== driverName){
+      const preloadName = suggestionLogKey(r.preloader);
+      if(preloadName && preloadName !== suggestionLogKey(driverName)){
         // preloaders drop trailers pre-6am; their slot is nominally the pre-6am window
         reserveDriverSlot(preloadName, mins != null && mins < 360 ? mins : 0);
       }
@@ -5534,21 +5619,15 @@ function seedAssignedDriverSlots(rows){
 }
 
 function driverCanTakeLoad(name, mins, isPreload, isHarris){
-  const log = __suggestionLog.get(name) || [];
+  const log = driverSlotLog(name);
   if(log.length >= MAX_LOADS_PER_DRIVER) return false;
   if(isHarris && log.length >= 1) return false;
   // v2.1.11: cooldown uses ACTUAL duration of prior load (3hr preloaded, 5hr
   // live, 10hr Harris) not a flat 5hr. James 2026-08-18: preloaded loads free
   // the driver in ~3hr — algo needs to surface them for next early AM load.
-  const rows = (state.dayRollup && state.dayRollup.currentRows) || [];
   for(const prev of log){
     if(mins == null || prev == null) continue;
-    // Find the row for prev-slot to get its actual duration
-    let priorDur = COOLDOWN_DELIVERY_MIN;
-    for(const r of rows){
-      if(!r || r.driver !== name) continue;
-      if(apptMinutes(r.time) === prev){ priorDur = loadDurationMins(r); break; }
-    }
+    const priorDur = priorSlotDuration(name, prev);
     // Directional check: if new load is AFTER prev, prev's cooldown must have expired.
     // If new load is BEFORE prev, use the new load's own duration to check backwards.
     if(mins >= prev){
@@ -5561,9 +5640,11 @@ function driverCanTakeLoad(name, mins, isPreload, isHarris){
   return true;
 }
 function reserveDriverSlot(name, mins){
-  const log = __suggestionLog.get(name) || [];
+  const key = suggestionLogKey(name);
+  if(!key) return;
+  const log = __suggestionLog.get(key) || [];
   log.push(mins);
-  __suggestionLog.set(name, log);
+  __suggestionLog.set(key, log);
 }
 
 /* v2.1.9/10: driver trajectory helper — given a driver name and the load appt
@@ -5580,7 +5661,7 @@ function loadDurationMins(r){
   return COOLDOWN_DELIVERY_MIN;
 }
 function driverTrajectory(name, apptMins){
-  const log = (__suggestionLog.get(name) || []).filter(m => m != null).sort((a,b)=>a-b);
+  const log = driverSlotLog(name).filter(m => m != null).sort((a,b)=>a-b);
   if(!log.length) return { earliestFree: null, wasBusy: false, nextBooking: null };
   let latestBefore = null;
   let nextAfter = null;
@@ -5589,18 +5670,7 @@ function driverTrajectory(name, apptMins){
     if(t < apptMins) latestBefore = t;
     else if(nextAfter == null) nextAfter = t;
   }
-  // Look up the actual row for latestBefore so we use the right duration.
-  let priorDuration = COOLDOWN_DELIVERY_MIN;
-  if(latestBefore != null){
-    const rows = (state.dayRollup && state.dayRollup.currentRows) || [];
-    for(const r of rows){
-      if(!r || r.driver !== name) continue;
-      if(apptMinutes(r.time) === latestBefore){
-        priorDuration = loadDurationMins(r);
-        break;
-      }
-    }
-  }
+  const priorDuration = latestBefore != null ? priorSlotDuration(name, latestBefore) : COOLDOWN_DELIVERY_MIN;
   const earliestFree = latestBefore != null ? (latestBefore + priorDuration) : null;
   return {
     earliestFree: earliestFree,
@@ -5612,37 +5682,39 @@ function driverTrajectory(name, apptMins){
 }
 
 /* ---- Suggestion engine (Phase 3.0 foundation) ----
-   Deliberately simple and fully offline. Ranking, in order:
-     1. has this driver run this origin before, and how often
-     2. does their shift cover the appointment time on this weekday
-     3. clocked in right now (the ELD-login hook, hand-set for today)
-   No history anywhere -> fall back to the roster with a "?" marker, so
-   a guess is never dressed up as a pairing.
+   v2.1.28 rebuild (James 2026-08-24): restore the spread older versions
+   had, then rank by shift-start. Archaeology (git only has the v2.1.24
+   snapshot, so this is from comments + SHADOW_CHANGELOG + the live bug):
 
-   v1.8.3 adds capacity: respectCap=true skips drivers over their 2-load
-   cap or inside the 5hr/2.5hr cooldown. reserve=true books the top pick's
-   slot so subsequent rows see the constraint.
+     v1.8.3  cap + reserve — this is what USED to spread the Queue.
+     v1.8.9  hard shift filter for JJ-confirmed NIGHT/AFTERNOON/EVENING.
+     v1.8.18 hard Diamond/POC bucket split (pocShare > 10%).
+     v1.8.19 overCap fallback — keep someone clickable when the day is packed.
+     v2.1.4  Verizon -1200 moving — wipes DAY roster at 6am when trucks roll.
+     v2.1.6/11 NIGHT off-window exemptions — kept Greg eligible through 9am.
+     v2.1.23 PNG added to POC_ORIGINS for Perdue RATE lookup. Combined with
+             v1.8.18 this made 0/24 drivers Diamond-eligible. Queue top[]
+             was empty; the dropdown fell through to roster order; Gregorio
+             Martinez is first in settings.drivers. THAT is the all-Greg
+             regression. Older versions (v1.8.18 through v2.1.22) spread.
 
-   NOT modelled yet, and deliberately: real HOS remaining (Phase 3.1),
-   truck position (3.3), and the preloader/delivery split. */
+   Ranking now, in order:
+     1. shift-start / window fit (truck starting at T)
+     2. remaining capacity — nobody gets a 2nd until this wave has a 1st
+     3. origin history as a tie-break only (no more +1000 steamroller)
+   Hard filters (unchanged intent): confirmed off-window NIGHT/AFTERNOON/
+   EVENING out; POC vs Diamond bucket; Felix meal/salmon; day-off;
+   dedicated preloaders; 2-load cap + cooldown including same clock time. */
 function suggestDrivers(r, n, opts){
   opts = opts || {};
   const origin = normOrigin(r && r.origin);
   const mins = apptMinutes(r && r.time);
   const isPreload = mins != null && mins >= 0 && mins < 360;  // pre-6am
-  // 2026-08-18 v2.1.5: Harris = 10hr full-day burn (James confirmed)
   const isHarris = origin === 'HARRIS';
   const dateISO = (r && r.date) || state.dayRollup.date || '';
-  // v1.8.9: load bucket drives the driver-bucket preference weight below.
-  // 'diamond' loads deprioritize POC-heavy drivers; 'steady' (POC) loads
-  // reward them. r.bucket is set by classifyLoad on every parsed row.
   const loadBucket = (r && r.bucket) || '';
-  // v2.1.5: preload window reserve — count how many day-shift drivers still
-  // have capacity to handle a late-afternoon preload run (PNG/ARA 6pm close,
-  // FCG 4pm close). If reserve is thin, penalize stacking additional Diamond
-  // loads on day drivers so they can be available for the preload window.
-  // James 2026-08-18: "While keeping capacity for preloads for nights and
-  // early AM." Only applies to afternoon Diamond assignments.
+  // v2.1.5: preload window reserve — afternoon Diamond only. Leave it, but
+  // it must not outrank shift-start on the morning wave.
   const preloadReserve = (function(){
     try {
       const roster = dispatchRoster().filter(d=>d.active);
@@ -5651,14 +5723,11 @@ function suggestDrivers(r, n, opts){
       for(const d of roster){
         if(!d.shift) continue;
         const cls = d.shift.cls;
-        // DAY / AFTERNOON drivers who cover the 4-6pm window
-        // v2.1.6: NIGHT drivers who've likely finished their early AM run
-        // (after 9am) also count — they still have hours and can preload.
         let eligible = false;
         if(cls === 'DAY' || cls === 'AFTERNOON') eligible = true;
         else if(cls === 'NIGHT' && nowHr >= 9 && nowHr <= 16) eligible = true;
         if(!eligible) continue;
-        const already = (__suggestionLog.get(d.name) || []).length;
+        const already = driverSlotLog(d.name).length;
         if(already >= MAX_LOADS_PER_DRIVER) continue;
         candidates++;
       }
@@ -5666,44 +5735,49 @@ function suggestDrivers(r, n, opts){
     } catch(_){ return 99; }
   })();
   const hourNow = new Date().getHours();
-  const preloadReserveThin = preloadReserve < 3 && hourNow >= 11;  // after 11am is when JJ starts stacking
+  const preloadReserveThin = preloadReserve < 3 && hourNow >= 11;
+  const nowMins = hourNow*60 + new Date().getMinutes();
   let out = dispatchRoster().filter(d=>d.active).map(d=>{
     const hist = originHistoryFor(d.name);
     const runs = Number(hist[origin]) || 0;
     const total = Object.keys(hist).reduce((a,k)=>a+(Number(hist[k])||0), 0);
     const onDay = d.shift ? shiftWorksOn(d.shift, dateISO) : true;
     const fits  = d.shift ? shiftCovers(d.shift.cls, mins) : false;
-    // v1.8.17: apply per-day bucket override if James has scheduled this
-    // driver into a bucket that differs from their historical pattern.
+    const starting = d.shift ? shiftIsStarting(d.shift, mins) : false;
+    const started  = d.shift ? shiftHasStarted(d.shift, mins) : false;
     let pocShare = driverPocShare(d.name);
     const bucketOverride = driverBucketOverride(d.short, dateISO);
     if(bucketOverride === 'poc') pocShare = 1.0;
     else if(bucketOverride === 'diamond') pocShare = 0.0;
-    // v1.8.9: a shift class is HARD-confirmed if JJ named it (note ends with "(JJ)").
-    // The unassigned DAY blanket-default is soft — those drivers can still be
-    // suggested off-hours because we don't actually know their real window.
     const confirmed = d.shift && /\(JJ\)/.test(String(d.shift.note||''));
-    // v1.8.28: reorder the "why" so operational fit leads and history is
-    // shown as supporting evidence. Prior order made it look like origin
-    // history was the only signal driving the pick.
     const why = [];
-    if(d.shift && onDay && fits) why.push(d.shift.cls.toLowerCase()+' shift covers '+fmtMins(mins));
+    if(d.shift && onDay && starting && fits) why.push(d.shift.cls.toLowerCase()+' truck starting ~'+fmtMins(d.shift.start)+' for '+fmtMins(mins));
+    else if(d.shift && onDay && fits) why.push(d.shift.cls.toLowerCase()+' shift covers '+fmtMins(mins));
     else if(d.shift && !onDay)   why.push('off on this weekday');
     else if(d.shift && mins!=null && !fits) why.push(d.shift.cls.toLowerCase()+' shift is off-window');
     if(d.clockedIn) why.push('clocked in');
-    // Origin history goes last so shift-fit + clocked-in read as the primary
-    // reasons and history is supporting evidence, not the whole story.
     if(runs) why.push(runs+' prior run'+(runs===1?'':'s')+' at '+origin);
     let score = 0;
-    // v1.8.32: workload-balancing penalty. James 2026-07-31: one driver
-    // was getting 4 loads while another got 1. Penalize each additional
-    // load already on the driver today so the algo spreads work more
-    // evenly. Combined with the cap this keeps the fleet balanced.
-    const currentLoadLog = __suggestionLog.get(d.name) || [];
-    const currentLoad = currentLoadLog.length;
-    if(currentLoad > 0){
+    const currentLoad = driverSlotLog(d.name).length;
+    // v2.1.28: shift-start outranks origin counts. DAY 6:00–6:45 starters
+    // beat Greg (2–3am NIGHT, already 3+ hours into his shift) on 6am PNG.
+    if(starting && fits) score += 900;
+    else if(fits && started) score += 350;
+    else if(fits) score += 80;
+    score += onDay ? 80 : 0;
+    score += d.clockedIn ? 40 : 0;
+    // First-wave: 0 loads before 1 before 2. James: nobody gets a second
+    // until that wave has a first. Hard-filtered to 0-load below as well;
+    // this score keeps the ranking honest if the filter cannot apply.
+    if(currentLoad === 0) score += 500;
+    else if(currentLoad === 1){
+      score -= 200;
+      why.push('1 load already today');
+    } else {
       score -= currentLoad * 400;
-      // v2.1.9: trajectory-aware — "empty ~7am, this fits" vs generic penalty.
+      why.push(currentLoad+' loads already today');
+    }
+    if(currentLoad > 0){
       const traj = driverTrajectory(d.name, mins);
       if(traj.priorSlot != null && traj.earliestFree != null && mins != null){
         const priorLbl = fmtMins(traj.priorSlot);
@@ -5711,43 +5785,22 @@ function suggestDrivers(r, n, opts){
         const slack = mins - traj.earliestFree;
         const priorTag = traj.priorDuration === COOLDOWN_PRELOADED_MIN ? ' preloaded' : (traj.priorDuration === COOLDOWN_HARRIS_MIN ? ' Harris' : '');
         if(slack >= 0 && slack <= 120){
-          // Load starts 0-2 hrs after they're empty — perfect handoff.
-          score += 300;
-          why.push('freshly empty ~'+freeLbl+' (from '+priorLbl+priorTag+' load), this fits');
-        } else if(slack > 120 && slack <= 300){
-          // Load is 2-5 hrs after they're empty — still available, mild bonus.
-          score += 100;
-          why.push('empty ~'+freeLbl+' (from '+priorLbl+priorTag+' load) with hours left');
-        } else if(slack > 300){
-          why.push('has '+priorLbl+priorTag+' load, this is much later');
+          why.push('empty ~'+freeLbl+' (from '+priorLbl+priorTag+' load)');
+        } else if(slack > 120){
+          why.push('has '+priorLbl+priorTag+' load, this is later');
         } else {
-          // slack < 0: they're still busy on prior load.
           why.push('busy until ~'+freeLbl+' (from '+priorLbl+priorTag+' load) — conflict');
         }
-        // v2.1.13: James 2026-08-18 corrected me — early-AM guys shouldn't be
-        // FORCED into preloads. They just need to be INCORPORATED into the pool
-        // as normal candidates when their prior load frees them up. The +300
-        // "freshly empty" bonus above handles the incorporation; no additional
-        // preload preference. They can take whatever the schedule needs.
-      } else if(currentLoad === 1) {
-        why.push('1 load already today');
-      } else {
-        why.push(currentLoad+' loads already today');
-      }
-      // Also warn if they have a NEXT booking coming soon
-      if(traj.nextBooking != null && mins != null){
-        const nextLbl = fmtMins(traj.nextBooking);
-        const gap = traj.nextBooking - mins;
-        if(gap > 0 && gap < COOLDOWN_DELIVERY_MIN){
-          score -= 500;
-          why.push('has '+nextLbl+' load coming — no room for this first');
+        if(traj.nextBooking != null){
+          const gap = traj.nextBooking - mins;
+          if(gap > 0 && gap < COOLDOWN_DELIVERY_MIN){
+            score -= 500;
+            why.push('has '+fmtMins(traj.nextBooking)+' load coming — no room for this first');
+          }
         }
       }
     }
-    // v1.8.31/32: commodity-family continuity. Learn from JJ's pattern —
-    // keep a driver on their product family. Reduced from +800 to +500 so
-    // it doesn't override the workload-balance signal when a lighter-
-    // loaded driver is available and shift-fit.
+    // Commodity-family continuity — supporting, below shift-start + first-wave.
     const loadFam = commodityFamily(r && r.commodity);
     if(loadFam){
       const dayRows = state.dayRollup && state.dayRollup.currentRows;
@@ -5763,8 +5816,8 @@ function suggestDrivers(r, n, opts){
           else if(isAvoidPair(otherFam, loadFam)) avoid = true;
         }
         if(matched){
-          score += 500;
-          why.push('already on '+loadFam.replace('_',' ')+' family today — keep on the trailer');
+          score += 80;
+          why.push('already on '+loadFam.replace('_',' ')+' family today');
         }
         if(avoid){
           score -= 400;
@@ -5772,118 +5825,64 @@ function suggestDrivers(r, n, opts){
         }
       }
     }
-    if(runs) score += 1000 + runs;                       // history dominates
-    score += (onDay?120:0) + (fits?90:0) + (d.clockedIn?60:0);
-    score += runs && total ? (runs/total)*40 : 0;         // share of their own work
-    // v1.8.16: stricter bucket-preference. Prior soft penalties still let
-    // POC-leaning drivers (Rafa 11%, Marcos 18%) surface on Diamond loads
-    // because their strong origin history overcame the ~150 pt penalty.
-    // James wants a HARD preference: POC drivers only surface for Diamond
-    // if every pure-Diamond guy is capped, and vice versa.
-    //
-    // Uses a flat -1500 wrong-bucket penalty above 10% threshold. That's
-    // bigger than any origin-history advantage (max ~300 pt spread), so
-    // wrong-bucket drivers reliably sort to the bottom.
+    // Origin history is a TIE-BREAK only. v1.8 used `score += 1000 + runs`
+    // which let Greg's 218 PNG (and Francisco's 256) dominate every row.
+    if(runs) score += Math.min(runs, 80);
+    score += runs && total ? (runs/total)*20 : 0;
+    // Soft bucket hint — the HARD filter below is what actually splits
+    // Diamond vs POC. Keep a small why-tag so the dropdown still explains it.
     if(loadBucket === 'diamond' && pocShare > 0.10){
-      score -= 1500;
-      why.push('POC-leaning ('+Math.round(pocShare*100)+'%) — Diamond load, deprioritized');
+      why.push('POC-leaning ('+Math.round(pocShare*100)+'%) — Diamond load');
     } else if(loadBucket === 'steady'){
-      if(pocShare > 0.10){
-        score += Math.round((pocShare - 0.05) * 2500);
-        why.push('POC-experienced ('+Math.round(pocShare*100)+'%) — POC load');
-      } else {
-        score -= 1500;
-        why.push('pure-Diamond history — POC load, deprioritized');
-      }
+      if(pocShare > 0.10) why.push('POC-experienced ('+Math.round(pocShare*100)+'%) — POC load');
+      else why.push('pure-Diamond history — POC load');
     }
-    // 2026-08-18 v2.1.4: Verizon live status fold-in. Penalize suggesting a
-    // driver whose truck is currently moving (in transit — busy) or stopped-out
-    // in the field (probably delivering). "Ready" override (JJ marked empty)
-    // clears the penalty.
+    // Verizon live: context, not a steamroller. v2.1.4's -1200 moving
+    // penalty wiped every DAY truck at 6am (they were rolling to PNG) and
+    // left unlinked Greg as the only un-penalized name. James: suggest
+    // people as their truck starts — moving near this appointment IS the start.
     const vzs = verizonDriverStatus(d.name);
-    let vzWhy = null;
     if(vzs && vzs.linked){
+      const nearThisAppt = mins!=null && Math.abs(mins - nowMins) <= 90;
       if(vzs.readyOverride){
-        vzWhy = '🟢 marked ready · Truck '+vzs.truck;
-        score += 200; // small bonus — driver actively announced availability
+        why.unshift('🟢 marked ready · Truck '+vzs.truck);
+        score += 40;
       } else if(vzs.isMoving){
-        vzWhy = '🔴 Truck '+vzs.truck+' moving, '+Math.round(vzs.speed)+' mph — busy';
-        score -= 1200; // hard penalty — actively in a load
-      } else if(vzs.isHome){
-        vzWhy = '🟢 at yard · Truck '+vzs.truck;
-        // no bonus — being at yard is baseline
-      } else if(vzs.available){
-        vzWhy = '🟡 Truck '+vzs.truck+' stopped '+Math.floor(vzs.ageMin/60)+'h at '+vzs.addr.split(',')[0]+' — probably empty';
-        // slight negative — probably done but not confirmed
-        score -= 200;
-      } else {
-        vzWhy = '🟡 Truck '+vzs.truck+' at '+vzs.addr.split(',')[0]+' '+vzs.ageMin+'m ago';
-        score -= 600; // in-progress at customer
-      }
-      if(vzWhy) why.unshift(vzWhy); // put live status first, most important context
-    }
-    // v2.1.6: early-AM driver post-empty boost. NIGHT-shift drivers (Greg
-    // 2-3am start, etc.) finish their runs mid-morning. If Verizon shows
-    // them back at yard AND it's 9am-2pm, they still have hours available
-    // and can take the next delivery OR help with a preload. Surface them.
-    // James 2026-08-18: "what do early morning guys do after they are empty?"
-    if(d.shift && d.shift.cls === 'NIGHT' && vzs && vzs.linked && vzs.isHome){
-      const nowHr = new Date().getHours();
-      if(nowHr >= 8 && nowHr <= 14){
-        const already = (__suggestionLog.get(d.name) || []).length;
-        if(already < MAX_LOADS_PER_DRIVER){
-          score += 400;
-          why.push('early-AM driver back at yard, has hours left');
+        if(nearThisAppt && currentLoad === 0){
+          why.unshift('🟢 Truck '+vzs.truck+' rolling — shift starting');
+        } else {
+          why.unshift('🟡 Truck '+vzs.truck+' moving, '+Math.round(vzs.speed)+' mph');
+          score -= 80;
         }
+      } else if(vzs.isHome){
+        why.unshift('🟢 at yard · Truck '+vzs.truck);
+      } else if(vzs.available){
+        why.unshift('🟡 Truck '+vzs.truck+' stopped — probably empty');
+      } else if(vzs.addr){
+        why.unshift('🟡 Truck '+vzs.truck+' at '+(vzs.addr.split(',')[0]||''));
       }
     }
-    // v2.1.5: preload-window reserve penalty. When the day-shift preload pool
-    // is thin (< 3 available) and this is a Diamond delivery (~5 hrs, will
-    // burn the driver for the rest of the day), penalize stacking on day
-    // drivers to keep late-afternoon preload capacity alive.
     if(preloadReserveThin && loadBucket === 'diamond'
        && (d.shift && (d.shift.cls === 'DAY' || d.shift.cls === 'AFTERNOON'))){
-      const alreadyOnDay = (__suggestionLog.get(d.name) || []).length;
-      if(alreadyOnDay >= 1){  // already has a load, penalize the second
-        score -= 350;
+      if(currentLoad >= 1){
+        score -= 120;
         why.push('preload reserve thin ('+preloadReserve+' left) — save for PM preload');
       }
     }
-    score += stableHash((r&&r.id||'')+d.name)*10;         // stable tiebreak
+    score += stableHash((r&&r.id||'')+d.name)*8;         // stable tiebreak
     return { name:d.name, short:d.short, runs:runs, known:runs>0, score:score,
              clockedIn:d.clockedIn, hos:d.hos, verizon: vzs,
-             confirmed:confirmed, fits:fits, onDay:onDay,
+             confirmed:confirmed, fits:fits, onDay:onDay, starting:starting,
              shiftCls: d.shift ? d.shift.cls : null,
-             __pocShare: pocShare,
+             __pocShare: pocShare, __loads: currentLoad,
              why: why.length? why.join(' · ') : 'no history at '+(origin||'this origin')+' — roster fallback' };
   });
-  // v1.8.9: HARD shift filter. If the driver's shift class is JJ-confirmed
-  // (NIGHT/AFTERNOON/EVENING) and the appointment is outside their window,
-  // filter them out entirely.
-  // v1.8.33: also hard-filter DAY blanket-default drivers from clearly
-  // overnight windows (9pm-4am). James 2026-07-31: Francisco (DAY) was
-  // being suggested for 11:59pm delivery which doesn't match his shift.
-  // DAY drivers can occasionally work into evening but not through night.
+  // v1.8.9 HARD shift filter, without the v2.1.6/11 NIGHT exemptions.
+  // James 2026-08-24: do not keep stacking Greg through 9am because he
+  // "had an earlier suggested slot" or Verizon shows him at yard. Confirmed
+  // NIGHT/AFTERNOON/EVENING stay in their window. DAY stays off 9pm–4am.
   if(mins != null){
-    // v2.1.6/11: exempt NIGHT drivers who are provably done with an earlier load
-    // and now available. Two signals count:
-    //   (a) Verizon shows their truck back at yard mid-morning (live signal)
-    //   (b) They have an earlier same-day load whose expected finish is BEFORE this appt
-    //       (planning signal — works for tomorrow's schedule without live data)
-    const nowHr = new Date().getHours();
-    out = out.filter(c => {
-      if(!c.confirmed || c.fits) return true;
-      // (a) live signal
-      if(c.shiftCls === 'NIGHT' && c.verizon && c.verizon.linked
-         && (c.verizon.isHome || c.verizon.readyOverride)
-         && nowHr >= 8 && nowHr <= 14) return true;
-      // (b) trajectory signal — NIGHT driver has an earlier load that finishes before this appt
-      if(c.shiftCls === 'NIGHT'){
-        const traj = driverTrajectory(c.name, mins);
-        if(traj.earliestFree != null && traj.earliestFree <= mins) return true;
-      }
-      return false;
-    });
+    out = out.filter(c => !c.confirmed || c.fits);
     if(mins >= 21*60 || mins < 4*60){
       out = out.filter(c => c.shiftCls !== 'DAY');
     }
@@ -5895,12 +5894,10 @@ function suggestDrivers(r, n, opts){
   out.forEach(c => {
     if(isPreloaderFlex(c.short)){ c.score -= 400; c.why = (c.why||'') + ' · preloader (Marcos) — flex delivery'; }
   });
-  // v1.8.18: HARD bucket filter. POC-leaning drivers (pocShare > 10%) are
-  // committed to Steve's POC dispatch for the day — they never come back
-  // to Diamond, even if pure-Diamond guys are all capped. Same the other
-  // way: pure-Diamond drivers (pocShare < 10%) stay off POC suggestions.
-  // When no one is eligible, the cell shows "—" — which is the correct
-  // signal to James that he needs to sub the load or override manually.
+  // v1.8.18 HARD bucket filter, now using driver-bucket origins that do
+  // NOT count PNG as POC (v2.1.28). Empty pool used to silently fall
+  // through to Greg in the Queue dropdown — if this filter empties the
+  // list, the cell must show "—" not the first roster name.
   if(loadBucket === 'diamond' || loadBucket === 'steady'){
     out = out.filter(c => {
       const share = c.__pocShare;
@@ -5918,15 +5915,13 @@ function suggestDrivers(r, n, opts){
   if(dateISO){
     out = out.filter(c => !driverIsOff(c.short, dateISO));
   }
-  // v1.8.19: soft-fail cap. First try filtering out capped drivers as before.
-  // If that leaves no candidates, keep them in the pool but flag them with
-  // `overCap:true` and dock 800 pts so they sort to the bottom. This way
-  // James always sees SOMEONE to click when the day is packed — even if it
-  // means putting a 3rd load on a driver as an explicit override.
+  // v1.8.3 / v1.8.19: cap + cooldown, then first-wave (0 loads before 1).
   if(opts.respectCap){
     const uncapped = out.filter(c => driverCanTakeLoad(c.name, mins, isPreload, isHarris));
     if(uncapped.length){
       out = uncapped;
+      const firstWave = out.filter(c => driverSlotLog(c.name).length === 0);
+      if(firstWave.length) out = firstWave;
     } else {
       out = out.map(c => {
         c.overCap = true;
@@ -5938,18 +5933,14 @@ function suggestDrivers(r, n, opts){
   }
   out.sort((a,b)=>b.score-a.score);
   const picks = out.slice(0, n||3);
-  // v1.8.3: reserve the top pick's slot so subsequent rows respect it.
-  // v1.8.19: don't reserve if the pick is an over-cap override — otherwise
-  // one blanket day of overrides quickly nukes the whole roster.
+  // v1.8.3: reserve the top pick so the next open row cannot reuse them
+  // if it would break the cap or cooldown (including two loads at 6am).
   if(opts.reserve && picks.length && !picks[0].overCap){
     reserveDriverSlot(picks[0].name, mins);
   }
   return picks;
 }
 
-/* A load is "unassigned" when nobody is on it yet and the sheet has not
-   already moved it along. Status is dispatcher shorthand: blank or "P"
-   means open; PRE LOADED / DISPATCHED / DELIVERED all mean handled. */
 function isUnassigned(r){
   if(!r) return false;
   if(!dayRowActive(r)) return false;
@@ -6697,6 +6688,12 @@ function matchDriver(raw){
   const norm = s=>String(s||'').toUpperCase().replace(/[^A-Z ]/g,' ').replace(/\s+/g,' ').trim();
   const R = norm(raw);
   if(!R) return '';
+  // v2.1.28: short names from the sheet (GREG, FRANCISCO, JESUS E) map
+  // through DRIVER_FULL_NAME so they match the roster full legal name.
+  if(DRIVER_FULL_NAME[R]){
+    const full = DRIVER_FULL_NAME[R];
+    if(roster.some(d=>d.name===full)) return full;
+  }
   let hit = roster.find(d=>norm(d.name)===R);
   if(hit) return hit.name;
   const toks = R.split(' ').filter(t=>t.length>2);
@@ -7653,12 +7650,33 @@ function vzNoMatchWhy(r){
   return 'Every '+(origin||'matching')+' trip '+r.driver+' ran this day was already claimed by another load on the sheet.';
 }
 
+/* Walk open rows in clock order and freeze each row's top picks. The Today
+   sheet is grouped Lathrop then Ripon, which is NOT chronological — without
+   this pass, a 9am Lathrop row would reserve someone before a 6am Ripon row.
+   Queue already sorts; this keeps Today and Queue on the same walk. */
+function precomputeSuggestions(rows){
+  const open = (rows||[]).filter(isUnassigned).slice().sort((a,b)=>{
+    const ta = apptMinutes(a && a.time), tb = apptMinutes(b && b.time);
+    if(ta==null && tb==null) return 0;
+    if(ta==null) return 1;
+    if(tb==null) return -1;
+    if(ta !== tb) return ta - tb;
+    return String(a.id||'').localeCompare(String(b.id||''));
+  });
+  open.forEach(r => {
+    __precomputedSuggestions.set(r.id, suggestDrivers(r, 3, {respectCap:true, reserve:true}));
+  });
+}
+function picksForRow(r){
+  if(r && r.id != null && __precomputedSuggestions.has(r.id)) return __precomputedSuggestions.get(r.id);
+  return suggestDrivers(r, 3, {respectCap:true, reserve:true});
+}
+
 /* The Suggested-driver cell. Assigned rows say nothing — a suggestion for a
    load that already has a driver on it is noise, not help. */
 function suggestCellHTML(r){
   if(!isUnassigned(r)) return '<span style="color:var(--text-faint)">—</span>';
-  // v1.8.3: respect capacity + reserve top pick
-  const top = suggestDrivers(r, 3, {respectCap:true, reserve:true});
+  const top = picksForRow(r);
   if(!top.length) return '<span style="color:var(--text-faint)" title="All drivers hit 2-load cap or are inside cooldown window">—</span>';
   const best = top[0];
   return '<button type="button" class="sug-btn" data-sug="'+esc(r.id)+'" title="'+esc(best.why)+' — tap to assign, shift+click for alternatives">'
@@ -7684,8 +7702,7 @@ function suggestCellHTML(r){
    Nothing here touches the network. The real send lands in Phase 3.2. */
 function smsButtonHTML(r){
   if(!isUnassigned(r)) return '';
-  // v1.8.3: respect cap but do NOT reserve — suggestCellHTML already did
-  const top = suggestDrivers(r, 1, {respectCap:true});
+  const top = picksForRow(r);
   if(!top.length) return '';
   const target = top[0];
   const ready  = smsConfigured();
@@ -8779,6 +8796,7 @@ function renderDayRollup(){
   resetSuggestionLog();
   seedAssignedDriverSlots(d.currentRows);
   seedAssignedDriverSlots(dayPreloadRows);
+  precomputeSuggestions((d.currentRows||[]).concat(dayPreloadRows||[]));
   /* v1.5: the four Actual columns appear only when a Verizon CSV covers the
      day in view. With no timecard they are not rendered empty — they are not
      rendered at all, and the sheet is the v1.4 twelve columns. */
@@ -10812,7 +10830,7 @@ function renderQueue(){
     const roster = dispatchRoster().filter(x=>x.active);
     let dayFree=0, nightBooked=0, nightFree=0;
     roster.forEach(dr => {
-      const already = (__suggestionLog.get(dr.name) || []).length;
+      const already = driverSlotLog(dr.name).length;
       const cls = dr.shift ? dr.shift.cls : '';
       if((cls === 'DAY' || cls === 'AFTERNOON') && already < 2) dayFree++;
       if(cls === 'NIGHT'){
@@ -10834,6 +10852,7 @@ function renderQueue(){
     // view doesn't stack the same driver onto every open load in isolation.
     resetSuggestionLog();
     seedAssignedDriverSlots(d.currentRows);
+    precomputeSuggestions(d.currentRows);
     const roster = dispatchRoster().filter(x=>x.active);
     // v2.1.6: unified chrono sort per section.
     const timeSort = (a,b) => {
@@ -10848,7 +10867,10 @@ function renderQueue(){
     // v2.1.6: shared row-renderer so all three sections look consistent.
     const renderRow = (x, mode) => {
       const r = x.r;
-      const top = suggestDrivers(r, 3, {respectCap:true, reserve:true});
+      // Only reserve while walking OPEN rows. Assigned/done are already
+      // seeded; suggesting+reserving them a second time double-counted
+      // and could starve later open rows if section order ever changes.
+      const top = mode === 'unassigned' ? picksForRow(r) : [];
       const best = top[0];
       const c = cutoffState(r);
       const eq = equipmentFor(r);
@@ -10887,7 +10909,7 @@ function renderQueue(){
           const preloadedTag = roundTrip === COOLDOWN_PRELOADED_MIN ? ' (preloaded)' : (roundTrip === COOLDOWN_HARRIS_MIN ? ' (Harris)' : '');
           const freeAt = apptM + roundTrip;
           const freeLbl = fmtMins(freeAt % (24*60));
-          const nextLog = (__suggestionLog.get(r.driver) || [])
+          const nextLog = driverSlotLog(r.driver)
             .filter(m => m != null && m > apptM).sort((a,b)=>a-b);
           const nextBooking = nextLog.length ? nextLog[0] : null;
           if(nextBooking != null){
@@ -10905,10 +10927,13 @@ function renderQueue(){
 
       let actionHtml = '';
       if(mode === 'unassigned'){
+        const pickOpts = top.length
+          ? top.map((t,ti)=>'<option value="'+esc(t.name)+'"'+(ti===0?' selected':'')+'>'
+              + esc(t.short)+(t.known? ' · '+t.runs+' prior' : ' · no history')+'</option>').join('')
+          : '<option value="" selected>— no eligible driver —</option>';
         actionHtml = '<div class="q-act">'
           + '<select class="q-pick" data-qpick="'+esc(r.id)+'">'
-          + top.map((t,ti)=>'<option value="'+esc(t.name)+'"'+(ti===0?' selected':'')+'>'
-              + esc(t.short)+(t.known? ' · '+t.runs+' prior' : ' · no history')+'</option>').join('')
+          + pickOpts
           + '<option disabled>──────────</option>'
           + roster.filter(o=>!top.some(t=>t.name===o.name))
                   .map(o=>'<option value="'+esc(o.name)+'">'+esc(o.short)+'</option>').join('')
@@ -11493,6 +11518,13 @@ function renderInfo(){
       + 'them out. Preload is budgeted at '+num(Number(s.preloadHrsPerLoad)||2.5,1)+' hrs against a full '
       + 'pick-and-deliver at '+num(Number(s.hoursPerLoad)||5,1)+' hrs.</div></div>'
       + '<div class="row-v" style="font-size:12px">heuristic</div></div>'
+      + '<div class="row"><div class="row-l"><div class="row-t">Queue suggestions follow shift start</div>'
+      + '<div class="row-s">walk open loads in clock order. Suggest the driver whose truck is starting '
+      + '(or already started) for that appointment, then move on. Greg (NIGHT, 2–3am) may take 1–2 of the '
+      + 'earliest loads in the night window; 6am–9am PNG→RIPON/LATHROP goes to DAY 6:00–6:45 starters. '
+      + 'Max 2 loads per driver. Two loads at the same time are always different people. Origin history '
+      + 'is a tie-break, not the thing that puts one name on every dropdown.</div></div>'
+      + '<div class="row-v" style="font-size:12px">v2.1.28</div></div>'
       + '<div class="row"><div class="row-l"><div class="row-t">HOS budget</div>'
       + '<div class="row-s">on-duty hours per driver per day — driving plus loading plus paperwork. '
       + 'Overridable per driver.</div></div>'
@@ -13213,6 +13245,13 @@ SHADOW_TIMELINE_TEXT['2026-07-28'] = "**PARTIAL DAY — Phase 2 diff loop stoppe
 
 /* ---- v2.0 DATA: Changelog (in-app version history) ---- */
 const SHADOW_CHANGELOG = [
+  { ver:'v2.1.28-shift-start-suggestions', date:'2026-08-24', changes:[
+    'Queue was putting Greg on every open load. That was a regression, not how dispatch is supposed to work',
+    'Cause: v2.1.23 added PNG to the POC origin list so Perdue corn could find a rate. Combined with the Diamond/POC driver split, that made every PNG driver look like a POC driver and emptied the suggestion list. The dropdown then fell through to the roster, and Greg is first on that list',
+    'Fix: PNG still finds its Perdue rate, but driver suggestions again treat PNG as Diamond work. The Queue walks the day in clock order, suggests whoever\'s truck is starting, and will not put the same person on two loads at 6am',
+    'Greg (night, 2–3am start) can still take 1–2 of the earliest night-window loads. 6am–9am PNG→RIPON/LATHROP goes to the day crew coming on at 6:00–6:45. Noon and 4pm shifts stay off that pile',
+    'Origin history is a tie-break only. Live truck-moving is no longer a reason to skip every day driver at 6am'
+  ]},
   { ver:'v2.1.27-no-silent-canonical-overwrite', date:'2026-08-24', changes:[
     'STOP: opening the app no longer overwrites your diesel / MPG / driver rate. v2.1.25 auto-apply had swapped the live $4.50/gal (QBO fuel ~$0.75/mi) for EIA CA retail $6.919 (~$1.10/mi) and made MTD look much worse. That was the input, not the MTD math',
     'If phone and computer differ, a banner still offers tap-to-pull — you choose. Dismiss keeps this device as-is',
@@ -13655,7 +13694,7 @@ function renderV2WageSection(){
   }, 200);
   // Update the header version pill
   const verEl = document.getElementById('hdrVer');
-  if (verEl) verEl.textContent = 'v2.1.27-no-silent-canonical-overwrite';
+  if (verEl) verEl.textContent = 'v2.1.28-shift-start-suggestions';
 })();
 </script>
 </body>
