@@ -268,15 +268,23 @@ assert.equal(looksLikeAdpAoa([['Date','Driver','Grower','FB','Commodity']]), fal
 }
 
 {
-  /* v2.1.37: wear is 313.2+3+4+9 tarps / 900k mi. */
+  /* v2.1.39: wear is 313.2+3+4+9 tarps / 900k mi. 313.10 stays out.
+     Lease stays $470k (not the $171k parent). Tarps are not in other. */
   assert.ok(/otherVariablePerLoad:\s*0\b/.test(html), 'default otherVariablePerLoad is 0');
   assert.ok(/wearPerMile:\s*0\.498\b/.test(html), 'default wearPerMile is $0.498');
   assert.ok(!/otherVariablePerLoad:\s*35/.test(html), 'shipped $35 other plug is gone');
+  const wearLine = (html.match(/wearPerMile:\s*0\.498,[^\n]*/) || [''])[0];
+  assert.ok(/313\.9 tarps/.test(wearLine), 'wear comment includes 313.9 tarps');
+  assert.ok(/16,272\.96/.test(html) && /1,601\.19/.test(html), 'tarp parts + repairs split is recorded');
+  assert.ok(!/wearPerMile:\s*0\.511/.test(html), '313.10 was not added to wear');
   const wearAnnual = 0.498 * 900000;
   assert.equal(wearAnnual, 448200);
   const shop = 319811 + 75893 + 34787 + 17874;
   assert.equal(shop, 448365);
   assert.ok(Math.abs(wearAnnual - shop) < 300, '900k mi × $0.498 ≈ $448k shop+tarps');
+  assert.ok(/truckLease'[\s\S]{0,80}amount:470000/.test(html), 'lease stays $470k');
+  assert.ok(/Equity Lease \(LTO\) \$295,676\.85/.test(html), '313.8 includes Equity Lease, not parent-only $171k');
+  assert.ok(/amount:92922/.test(html), 'WC once at $92,922');
 }
 
 {
