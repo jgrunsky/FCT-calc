@@ -11,7 +11,7 @@
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<meta name="app-version" content="2026-08-24-fct-calc-v2.1.30-excel-sheet-layout">
+<meta name="app-version" content="2026-08-24-fct-calc-v2.1.31-queue-excel-layout">
 <title data-id="th-modified">FCT Load Profitability — French Camp Transport</title>
 <link rel="manifest" href='data:application/manifest+json,{"name":"FCT Load Profitability","short_name":"FCT Calc","start_url":".","display":"standalone","background_color":"%2312100e","theme_color":"%2312100e","icons":[{"src":"data:image/svg%2Bxml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 192 192%27%3E%3Crect width=%27192%27 height=%27192%27 fill=%27%2312100e%27/%3E%3Ctext x=%2796%27 y=%27124%27 font-size=%2772%27 font-family=%27sans-serif%27 font-weight=%27700%27 fill=%27%238fb590%27 text-anchor=%27middle%27%3EFCT%3C/text%3E%3C/svg%3E","sizes":"192x192","type":"image/svg+xml"}]}'>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -557,6 +557,39 @@
       background:transparent;
     }
     .rchips{flex-direction:row;flex-wrap:wrap;gap:3px;margin-top:2px}
+
+    /* v2.1.31 Queue board: same Time / Driver / Origin / Status scan as Today,
+       with Dest folded into the driver meta line and Send dispatch kept on
+       the row (Today hides the suggested-driver cell on phone). */
+    table.sheet.sheet-queue{min-width:0;width:100%}
+    table.sheet.sheet-queue thead tr{
+      grid-template-columns:3.5rem minmax(0,1fr) minmax(3.6rem,.7fr) auto;
+      grid-template-areas:"time drv orig st";
+    }
+    table.sheet.sheet-queue thead th.c-act,
+    table.sheet.sheet-queue thead th.c-dest,
+    table.sheet.sheet-queue thead th.c-comm,
+    table.sheet.sheet-queue thead th.c-po{display:none}
+    table.sheet.sheet-queue tr.sheet-load{
+      grid-template-columns:3.5rem minmax(0,1fr) minmax(3.6rem,.7fr) auto;
+      grid-template-areas:"time drv orig st";
+    }
+    table.sheet.sheet-queue tr.sheet-load.q-open{
+      grid-template-areas:
+        "time drv orig st"
+        "act  act  act  act";
+    }
+    table.sheet.sheet-queue tr.sheet-load td.c-dest{display:none}
+    table.sheet.sheet-queue tr.sheet-load td.c-act{
+      display:none;grid-area:act;padding-top:6px;white-space:normal;
+    }
+    table.sheet.sheet-queue tr.sheet-load.q-open td.c-act{display:block}
+    table.sheet.sheet-queue .q-act{
+      flex-direction:row;align-items:stretch;min-width:0;width:100%;
+    }
+    table.sheet.sheet-queue .q-pick{flex:1 1 auto;min-width:0;padding:8px 8px}
+    table.sheet.sheet-queue .q-send{flex:0 0 auto;padding:10px 12px;white-space:nowrap}
+    table.sheet.sheet-queue .q-why{display:none}
   }
 
   /* --- v1.4 queue --- */
@@ -570,6 +603,21 @@
   .q-send{all:unset;cursor:pointer;text-align:center;padding:7px 10px;border-radius:6px;
     background:var(--accent);color:var(--accent-fg);font:700 11px/1 var(--body);letter-spacing:.04em;text-transform:uppercase}
   .q-send:hover{filter:brightness(1.08)}
+  .q-sum{font:500 12.5px/1.4 var(--body);color:var(--text-muted);margin:-4px 0 12px}
+  .q-sum b{color:var(--text);font-weight:700}
+  .q-sum .q-open-n{color:var(--amber)}
+  .q-locked{font:600 10.5px/1.2 var(--body);letter-spacing:.04em;text-transform:uppercase;color:var(--text-faint)}
+  .q-why{font:400 10px/1.35 var(--body);color:var(--text-muted);margin-top:4px}
+  /* Queue board is the Excel sheet minus money / Verizon / suggested-driver.
+     Desktop is a wide sheet; phone compact rules in the 860px query above
+     must win this min-width (two classes beat table.sheet { min-width:0 }). */
+  @media (min-width:861px){
+    table.sheet.sheet-queue{min-width:1120px}
+  }
+  table.sheet.sheet-queue td.c-act{white-space:normal;vertical-align:top;min-width:148px}
+  table.sheet.sheet-queue td.c-dest{max-width:160px;overflow:hidden;text-overflow:ellipsis}
+  tr.q-done td{opacity:.55}
+  tr.q-set td.c-drv{font-weight:600}
   .drv-row{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--border);flex-wrap:wrap}
   .drv-n{flex:1 1 150px;min-width:0}
   .drv-o{font:400 10.5px/1.4 var(--mono);color:var(--text-faint);margin-top:2px;
@@ -1309,7 +1357,7 @@
    still exposes the Import JSON box for future refreshes.
    ============================================================= */
 
-const APP_VERSION = '2026-08-24-fct-calc-v2.1.30-excel-sheet-layout';
+const APP_VERSION = '2026-08-24-fct-calc-v2.1.31-queue-excel-layout';
 const STORAGE_KEY = 'fct-calc:state';
 const IDB_NAME = 'fct-calc-db';
 const IDB_STORE = 'kv';
@@ -7780,6 +7828,21 @@ function sheetMetaHTML(r){
   if(!bits.length) return '';
   return '<div class="sheet-meta">'+esc(bits.join(' · '))+'</div>';
 }
+/* v2.1.31 Queue phone scan: Dest is a real column on desktop, so fold it
+   onto the driver line with PO / commodity when the sheet goes compact. */
+function queueSheetMetaHTML(r){
+  if(!r) return '';
+  const bits = [];
+  if(r.po) bits.push(String(r.po));
+  const dest = String(r.deliveryPoint || r.destination || '').trim();
+  if(dest && dest !== '—') bits.push(dest);
+  const comm = String(r.commodity||'').trim();
+  if(comm) bits.push(comm.slice(0,22));
+  const trk = String(r.truck||'').trim();
+  if(trk && trk !== '—') bits.push(trk);
+  if(!bits.length) return '';
+  return '<div class="sheet-meta">'+esc(bits.join(' · '))+'</div>';
+}
 
 /* Split the day's rows into the sheet's sections, keeping the original
    sheet order inside each. Carries the row's index in currentRows so the
@@ -11210,10 +11273,11 @@ function saveDaySnapshot(){
 /* =============================================================
    TAB 2 — QUEUE (v1.4, Phase 3.0 foundation)
    -------------------------------------------------------------
-   The unassigned half of the day, pulled out of the load list so
-   the open work is a screen of its own rather than something to
-   scan for. Each row carries its suggestion, the top-3 as a
-   picker, and a Send-dispatch button.
+   v2.1.31: Queue is the Excel dispatch board you send from —
+   same date banner and D.P. LATHROP / D.P. RIPON blocks as the
+   Today sheet, with the driver picker and Send dispatch on open
+   rows. Assigned drivers stay locked (v2.1.8). Done stays on the
+   sheet, greyed, so the day is still visible.
 
    "Send dispatch" is deliberately a misnomer today: it records
    the assignment, flips the row to DISPATCHED and nothing leaves
@@ -11229,25 +11293,27 @@ function queueRows(){
 // v2.1.6: return ALL loads for the day (assigned + unassigned + delivered),
 // classified. James 2026-08-18: "should have all loads with suggested
 // assignments for day." Queue is now the whole day, not just open loads.
+function queueRowClass(r){
+  const st = String((r && r.status)||'').trim().toUpperCase();
+  const hasDriver = !!(String((r && r.driverRaw)||'').trim() || String((r && r.driver)||'').trim());
+  if(!hasDriver && (st==='' || st==='P')) return 'unassigned';
+  if(st==='DELIVERED' || st==='D' || st==='COMPLETE') return 'done';
+  return 'assigned';
+}
 function queueRowsAll(){
   return state.dayRollup.currentRows
     .map((r,i)=>({r:r, i:i}))
     .filter(x => dayRowActive(x.r))
-    .map(x => {
-      const st = String(x.r.status||'').trim().toUpperCase();
-      const hasDriver = !!(String(x.r.driverRaw||'').trim() || String(x.r.driver||'').trim());
-      let cls;
-      if(!hasDriver && (st==='' || st==='P')) cls = 'unassigned';
-      else if(st==='DELIVERED' || st==='D' || st==='COMPLETE') cls = 'done';
-      else cls = 'assigned';
-      return { ...x, cls };
-    });
+    .map(x => ({ ...x, cls: queueRowClass(x.r) }));
 }
 function renderQueue(){
   const host = document.getElementById('p-queue');
   if(!host) return;
   const d = state.dayRollup;
-  // v2.1.6: full-day queue — assigned + unassigned + done, chronological.
+  const shown = d.date;
+  const dayPre = (typeof preloadSectionRows === 'function' && shown) ? preloadSectionRows(shown) : [];
+  // v2.1.6: full-day queue — assigned + unassigned + done. v2.1.31 lays
+  // them out as the Excel sheet (Lathrop then Ripon) instead of Open/Set/Done cards.
   const allRows = queueRowsAll();
   const openRows = allRows.filter(x => x.cls === 'unassigned');
   const assignedRows = allRows.filter(x => x.cls === 'assigned');
@@ -11259,10 +11325,6 @@ function renderQueue(){
   if(badge){ badge.textContent = String(openRows.length); badge.hidden = !openRows.length; }
 
   let h = '';
-  const dowS = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
-  const dt = d.date ? new Date(d.date+'T00:00:00') : null;
-  const dayLbl = (dt && !isNaN(dt.getTime()))
-    ? dowS[dt.getDay()]+' '+MONTH_NAMES[dt.getMonth()]+' '+dt.getDate() : (d.date||'no day loaded');
 
   if(!li && !d.currentRows.length){
     h += '<div class="card"><h2>Dispatch queue</h2>'
@@ -11271,24 +11333,24 @@ function renderQueue(){
     return;
   }
 
-  h += '<div class="card"><h2>Dispatch queue</h2>'
-    + '<div class="row" style="border:0;padding:0 0 8px"><div class="row-l">'
-    + '<div class="row-t">'+esc(dayLbl)+'</div>'
-    + '<div class="row-s">'+allRows.length+' load'+(allRows.length===1?'':'s')+' on the day · '
-    + openRows.length+' open · '+assignedRows.length+' assigned · '+doneRows.length+' done</div></div>'
-    + '<div class="row-v" style="color:'+(openRows.length?'var(--amber)':'var(--green)')+';font-size:22px">'+openRows.length
-    + '<div class="row-s">open</div></div></div>';
+  const QCOL = 8;
+  h += '<div class="card sheet-card"><h2>Dispatch queue</h2>'
+    + '<div class="q-sum"><b class="q-open-n">'+openRows.length+' open</b> · '
+    + assignedRows.length+' assigned'
+    + (doneRows.length ? ' · '+doneRows.length+' done' : '')
+    + (allRows.length ? ' · '+allRows.length+' load'+(allRows.length===1?'':'s')+' on the day' : '')
+    + '</div>';
 
   // v2.1.8: preload-capacity summary. Show how many DAY/AFTERNOON drivers have
   // uncapped slots left for late-PM preloads (PNG/ARA 6pm close, FCG 4pm), and
   // how many NIGHT drivers are pre-committed to early-AM deliveries.
   try {
-    // Pre-seed to compute accurate reserve.
     resetSuggestionLog();
     seedAssignedDriverSlots(d.currentRows);
-    const roster = dispatchRoster().filter(x=>x.active);
+    seedAssignedDriverSlots(dayPre);
+    const rosterCap = dispatchRoster().filter(x=>x.active);
     let dayFree=0, nightBooked=0, nightFree=0;
-    roster.forEach(dr => {
+    rosterCap.forEach(dr => {
       const already = driverSlotLog(dr.name).length;
       const cls = dr.shift ? dr.shift.cls : '';
       if((cls === 'DAY' || cls === 'AFTERNOON') && already < 2) dayFree++;
@@ -11297,100 +11359,59 @@ function renderQueue(){
         else nightFree++;
       }
     });
-    h += '<div class="row" style="background:var(--card-2);border-radius:8px;padding:8px 12px;margin:6px 0 10px;font-size:12px">'
-      + '<div class="row-l"><div class="row-s"><b style="color:var(--accent)">Capacity</b> · '
+    h += '<div class="q-sum" style="margin-top:-6px">Capacity · '
       + nightBooked+' early-AM driver'+(nightBooked===1?'':'s')+' booked · '
-      + nightFree+' NIGHT free · '+dayFree+' DAY/AFTERNOON open for PM preloads</div></div></div>';
+      + nightFree+' NIGHT free · '+dayFree+' DAY/AFTERNOON open for PM preloads</div>';
   } catch(_){}
 
-  if(!allRows.length){
+  if(!d.currentRows.length && !dayPre.length){
     h += '<div class="empty">Nothing on the day yet. Import the schedule on the Today tab.</div>';
   } else {
-    // v1.8.8: Queue tab shares the same cap/cooldown as the Today sheet.
-    // Reset the log and seed with rows that already have drivers, so the queue
-    // view doesn't stack the same driver onto every open load in isolation.
+    // v1.8.8 / v2.1.31: same cap/cooldown walk as the Today sheet — seed
+    // already-assigned drivers (including tomorrow's preloads), then freeze
+    // open-row picks in clock order so Lathrop-before-Ripon does not steal
+    // a 6am Ripon driver's slot.
     resetSuggestionLog();
     seedAssignedDriverSlots(d.currentRows);
-    precomputeSuggestions(d.currentRows);
+    seedAssignedDriverSlots(dayPre);
+    precomputeSuggestions((d.currentRows||[]).concat(dayPre||[]));
     const roster = dispatchRoster().filter(x=>x.active);
-    // v2.1.6: unified chrono sort per section.
-    const timeSort = (a,b) => {
-      const ta = apptMinutes(a.r && a.r.time);
-      const tb = apptMinutes(b.r && b.r.time);
-      return (ta==null?99999:ta) - (tb==null?99999:tb);
-    };
-    openRows.sort(timeSort);
-    assignedRows.sort(timeSort);
-    doneRows.sort(timeSort);
 
-    // v2.1.6: shared row-renderer so all three sections look consistent.
-    const renderRow = (x, mode) => {
-      const r = x.r;
-      // Only reserve while walking OPEN rows. Assigned/done are already
-      // seeded; suggesting+reserving them a second time double-counted
-      // and could starve later open rows if section order ever changes.
-      const top = mode === 'unassigned' ? picksForRow(r) : [];
-      const best = top[0];
-      const c = cutoffState(r);
-      const eq = equipmentFor(r);
-      const flags = [];
-      if(c && c.k==='past') flags.push('<span class="rchip r">⚠️ past origin cutoff</span>');
-      else if(c)            flags.push('<span class="rchip a">⏰ near cutoff</span>');
-      if(isPreloadLocked(r)) flags.push('<span class="rchip b">🔒 preload-locked</span>');
-      if(eq===EQUIPMENT_CONSTRAINTS.superHopper) flags.push('<span class="rchip y">⬢ #106</span>');
+    const prevDiamond = dayDiamondOnly;
+    dayDiamondOnly = false;
+    let S;
+    try { S = sheetSections(d.currentRows); }
+    finally { dayDiamondOnly = prevDiamond; }
 
-      // v2.1.7: prefer the matched delivery driver over raw string so we get
-      // the canonical name (e.g. VICTOR → Victor Solorzano → "Victor").
-      const currentDriver = String(r.driver || r.driverRaw || '').trim();
-      const curShort = currentDriver ? shortNameFor(currentDriver) : '';
-      const preShort = r.preloader ? shortNameFor(String(r.preloader)) : '';
-      // Suggestion line — only for unassigned. Dispatched loads are locked in
-      // per James 2026-08-18: "these drivers are set, no swapping." Algo
-      // second-guessing on already-committed loads is noise.
-      let suggestLine = '';
-      if(best && mode === 'unassigned'){
-        suggestLine = '<div class="q-s" style="margin-top:5px;color:var(--accent)">💡 Suggested: <b>'+esc(best.short)+'</b>'
-          + (best.known?'':' <span style="color:var(--text-faint)">(?)</span>')+' — '+esc(best.why)+'</div>';
-      }
-      const rowStyle = mode === 'done' ? 'opacity:0.5' : (mode === 'assigned' ? 'opacity:0.9' : '');
-      // v2.1.8: match Excel format — "PRELOADER / DELIVERY" with slash, not arrow.
-      const driverLabel = preShort && preShort !== curShort
-        ? esc(preShort.toUpperCase())+' / '+esc(curShort.toUpperCase())
-        : esc((curShort||'—').toUpperCase());
-      // v2.1.9/10: for Set rows, show when this driver becomes empty and what
-      // they might pick up next. Uses correct duration: 3hr preloaded, 5hr live,
-      // 10hr Harris. James 2026-08-18.
-      let trajLine = '';
-      if(mode === 'assigned' && r.driver){
-        const apptM = apptMinutes(r.time);
-        if(apptM != null){
-          const roundTrip = loadDurationMins(r);
-          const preloadedTag = roundTrip === COOLDOWN_PRELOADED_MIN ? ' (preloaded)' : (roundTrip === COOLDOWN_HARRIS_MIN ? ' (Harris)' : '');
-          const freeAt = apptM + roundTrip;
-          const freeLbl = fmtMins(freeAt % (24*60));
-          const nextLog = driverSlotLog(r.driver)
-            .filter(m => m != null && m > apptM).sort((a,b)=>a-b);
-          const nextBooking = nextLog.length ? nextLog[0] : null;
-          if(nextBooking != null){
-            trajLine = '<div class="q-s" style="margin-top:4px;color:var(--text-faint);font-size:11px">→ empty ~'+esc(freeLbl)+esc(preloadedTag)+' · next booking '+esc(fmtMins(nextBooking))+'</div>';
-          } else {
-            trajLine = '<div class="q-s" style="margin-top:4px;color:var(--text-faint);font-size:11px">→ empty ~'+esc(freeLbl)+esc(preloadedTag)+' · available for next load</div>';
-          }
-        }
-      }
-      const statusChip = mode === 'assigned'
-        ? '<span class="rchip" style="background:var(--card-2);color:var(--text)">'+driverLabel+'</span>'
-        : mode === 'done'
-        ? '<span class="rchip" style="background:var(--card-2);color:var(--text-faint)">✓ '+driverLabel+'</span>'
-        : '';
+    const bannerRow = (cls, text, n)=>
+      '<tr class="bnr '+cls+'"><td colspan="'+QCOL+'">'+esc(text)
+      + (n!=null?'<span class="bnr-n">'+n+' load'+(n===1?'':'s')+'</span>':'')+'</td></tr>';
+    const bannerRow2 = (cls, text, sub, n, id)=>
+      '<tr class="bnr '+cls+'"'+(id?' id="'+id+'"':'')+'><td colspan="'+QCOL+'">'+esc(text)
+      + (n!=null?'<span class="bnr-n">'+n+' load'+(n===1?'':'s')+'</span>':'')
+      + '<span class="bnr-sub">'+sub+'</span></td></tr>';
 
-      let actionHtml = '';
-      if(mode === 'unassigned'){
+    const queueLoadRow = (rec, mode)=>{
+      const r = rec.r;
+      const pre = mode==='sec2';
+      const cls = queueRowClass(r);
+      const open = cls === 'unassigned';
+      const bucket = r.bucket||'diamond';
+      const delivered = cls === 'done' || /DELIVER/i.test(String(r.status||''));
+      const stCls = statusClass(r.status);
+      const dest = String(r.deliveryPoint || r.destination || '').trim() || '—';
+      const drvWarn = (r.driverRaw && !r.driver)
+        ? ' title="Sheet says &quot;'+esc(r.driverRaw)+'&quot; — no roster match"' : '';
+
+      let act = '';
+      if(open){
+        const top = picksForRow(r);
+        const best = top[0];
         const pickOpts = top.length
           ? top.map((t,ti)=>'<option value="'+esc(t.name)+'"'+(ti===0?' selected':'')+'>'
               + esc(t.short)+(t.known? ' · '+t.runs+' prior' : ' · no history')+'</option>').join('')
           : '<option value="" selected>— no eligible driver —</option>';
-        actionHtml = '<div class="q-act">'
+        act = '<div class="q-act">'
           + '<select class="q-pick" data-qpick="'+esc(r.id)+'">'
           + pickOpts
           + '<option disabled>──────────</option>'
@@ -11398,39 +11419,93 @@ function renderQueue(){
                   .map(o=>'<option value="'+esc(o.name)+'">'+esc(o.short)+'</option>').join('')
           + '</select>'
           + '<button type="button" class="q-send" data-qsend="'+esc(r.id)+'">Send dispatch</button>'
-          + '</div>';
+          + '</div>'
+          + (best ? '<div class="q-why">💡 '+esc(best.short)+(best.known?'':' ?')+' — '+esc(best.why)+'</div>' : '');
+      } else if(cls === 'assigned'){
+        act = '<span class="q-locked">Set</span>';
+      } else {
+        act = '<span class="q-locked">Done</span>';
       }
-      // v2.1.8: no swap controls for dispatched loads — they're set per James.
 
-      return '<div class="q-row" style="'+rowStyle+'"><div class="q-main">'
-        + '<div class="q-t">'+esc(r.time||'no time')+' · '+esc(r.origin||'no origin')
-        + ' <span style="color:var(--text-faint);font-weight:400">→ '+esc(r.deliveryPoint||'—')+'</span></div>'
-        + '<div class="q-s">'+esc(String(r.commodity||'—').slice(0,40))
-        + (r.po?' · PO '+esc(r.po):'')+(r.truck?' · '+esc(r.truck):'')+'</div>'
-        + ((flags.length || statusChip)?'<div class="rchips" style="flex-direction:row;flex-wrap:wrap;gap:4px;margin-top:5px">'+statusChip+flags.join('')+'</div>':'')
-        + suggestLine
-        + trajLine
-        + '</div>'
-        + actionHtml
-        + '</div>';
+      return '<tr class="sheet-load bk-'+bucket
+        + (delivered?' row-del':'')
+        + (pre?' pre-row':'')
+        + (open?' q-open':'')
+        + (cls==='assigned'?' q-set':'')
+        + (cls==='done'?' q-done':'')
+        + '">'
+        + '<td class="c-time">'+esc(r.time || r.timeRaw || '—')+ruleChipsHTML(r, mode)+'</td>'
+        + '<td class="c-po">'+esc(r.po||'—')+'</td>'
+        + '<td class="c-drv"'+drvWarn+'>'
+        + (open ? '—' : driverSheetHTML(r))
+        + ((r.driverRaw&&!r.driver)?' <span style="color:var(--amber)">⚠</span>':'')
+        + queueSheetMetaHTML(r)+'</td>'
+        + '<td class="c-orig">'+esc(r.origin||'—')+'</td>'
+        + '<td class="c-comm">'+esc(String(r.commodity||'—').slice(0,26))+'</td>'
+        + '<td class="c-dest">'+esc(dest)+'</td>'
+        + '<td class="c-st'+(stCls?' '+stCls:'')+'">'+esc(r.status || '—')+'</td>'
+        + '<td class="c-act">'+act+'</td>'
+        + '</tr>';
     };
 
-    if(openRows.length){
-      h += '<h3 style="margin-top:14px;font-family:var(--display);font-size:14px;color:var(--amber)">🟡 Open · '+openRows.length+'</h3>';
-      openRows.forEach(x => h += renderRow(x, 'unassigned'));
+    /* Same banner order as the Today sheet. Preloaded rows also live under
+       their D.P. (v1.8.14); the 🔒 chip plus the hoist banner is enough. */
+    const emit = (list, mode)=>(list||[]).map(rec=>queueLoadRow(rec, mode)).join('');
+
+    const dt = dateFromISO(d.date);
+    const dateLabel = dt
+      ? DOW_LONG[dt.getDay()].toUpperCase()+'  '+MONTH_NAMES[dt.getMonth()].toUpperCase()+' '+dt.getDate()+', '+dt.getFullYear()
+      : (d.date||'NO DATE');
+
+    h += '<div class="sheet-wrap"><table class="sheet sheet-queue" id="qSheet">'
+      + '<colgroup>'
+      + '<col style="width:200px"><col style="width:100px"><col style="width:170px">'
+      + '<col style="width:140px"><col style="width:160px"><col style="width:130px">'
+      + '<col style="width:110px"><col style="width:180px">'
+      + '</colgroup>'
+      + '<thead><tr>'
+      + '<th class="c-time">Time</th><th class="c-po">PO / Rel #</th><th class="c-drv">Driver</th>'
+      + '<th class="c-orig">Origin</th><th class="c-comm">Commodity</th><th class="c-dest">Dest</th>'
+      + '<th class="c-st">Status</th><th class="c-act">Dispatch</th>'
+      + '</tr></thead><tbody>';
+
+    h += bannerRow('bnr-date sticky-date', dateLabel, d.currentRows.length);
+
+    if(S.preloaded.length){
+      const prepped = shortDateLabel(prevDayISO(d.date));
+      h += bannerRow2('bnr-lock', '🔒 PRELOADED — prepped '+(prepped||'the afternoon before')+' PM',
+            'Delivering before 6am — committed by that afternoon\'s list. Still this day\'s loads.', S.preloaded.length)
+        + emit(S.preloaded);
     }
-    if(assignedRows.length){
-      h += '<h3 style="margin-top:16px;font-family:var(--display);font-size:14px;color:var(--text-faint)">🟢 Set · '+assignedRows.length+' <span style="font-weight:400;color:var(--text-faint);font-size:11px">— locked in per schedule</span></h3>';
-      assignedRows.forEach(x => h += renderRow(x, 'assigned'));
+    if(S.above.length) h += emit(S.above);
+    if(S.lathrop.length){
+      h += bannerRow('bnr-lath','D.P. LATHROP', S.lathrop.length) + emit(S.lathrop);
     }
-    if(doneRows.length){
-      h += '<details style="margin-top:16px"><summary style="cursor:pointer;font-family:var(--display);font-size:14px;color:var(--text-faint);padding:6px 0">✓ Done · '+doneRows.length+'</summary>';
-      doneRows.forEach(x => h += renderRow(x, 'done'));
-      h += '</details>';
+    if(S.ripon.length){
+      h += bannerRow('bnr-ripo','D.P. RIPON', S.ripon.length) + emit(S.ripon);
     }
-    h += '<div class="legend"><b>The queue is the whole day.</b> Open loads at top get suggestions and the Send-dispatch button. Set loads below are locked from the schedule — read-only. '
-      + 'The suggestion engine sees the set loads and blocks those drivers during their busy window (Diamond 5hr, Harris 10hr) so early-AM commitments preserve capacity for later preloads and deliveries. '
-      + 'Ordering is chronological.</div>';
+    if(S.other.length){
+      h += bannerRow('bnr-other','OTHER DELIVERY POINTS', S.other.length) + emit(S.other);
+    }
+    if(S.manual.length){
+      h += bannerRow('bnr-other','WHAT-IF (not on the sheet)', S.manual.length) + emit(S.manual);
+    }
+    h += '</tbody>';
+
+    if(dayPre.length){
+      const tom = nextDayISO(d.date);
+      h += '<tbody>'
+        + bannerRow2('bnr-pre', '📦 TOMORROW\'S PRELOADS — prep today PM',
+            'These carry the '+(tom?dowDateLabel(tom):'next day')+' date banner and deliver before 6am. Prep is this afternoon\'s work.',
+            dayPre.length, 'qPreSection')
+        + dayPre.map((r,ix)=>queueLoadRow({r:r, i:ix}, 'sec2')).join('')
+        + '</tbody>';
+    }
+    h += '</table></div>';
+    h += '<div class="legend">Same layout as the dispatch log — date banner, then D.P. Lathrop, then D.P. Ripon. '
+      + 'Open rows have the driver list and <b>Send dispatch</b> (records the assignment, no SMS yet). '
+      + 'Assigned drivers are locked. Done stays on the sheet, greyed. '
+      + 'Suggestions still walk the day in clock order with the 2-load cap.</div>';
   }
   h += '</div>';
 
@@ -13704,6 +13779,12 @@ SHADOW_TIMELINE_TEXT['2026-07-28'] = "**PARTIAL DAY — Phase 2 diff loop stoppe
 
 /* ---- v2.0 DATA: Changelog (in-app version history) ---- */
 const SHADOW_CHANGELOG = [
+  { ver:'v2.1.31-queue-excel-layout', date:'2026-08-24', changes:[
+    'Queue is now the Excel dispatch board you send from — same orange date banner, then D.P. LATHROP, then D.P. RIPON (and OTHER / preloaded / tomorrow preloads when those exist), not a stacked Open / Set / Done card list',
+    'Open rows keep the driver dropdown (top-3 suggestions + roster) and Send dispatch on the row. Assigned rows show the set driver, locked. Done stays on the sheet, greyed, so the day is still visible',
+    'A short line above the sheet says how many are open vs assigned. Phone keeps Time / Driver / Origin / Status on screen with the send controls on the row; desktop is the wide sheet. Scoring, 2-load cap, and Send (records assignment, no SMS) are unchanged',
+    'Does not change Today, missing-rates fill, diesel/canonical sync, or the Worker'
+  ]},
   { ver:'v2.1.30-excel-sheet-layout', date:'2026-08-24', changes:[
     'Today now opens on the dispatch sheet the way the Excel log is laid out: orange date banner, then D.P. LATHROP, then D.P. RIPON, then the load rows',
     'Trailer Status moved under the sheet and starts collapsed. The summary line still shows in-use / preloaded / yard counts — tap to open the wall. Trailer ✓ done / yard logic is unchanged',
@@ -14164,7 +14245,7 @@ function renderV2WageSection(){
   }, 200);
   // Update the header version pill
   const verEl = document.getElementById('hdrVer');
-  if (verEl) verEl.textContent = 'v2.1.30-excel-sheet-layout';
+  if (verEl) verEl.textContent = 'v2.1.31-queue-excel-layout';
 })();
 </script>
 </body>
