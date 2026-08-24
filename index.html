@@ -496,9 +496,11 @@
     table.sheet thead th.vz-h{display:none}
     table.sheet tr.bnr{display:block;width:100%}
     table.sheet tr.bnr td{
-      display:block;width:100%;box-sizing:border-box;
+      display:flex;width:100%;box-sizing:border-box;
+      justify-content:space-between;align-items:baseline;gap:10px;
       white-space:normal;padding:8px 10px;letter-spacing:.05em;
     }
+    table.sheet tr.bnr td .bnr-n{float:none;flex:0 0 auto}
     table.sheet tr.bnr.sticky-date td{top:0}
     table.sheet tr.sheet-load{
       display:grid;
@@ -9285,7 +9287,7 @@ function renderDayRollup(){
   if(trl.atCustomer.length) trlSumBits.push(trl.atCustomer.length+' at customer');
   if(trl.redTag.length) trlSumBits.push(trl.redTag.length+' red tag');
   const trlHTML = '<details class="card trl-fold" id="trlStatusCard"'+(trailerStatusOpen?' open':'')+'>'
-    + '<summary>Trailer status'
+    + '<summary>Trailer status '
     + '<span class="trl-sum-n">'+esc(trlSumBits.join(' · '))+' · '+trl.rosterSize+' roster</span></summary>'
     + '<div class="trl-body">'
     + '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px">'
