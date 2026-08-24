@@ -11,7 +11,7 @@
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<meta name="app-version" content="2026-08-24-fct-calc-v2.1.37-wc-nut">
+<meta name="app-version" content="2026-08-24-fct-calc-v2.1.38-sub-as-used">
 <title data-id="th-modified">FCT Load Profitability — French Camp Transport</title>
 <link rel="manifest" href='data:application/manifest+json,{"name":"FCT Load Profitability","short_name":"FCT Calc","start_url":".","display":"standalone","background_color":"%2312100e","theme_color":"%2312100e","icons":[{"src":"data:image/svg%2Bxml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 192 192%27%3E%3Crect width=%27192%27 height=%27192%27 fill=%27%2312100e%27/%3E%3Ctext x=%2796%27 y=%27124%27 font-size=%2772%27 font-family=%27sans-serif%27 font-weight=%27700%27 fill=%27%238fb590%27 text-anchor=%27middle%27%3EFCT%3C/text%3E%3C/svg%3E","sizes":"192x192","type":"image/svg+xml"}]}'>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -1420,7 +1420,7 @@
    still exposes the Import JSON box for future refreshes.
    ============================================================= */
 
-const APP_VERSION = '2026-08-24-fct-calc-v2.1.37-wc-nut';
+const APP_VERSION = '2026-08-24-fct-calc-v2.1.38-sub-as-used';
 const STORAGE_KEY = 'fct-calc:state';
 const IDB_NAME = 'fct-calc-db';
 const IDB_STORE = 'kv';
@@ -2629,16 +2629,13 @@ function variableComponents(milesOv, hoursOv, rateOv){
   const rate = (rateOv!=null && !isNaN(Number(rateOv)) && Number(rateOv)>0)
              ? Number(rateOv) : (Number(s.defaultDriverRate)||0);
   const wear = Number(s.wearPerMile)||0;
-  /* v2.0.9: subhauler amortization removed. Historical model spread
-     ~$362,843/yr ÷ ~12,150 loads ≈ $29.88 across EVERY load, including
-     in-house ones that never touched a sub — double-counting the sub fee.
-     v2.0.9 tracks subs per-load via the Lopez/<name> · Prado/<name>
-     driver-field pattern in computeDayRow() (flat $150/sub-load); the
-     pooled per-load figure is zeroed here so the two models don't stack.
-     The QBO 326 baseline still lives in fixedStack.subhauler326 for the
-     reconciliation view — this line just stops charging it to every load.
-     James note 2026-08-12: Sunday sub volume trending down, so the stale
-     historical amortization is even further from current reality. */
+  /* v2.0.9 / v2.1.38: subhauler amortization removed and stays removed.
+     Historical model spread ~$362,843/yr ÷ ~12,150 loads ≈ $29.88 across
+     EVERY load, including in-house ones that never touched a sub.
+     Amount on this line is 0. $150 is applied only on Lopez/<name> or
+     Prado/<name> rows in computeDayRow. Do not put QBO 326 back into
+     this pool, into otherVariablePerLoad, or as a per-load amortization.
+     Settings.subhaulerPerYear / QBO_SEED subhauler326 are display only. */
   /* v2.1.36: otherVariablePerLoad ships at $0. The old $35 plug is not
      in 2025 QBO shop bills (313.2/3/4). Tarps $510 already sit inside
      313.2, so they are in wearPerMile. A leftover operator-typed other
@@ -2653,7 +2650,7 @@ function variableComponents(milesOv, hoursOv, rateOv){
     { k:'wear',   label:'Wear / maintenance',amount: mi*wear,
       basis: num(mi)+' mi × '+money2(wear)+'/mi — 2025 QBO 313.2 R&M $319,811 + 313.3 tires $75,893 + 313.4 wash $34,787 + 313.9 tarps $17,874 = $448,365 ÷ 900,000 fleet mi = $0.498/mi' },
     { k:'subhauler', label:'Subhauler pro-rata', amount: 0,
-      basis: 'v2.0.9: subhauler now tracked per-load ($150/load for Lopez/<name> · Prado/<name> subs, applied in computeDayRow); historical pool baseline '+money(Number(s.subhaulerPerYear)||0)+'/yr disabled here to prevent double-count with the per-load charge' },
+      basis: 'v2.0.9 / v2.1.38: pooled amount stays 0. $150 only on Lopez/<name> · Prado/<name> rows in computeDayRow. QBO 326 '+money(Number(s.subhaulerPerYear)||0)+'/yr is display/reconciliation only — not amortized per load, not in other' },
     { k:'other',  label:'Other / unallocated', amount: other,
       basis: 'v2.1.36: $0. Not in 2025 QBO shop bills. Tarps $17,874 live in 313.9 (wear). Old $35/load plug was fake on EST and ADP days. Bonuses and 2025 lawsuit legal are not absorbed here' },
   ];
@@ -3137,8 +3134,8 @@ function defaultSettings(){
     loadsPerYear: 12150,         // T12M load count
     avgMilesPerLoad: 50,         // v2.1.17c: James 2026-08-20 corrected — real FC→PNG→Ripon→FC round trip = ~50 mi (FC→Stockton ~15, Stockton→Ripon ~22, Ripon→FC ~13). Was 80 based on total fleet-mile/load-count ratio which included Harris + longer-haul loads.
     hoursPerLoad: 5,             // total time on load, Diamond dispatch
-    subhaulerPerYear: 363000,    // QBO 326 — booked as its own per-load line
-    otherVariablePerLoad: 0,     // v2.1.36: was $35 (then $21.02). Not in 2025 QBO shop bills. Tarps $510 already in 313.2 / wearPerMile. Fake on EST and ADP days.
+    subhaulerPerYear: 363000,    // QBO 326 display/reconciliation only. Not amortized per load. $150 only on Lopez/ / Prado/ rows in computeDayRow.
+    otherVariablePerLoad: 0,     // v2.1.36: was $35 (then $21.02). Not in 2025 QBO shop bills. Do not put subhauler/WC/tarps/bonuses/legal here. Fake on EST and ADP days.
     /* Non-Diamond revenue is a PLACEHOLDER. Diamond is calibrated to T12M and
        bills off the 30% FSC card; the other three buckets have no verified
        rate yet, so they ship at $500 and are flagged EST wherever they land.
@@ -8098,6 +8095,19 @@ function dayRowActive(r){
    have billed next to what the lane actually realises; on a 48,000 lb Diamond
    load that gap is ~$100 ($422 card vs $522 realised), which is exactly the
    error v1.2 was baking into every day. */
+/* BEGIN SUBHAUL_AS_USED */
+/* v2.0.9 / v2.1.38: $150 only when the driver field is Lopez/<name> or
+   Prado/<name> (surname + slash + the sub company's driver). In-house
+   W-2 Carlos Prado and Rafael Lopez have no slash and are not subs.
+   Do not amortize QBO 326 here, in otherVariablePerLoad, or in the
+   variableComponents pooled amount (that line stays 0). */
+function isSubHaulDriver(drv){
+  return /^(Lopez|Prado)\//i.test(String(drv==null?'':drv));
+}
+function subHaulFeeForDriver(drv){
+  return isSubHaulDriver(drv) ? 150 : 0;
+}
+/* END SUBHAUL_AS_USED */
 function computeDayRow(r){
   const s = state.settings;
   const lbs   = Number(r.lbs)||0;
@@ -8119,15 +8129,10 @@ function computeDayRow(r){
      load at the fleet average would flatter the long lanes and punish the short. */
   const tierV = (r.bucket==='diamond' || !r.bucket) ? diamondTier(r.origin, r.truck) : null;
   const varOv   = Number(r.varCostOverride)||0;
-  /* v2.0.9 / v2.1.37: sub-haul as used only. Driver format `Lopez/<name>`
-     or `Prado/<name>` (surname + slash + sub company's driver) means the
-     load was run by an outside carrier — flat $150 sub fee, ZERO in-house
-     fuel/driver/wear. Not amortized through otherVariablePerLoad or the
-     pooled QBO 326 line. NOT to be confused with in-house W-2 drivers
-     `Carlos Prado` ($21.50) or `Rafael Lopez` ($24.00), which have no
-     slash. Explicit varCostOverride still wins (operator can force a number). */
+  /* v2.0.9 / v2.1.38: sub-haul as used only — see isSubHaulDriver().
+     Explicit varCostOverride still wins (operator can force a number). */
   const drvStr    = String(r.driver||'');
-  const isSubHaul = /^(Lopez|Prado)\//i.test(drvStr);
+  const isSubHaul = isSubHaulDriver(drvStr);
   let varCost;
   /* v2.1.21: per-lane calibration multiplier from state.laneCalibration.
      Applied to LANE_MILES before variableComponents so fuel + wear costs
@@ -8150,8 +8155,8 @@ function computeDayRow(r){
     varCost = varOv;
     otherCost = varOv; // override is a lump — cannot split
   } else if(isSubHaul){
-    varCost = 150;
-    subHaulCost = 150;
+    subHaulCost = subHaulFeeForDriver(drvStr);
+    varCost = subHaulCost;
   } else {
     // v2.1.18: prefer lane-specific miles when we have them (accurate fuel + wear
     // per specific origin→destination). Falls back to tier miles otherwise.
@@ -8384,7 +8389,7 @@ function dayTotalsHTML(d){
     + line('Total variable cost', T.varSource==='ADP'
         ? '<span class="chip g">ADP</span> field-driver '+money(T.driverCost)+' + modelled fuel/wear/sub'
           + (T.estDriverCost!=null ? ' · was '+money(T.estDriverCost)+' estimated driver' : '')
-        : T.loads+' × '+money(variableCostPerLoad())+'/load — fuel + driver + wear + subhauler + unallocated',
+        : T.loads+' × '+money(variableCostPerLoad())+'/load — fuel + driver + wear (sub $150 only on Lopez/Prado slash rows; other $0)',
         '−'+money2(T.varCost),'var(--red)')
     + line('<b>Total contribution margin</b>', T.varSource==='ADP'
         ? 'revenue − variable with ADP driver wages'
@@ -8648,6 +8653,7 @@ function runningTotals(refDate){
    v2.1.36: otherVariablePerLoad is $0 (not in 2025 QBO shop bills).
    v2.1.37: wear is $0.498/mi (313.2+3+4+9 tarps ≈ $448k). WC $92,922
    once in the fixed nut. Sub $150 as used only.
+   v2.1.38: sub still as-used only; QBO 326 is not a per-load charge.
    -------------------------------------------------------------
    The landing-strip DAY/WTD/MTD chips were too small — payroll looked
    buried. This board is the thing to LOOK at: revenue, driver wages,
@@ -13367,7 +13373,7 @@ function renderSet(){
     h += '<h2 style="margin-top:18px">Revenue</h2><div class="fld fld2">'
       + nf('sRevLoad','Revenue $/load', s.revenuePerLoadDefault,'1',
           money(q.revenueT12M.value)+' T12M ÷ '+num(s.loadsPerYear)+' loads = '+money(q.revenueT12M.value/(s.loadsPerYear||1))+'. Overridable per customer below.')
-      + nf('sLoadsYr','Loads / year', s.loadsPerYear,'50','T12M load count. Drives the subhauler per-load line and the full-year check.')
+      + nf('sLoadsYr','Loads / year', s.loadsPerYear,'50','T12M load count. Drives the full-year check. Subhauler is not spread across this count — only Lopez/Prado slash rows pay $150.')
       + '</div>';
 
     /* --- Variable side, component by component --- */
@@ -13378,7 +13384,7 @@ function renderSet(){
       + nf('sAvgMi','Avg miles / load', s.avgMilesPerLoad,'1','~965K fleet miles ÷ '+num(s.loadsPerYear)+' loads = 79.4. Drives the fuel and wear lines.')
       + nf('sHrsLoad','Hours / load', s.hoursPerLoad,'0.25','Total time on load. Drives the driver line.')
       + '</div><div class="fld fld2">'
-      + nf('sSubYr','Subhauler $/yr', s.subhaulerPerYear,'1000','QBO 326. Booked as its own per-load line rather than folded into a rate you can influence.')
+      + nf('sSubYr','Subhauler $/yr (QBO 326, display only)', s.subhaulerPerYear,'1000','v2.0.9 / v2.1.38: not charged per load. Loads pay $150 only when the driver is Lopez/<name> or Prado/<name>. This yearly figure is QBO 326 for reconciliation — it is not amortized across in-house loads and it is not in other.')
       + nf('sOtherVar','Other / unallocated $/load', s.otherVariablePerLoad,'0.01','v2.1.37: $0. Not in 2025 QBO shop bills. Tarps $17,874 sit in 313.9 (wear). Bonuses and 2025 lawsuit legal are not absorbed here.')
       + '</div>';
     comps.forEach(c=>{
@@ -15024,6 +15030,10 @@ SHADOW_TIMELINE_TEXT['2026-07-28'] = "**PARTIAL DAY — Phase 2 diff loop stoppe
 
 /* ---- v2.0 DATA: Changelog (in-app version history) ---- */
 const SHADOW_CHANGELOG = [
+  { ver:'v2.1.38-sub-as-used', date:'2026-08-24', changes:[
+    'Subhaulers only as used — keep v2.0.9: $150 only on Lopez/ / Prado/ rows in computeDayRow. In-house Carlos Prado and Rafael Lopez (no slash) are W-2, not subs. QBO 326 stays display/reconciliation only — not in otherVariablePerLoad, not in the variableComponents pooled amount (still 0), not a per-load amortization across loads/year',
+    'Wear stays $0.498/mi (313.2+3+4+9 tarps). other stays $0. WC once in the nut at $92,922. No diesel, Queue, or lease changes'
+  ]},
   { ver:'v2.1.37-wc-nut', date:'2026-08-24', changes:[
     'Wear $/mile includes 313.9 tarps ($17,874) with 313.2+3+4: $448,365 ÷ 900,000 mi = $0.498/mi ($448,200/yr). Tarps are not in other. 313.10 std logistics was not in the v2.1.36 wear comment, so it stays out. 313.8 lease true total is $469,251 (parent $171k + Equity Lease $296k + replacement rental) — matches the $470k line; leave it alone',
     'Workers comp counted once: new fixed-stack line 2025 QBO 304.2 $92,922, on. Insurance stays non-WC $598k — WC is not inside that figure, not in other ($0), not in wear, not in ADP gross wages, not in the 1.31 payroll-tax loading',

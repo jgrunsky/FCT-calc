@@ -280,14 +280,41 @@ assert.equal(looksLikeAdpAoa([['Date','Driver','Grower','FB','Commodity']]), fal
 }
 
 {
-  /* v2.1.37: WC once in the nut; sub as-used; legal/bonuses stay out. */
+  /* v2.1.37: WC once in the nut; legal/bonuses stay out. */
   assert.ok(/k:'workersComp'/.test(html), 'workersComp line exists in the fixed stack');
   assert.ok(/amount:92922/.test(html), 'WC is 2025 304.2 $92,922');
   assert.ok(/amount:598000/.test(html), 'insurance stays non-WC $598k');
-  assert.ok(/k:'subhauler'[\s\S]{0,80}amount:\s*0/.test(html), 'pooled subhauler in variableComponents is 0');
-  assert.ok(/subHaulCost = 150/.test(html), 'Lopez/Prado rows still charge $150 as used');
   assert.ok(/excludeFromBaseline:true/.test(html), '2025 legal stays out of the recurring nut');
   assert.ok(/otherMisc'[\s\S]{0,120}amount:\s*62000/.test(html), 'otherMisc not raised to absorb lawsuit legal');
+}
+
+{
+  /* v2.0.9 / v2.1.38: subhaulers only as used. $150 on Lopez/ / Prado/
+     slash rows. Not in other, not in the variableComponents pool, not
+     a per-load amortization of QBO 326. In-house Prado/Lopez are W-2. */
+  const subStart = html.indexOf('/* BEGIN SUBHAUL_AS_USED */');
+  const subEnd = html.indexOf('/* END SUBHAUL_AS_USED */');
+  assert.ok(subStart >= 0 && subEnd > subStart, 'SUBHAUL_AS_USED markers missing from index.html');
+  const subSandbox = {};
+  runInContext(html.slice(subStart, subEnd), createContext(subSandbox));
+  const { isSubHaulDriver, subHaulFeeForDriver } = subSandbox;
+  assert.equal(isSubHaulDriver('Lopez/Jose'), true);
+  assert.equal(isSubHaulDriver('Prado/Miguel'), true);
+  assert.equal(isSubHaulDriver('lopez/x'), true);
+  assert.equal(isSubHaulDriver('PRADO/Y'), true);
+  assert.equal(subHaulFeeForDriver('Lopez/Jose'), 150);
+  assert.equal(subHaulFeeForDriver('Prado/Miguel'), 150);
+  assert.equal(isSubHaulDriver('Carlos Prado'), false, 'in-house W-2 Carlos Prado is not a sub');
+  assert.equal(isSubHaulDriver('Rafael Lopez'), false, 'in-house W-2 Rafael Lopez is not a sub');
+  assert.equal(isSubHaulDriver('Lopez'), false, 'surname alone is not a sub');
+  assert.equal(isSubHaulDriver('Prado'), false);
+  assert.equal(subHaulFeeForDriver('Carlos Prado'), 0);
+  assert.equal(subHaulFeeForDriver('Rafael Lopez'), 0);
+  assert.equal(subHaulFeeForDriver(''), 0);
+  assert.ok(/k:'subhauler'[\s\S]{0,80}amount:\s*0/.test(html), 'pooled subhauler in variableComponents is 0');
+  assert.ok(/otherVariablePerLoad:\s*0\b/.test(html), 'other stays 0 — sub is not folded into other');
+  assert.ok(!/subhaulerPerYear\s*\/\s*loadsPerYear/.test(html), 'QBO 326 is not amortized per load in code');
+  assert.ok(/truckLease'[\s\S]{0,80}amount:470000/.test(html), 'lease amount unchanged');
 }
 
 console.log('adp-daily-totals.test.mjs: ok');
