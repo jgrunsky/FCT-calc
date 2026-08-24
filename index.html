@@ -561,6 +561,7 @@
     /* v2.1.31 Queue board: same Time / Driver / Origin / Status scan as Today,
        with Dest folded into the driver meta line and Send dispatch kept on
        the row (Today hides the suggested-driver cell on phone). */
+    table.sheet.sheet-queue{min-width:0;width:100%}
     table.sheet.sheet-queue thead tr{
       grid-template-columns:3.5rem minmax(0,1fr) minmax(3.6rem,.7fr) auto;
       grid-template-areas:"time drv orig st";
@@ -608,9 +609,11 @@
   .q-locked{font:600 10.5px/1.2 var(--body);letter-spacing:.04em;text-transform:uppercase;color:var(--text-faint)}
   .q-why{font:400 10px/1.35 var(--body);color:var(--text-muted);margin-top:4px}
   /* Queue board is the Excel sheet minus money / Verizon / suggested-driver.
-     Narrower than Today's 1890px table so Dest + Send sit on a desktop without
-     a second hunt. Phone compact rules above keep the same scan as Today. */
-  table.sheet.sheet-queue{min-width:1120px}
+     Desktop is a wide sheet; phone compact rules in the 860px query above
+     must win this min-width (two classes beat table.sheet { min-width:0 }). */
+  @media (min-width:861px){
+    table.sheet.sheet-queue{min-width:1120px}
+  }
   table.sheet.sheet-queue td.c-act{white-space:normal;vertical-align:top;min-width:148px}
   table.sheet.sheet-queue td.c-dest{max-width:160px;overflow:hidden;text-overflow:ellipsis}
   tr.q-done td{opacity:.55}
@@ -11440,7 +11443,7 @@ function renderQueue(){
         + '<td class="c-orig">'+esc(r.origin||'—')+'</td>'
         + '<td class="c-comm">'+esc(String(r.commodity||'—').slice(0,26))+'</td>'
         + '<td class="c-dest">'+esc(dest)+'</td>'
-        + '<td class="c-st'+(stCls?' '+stCls:'')+'">'+esc(r.status|| (open ? '' : (cls==='assigned'?'DISPATCHED':'')))+'</td>'
+        + '<td class="c-st'+(stCls?' '+stCls:'')+'">'+esc(r.status || '—')+'</td>'
         + '<td class="c-act">'+act+'</td>'
         + '</tr>';
     };
