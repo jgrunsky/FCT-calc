@@ -11,7 +11,7 @@
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<meta name="app-version" content="2026-08-24-fct-calc-v2.1.31-queue-excel-layout">
+<meta name="app-version" content="2026-08-24-fct-calc-v2.1.32-queue-tomorrow-preloads">
 <title data-id="th-modified">FCT Load Profitability — French Camp Transport</title>
 <link rel="manifest" href='data:application/manifest+json,{"name":"FCT Load Profitability","short_name":"FCT Calc","start_url":".","display":"standalone","background_color":"%2312100e","theme_color":"%2312100e","icons":[{"src":"data:image/svg%2Bxml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 192 192%27%3E%3Crect width=%27192%27 height=%27192%27 fill=%27%2312100e%27/%3E%3Ctext x=%2796%27 y=%27124%27 font-size=%2772%27 font-family=%27sans-serif%27 font-weight=%27700%27 fill=%27%238fb590%27 text-anchor=%27middle%27%3EFCT%3C/text%3E%3C/svg%3E","sizes":"192x192","type":"image/svg+xml"}]}'>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -590,6 +590,18 @@
     table.sheet.sheet-queue .q-pick{flex:1 1 auto;min-width:0;padding:8px 8px}
     table.sheet.sheet-queue .q-send{flex:0 0 auto;padding:10px 12px;white-space:nowrap}
     table.sheet.sheet-queue .q-why{display:none}
+
+    /* v2.1.32: tomorrow's preload banner + rows stay in the compact scan.
+       Do not hide bnr-pre / pre-row — those are this afternoon's dispatch work. */
+    table.sheet tr.bnr-pre{display:block !important;width:100%}
+    table.sheet tr.bnr-pre td{
+      display:flex !important;flex-wrap:wrap;width:100%;box-sizing:border-box;
+    }
+    table.sheet tr.bnr-pre td .bnr-sub{flex:1 0 100%;display:block}
+    table.sheet tr.sheet-load.pre-row{display:grid !important}
+    table.sheet.sheet-queue tbody#qPreSection{display:block;width:100%}
+    table.sheet.sheet-queue tr.sheet-load.pre-row.q-open td.c-act{display:block}
+    #qPreSection{scroll-margin-top:72px;scroll-margin-bottom:96px}
   }
 
   /* --- v1.4 queue --- */
@@ -606,6 +618,21 @@
   .q-sum{font:500 12.5px/1.4 var(--body);color:var(--text-muted);margin:-4px 0 12px}
   .q-sum b{color:var(--text);font-weight:700}
   .q-sum .q-open-n{color:var(--amber)}
+  /* v2.1.32: tomorrow-preload chip under the open/assigned line. Mirrors
+     Today's jump to #preSection so James can land on Section 2 without
+     scrolling past the whole day. */
+  .q-pre-jump{
+    margin:-2px 0 12px;padding:9px 11px;border-radius:6px;
+    background:color-mix(in oklab,var(--blue) 16%,var(--bg-inset));
+    border:1px solid color-mix(in oklab,var(--blue) 42%,transparent);
+    color:#a9c9ef;font:500 12.5px/1.4 var(--body);
+  }
+  .q-pre-jump a{color:inherit;text-decoration:none;display:block}
+  .q-pre-jump a .q-pre-go{text-decoration:underline dotted}
+  .q-pre-jump.q-pre-quiet{
+    background:var(--bg-inset);border-color:var(--border);color:var(--text-muted);
+  }
+  #qPreSection{scroll-margin-top:72px;scroll-margin-bottom:96px}
   .q-locked{font:600 10.5px/1.2 var(--body);letter-spacing:.04em;text-transform:uppercase;color:var(--text-faint)}
   .q-why{font:400 10px/1.35 var(--body);color:var(--text-muted);margin-top:4px}
   /* Queue board is the Excel sheet minus money / Verizon / suggested-driver.
@@ -1357,7 +1384,7 @@
    still exposes the Import JSON box for future refreshes.
    ============================================================= */
 
-const APP_VERSION = '2026-08-24-fct-calc-v2.1.31-queue-excel-layout';
+const APP_VERSION = '2026-08-24-fct-calc-v2.1.32-queue-tomorrow-preloads';
 const STORAGE_KEY = 'fct-calc:state';
 const IDB_NAME = 'fct-calc-db';
 const IDB_STORE = 'kv';
@@ -11279,6 +11306,13 @@ function saveDaySnapshot(){
    rows. Assigned drivers stay locked (v2.1.8). Done stays on the
    sheet, greyed, so the day is still visible.
 
+   v2.1.32: tomorrow's pre-6am preloads (preloadSectionRows, same
+   predicate as Today) are this afternoon's dispatch work. A chip
+   under the open/assigned line jumps to #qPreSection; the tab
+   badge counts today's open rows plus unassigned tomorrow
+   preloads; Section 2 groups those rows Lathrop → Ripon → Other
+   instead of a flat dump. Revenue still belongs to tomorrow.
+
    "Send dispatch" is deliberately a misnomer today: it records
    the assignment, flips the row to DISPATCHED and nothing leaves
    the device. Phase 3.2 turns that same call into an SMS. The
@@ -11319,10 +11353,13 @@ function renderQueue(){
   const assignedRows = allRows.filter(x => x.cls === 'assigned');
   const doneRows = allRows.filter(x => x.cls === 'done');
   const li = d.lastImport;
+  const preOpen = dayPre.filter(isUnassigned).length;
 
-  /* Tab badge — the count of open loads, visible from any tab. */
+  /* Tab badge — today's open rows PLUS unassigned tomorrow preloads.
+     Those pre-6am loads are this afternoon's dispatch work. */
   const badge = document.getElementById('qBadge');
-  if(badge){ badge.textContent = String(openRows.length); badge.hidden = !openRows.length; }
+  const badgeN = openRows.length + preOpen;
+  if(badge){ badge.textContent = String(badgeN); badge.hidden = !badgeN; }
 
   let h = '';
 
@@ -11340,6 +11377,21 @@ function renderQueue(){
     + (doneRows.length ? ' · '+doneRows.length+' done' : '')
     + (allRows.length ? ' · '+allRows.length+' load'+(allRows.length===1?'':'s')+' on the day' : '')
     + '</div>';
+
+  /* v2.1.32: tomorrow preloads at the TOP, not only the bottom. Same
+     rows Today uses (preloadSectionRows). Jump lands on #qPreSection.
+     Empty is honest — trimmed import vs quiet night — not silence. */
+  if(dayPre.length){
+    const preN = dayPre.length;
+    h += '<div class="q-pre-jump"><a href="#qPreSection" data-qpre-jump>'
+      + '<b>📦 '+preN+' tomorrow preload'+(preN===1?'':'s')+' — prep today PM</b>'
+      + ' · '+(preOpen ? preOpen+' still open' : 'all assigned')
+      + ' <span class="q-pre-go">See them below ↓</span></a></div>';
+  } else {
+    const note = (typeof preloadSectionNote === 'function' && shown)
+      ? preloadSectionNote(shown) : '';
+    if(note) h += '<div class="q-pre-jump q-pre-quiet">'+esc(note)+'</div>';
+  }
 
   // v2.1.8: preload-capacity summary. Show how many DAY/AFTERNOON drivers have
   // uncapped slots left for late-PM preloads (PNG/ARA 6pm close, FCG 4pm), and
@@ -11379,9 +11431,11 @@ function renderQueue(){
 
     const prevDiamond = dayDiamondOnly;
     dayDiamondOnly = false;
-    let S;
-    try { S = sheetSections(d.currentRows); }
-    finally { dayDiamondOnly = prevDiamond; }
+    let S, SPre;
+    try {
+      S = sheetSections(d.currentRows);
+      SPre = sheetSections(dayPre);
+    } finally { dayDiamondOnly = prevDiamond; }
 
     const bannerRow = (cls, text, n)=>
       '<tr class="bnr '+cls+'"><td colspan="'+QCOL+'">'+esc(text)
@@ -11492,17 +11546,33 @@ function renderQueue(){
     }
     h += '</tbody>';
 
+    /* Section 2 — tomorrow's preloads. Same rows as Today, grouped
+       D.P. LATHROP → D.P. RIPON → OTHER (sheetSections). Do not emit
+       SPre.preloaded: every preload-locked row is already in a plant
+       bucket, and dumping that list would duplicate them. Revenue
+       stays on tomorrow — these are not mixed into today's blocks. */
     if(dayPre.length){
       const tom = nextDayISO(d.date);
-      h += '<tbody>'
+      const preOther = (SPre.other||[]).concat(SPre.above||[]).concat(SPre.manual||[]);
+      const seenPre = new Set(
+        (SPre.lathrop||[]).concat(SPre.ripon||[]).concat(preOther).map(x=>x.r)
+      );
+      dayPre.forEach((r,i)=>{ if(!seenPre.has(r)) preOther.push({r:r, i:i}); });
+      h += '<tbody id="qPreSection">'
         + bannerRow2('bnr-pre', '📦 TOMORROW\'S PRELOADS — prep today PM',
-            'These carry the '+(tom?dowDateLabel(tom):'next day')+' date banner and deliver before 6am. Prep is this afternoon\'s work.',
-            dayPre.length, 'qPreSection')
-        + dayPre.map((r,ix)=>queueLoadRow({r:r, i:ix}, 'sec2')).join('')
+            'These carry the '+(tom?dowDateLabel(tom):'next day')+' date banner and deliver before 6am. Prep is this afternoon\'s work. Revenue books on that day — not in today\'s Lathrop/Ripon totals.',
+            dayPre.length)
+        + (SPre.lathrop.length
+            ? bannerRow('bnr-lath','D.P. LATHROP', SPre.lathrop.length)+emit(SPre.lathrop, 'sec2') : '')
+        + (SPre.ripon.length
+            ? bannerRow('bnr-ripo','D.P. RIPON', SPre.ripon.length)+emit(SPre.ripon, 'sec2') : '')
+        + (preOther.length
+            ? bannerRow('bnr-other','OTHER DELIVERY POINTS', preOther.length)+emit(preOther, 'sec2') : '')
         + '</tbody>';
     }
     h += '</table></div>';
     h += '<div class="legend">Same layout as the dispatch log — date banner, then D.P. Lathrop, then D.P. Ripon. '
+      + 'Tomorrow\'s preloads sit under the blue 📦 banner, grouped the same way (Lathrop then Ripon). '
       + 'Open rows have the driver list and <b>Send dispatch</b> (records the assignment, no SMS yet). '
       + 'Assigned drivers are locked. Done stays on the sheet, greyed. '
       + 'Suggestions still walk the day in clock order with the 2-load cap.</div>';
@@ -11562,6 +11632,16 @@ function renderQueue(){
   host.innerHTML = h;
 
   /* --- wiring --- */
+  /* Phone: native #hash into a display:block table often does not
+     scroll. Force scrollIntoView on the Section 2 tbody. */
+  document.querySelectorAll('#p-queue [data-qpre-jump]').forEach(a=>a.addEventListener('click',e=>{
+    e.preventDefault();
+    const t = document.getElementById('qPreSection');
+    if(!t) return;
+    const target = t.querySelector('tr.bnr-pre') || t;
+    try { target.scrollIntoView({behavior:'smooth', block:'start'}); }
+    catch(_){ try { target.scrollIntoView(true); } catch(__){} }
+  }));
   document.querySelectorAll('#p-queue [data-qsend]').forEach(b=>b.addEventListener('click',()=>{
     const id = b.dataset.qsend;
     const sel = document.querySelector('#p-queue [data-qpick="'+CSS.escape(id)+'"]');
@@ -13779,6 +13859,12 @@ SHADOW_TIMELINE_TEXT['2026-07-28'] = "**PARTIAL DAY — Phase 2 diff loop stoppe
 
 /* ---- v2.0 DATA: Changelog (in-app version history) ---- */
 const SHADOW_CHANGELOG = [
+  { ver:'v2.1.32-queue-tomorrow-preloads', date:'2026-08-24', changes:[
+    'Queue now surfaces tomorrow\'s pre-6am preloads the same way Today does — they were already on the sheet, but only at the bottom as a flat list, so they were easy to miss',
+    'A chip under the open/assigned line says how many tomorrow preloads there are, how many still need a driver, and jumps to them. If none, it says why (trimmed import vs quiet night) instead of going silent',
+    'The Queue badge counts today\'s open loads PLUS unassigned tomorrow preloads — those are this afternoon\'s dispatch work. Section 2 keeps the blue 📦 banner, then groups D.P. LATHROP → D.P. RIPON → OTHER. Open ones still have Send dispatch',
+    'Does not mix tomorrow\'s preloads into today\'s Lathrop/Ripon blocks (revenue still books tomorrow). Does not change scoring, diesel/canonical, missing-rates, the Worker, or the Today tab'
+  ]},
   { ver:'v2.1.31-queue-excel-layout', date:'2026-08-24', changes:[
     'Queue is now the Excel dispatch board you send from — same orange date banner, then D.P. LATHROP, then D.P. RIPON (and OTHER / preloaded / tomorrow preloads when those exist), not a stacked Open / Set / Done card list',
     'Open rows keep the driver dropdown (top-3 suggestions + roster) and Send dispatch on the row. Assigned rows show the set driver, locked. Done stays on the sheet, greyed, so the day is still visible',
@@ -14245,7 +14331,7 @@ function renderV2WageSection(){
   }, 200);
   // Update the header version pill
   const verEl = document.getElementById('hdrVer');
-  if (verEl) verEl.textContent = 'v2.1.31-queue-excel-layout';
+  if (verEl) verEl.textContent = 'v2.1.32-queue-tomorrow-preloads';
 })();
 </script>
 </body>
