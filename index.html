@@ -11,7 +11,7 @@
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<meta name="app-version" content="2026-08-25-fct-calc-v2.1.40-adp-blend">
+<meta name="app-version" content="2026-08-25-fct-calc-v2.1.41-pa-sms">
 <title data-id="th-modified">FCT Load Profitability — French Camp Transport</title>
 <link rel="manifest" href='data:application/manifest+json,{"name":"FCT Load Profitability","short_name":"FCT Calc","start_url":".","display":"standalone","background_color":"%2312100e","theme_color":"%2312100e","icons":[{"src":"data:image/svg%2Bxml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 192 192%27%3E%3Crect width=%27192%27 height=%27192%27 fill=%27%2312100e%27/%3E%3Ctext x=%2796%27 y=%27124%27 font-size=%2772%27 font-family=%27sans-serif%27 font-weight=%27700%27 fill=%27%238fb590%27 text-anchor=%27middle%27%3EFCT%3C/text%3E%3C/svg%3E","sizes":"192x192","type":"image/svg+xml"}]}'>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -1420,7 +1420,7 @@
    still exposes the Import JSON box for future refreshes.
    ============================================================= */
 
-const APP_VERSION = '2026-08-25-fct-calc-v2.1.40-adp-blend';
+const APP_VERSION = '2026-08-25-fct-calc-v2.1.41-pa-sms';
 const STORAGE_KEY = 'fct-calc:state';
 const IDB_NAME = 'fct-calc-db';
 const IDB_STORE = 'kv';
@@ -3525,6 +3525,13 @@ function defaultColumnMap(){
    as the default and editable in Settings — the URL is infrastructure, not a
    constant, and a redeploy should not need a new build of this file. */
 const WORKER_URL = 'https://fct-dispatch.jamesgrunsky.workers.dev/latest';
+/* v2.1.41: Power Automate is the Excel two-way bridge. Flow 1 POSTs the
+   workbook (or JSON rows) to /ingest; the calc still parses that payload
+   with parseDispatchRows / ingestWorkbook. Flow 2 is an HTTP trigger the
+   calc POSTs an assignment to (via /push-row so the phone does not hit
+   CORS). Twilio SMS is optional on the same Worker — keys stay off the
+   page. */
+const WORKER_ORIGIN = 'https://fct-dispatch.jamesgrunsky.workers.dev';
 /* 2026-08-18 v2.1.0: Verizon Reveal live-driver feed. Pulled every 10 min by
    the fct-verizon Worker. Vehicles enriched with per-vehicle GPS from
    /rad/v1/vehicles/{id}/location. Drivers from /cmd/v1/drivers. Feature-flag
@@ -3552,19 +3559,27 @@ function defaultDispatchImport(){
               ours: it is what tells a boot fetch whether the worker actually
               has something newer, which is what keeps auto-sync from wiping
               per-row edits on every page load. */
-           workerUrl: WORKER_URL, lastSyncAt:'', lastIngestedAt:'', lastRowCount:0 };
+           workerUrl: WORKER_URL, lastSyncAt:'', lastIngestedAt:'', lastRowCount:0,
+           /* v2.1.41: Flow 2 HTTP trigger URL. Empty = skip Excel write-back. */
+           paPushUrl:'' };
 }
 function normalizeDispatchImport(d){
   const out = defaultDispatchImport();
   if(!d || typeof d!=='object') return out;
   if(d.columnMap && typeof d.columnMap==='object') out.columnMap = Object.assign(defaultColumnMap(), d.columnMap);
-  ['sheetName','lastUrl','filterDate','workerUrl','lastSyncAt','lastIngestedAt','excelWebUrl']
+  ['sheetName','lastUrl','filterDate','workerUrl','lastSyncAt','lastIngestedAt','excelWebUrl','paPushUrl']
     .forEach(k=>{ if(typeof d[k]==='string') out[k]=d[k]; });
   if(!out.workerUrl) out.workerUrl = WORKER_URL;
   if(typeof d.lastRowCount==='number') out.lastRowCount = d.lastRowCount;
   out.mapConfirmed = !!d.mapConfirmed;
   out.headerRow = (typeof d.headerRow==='number') ? d.headerRow : null;
   return out;
+}
+function dispatchWorkerBase(){
+  const u = String((state.dispatchImport && state.dispatchImport.workerUrl) || WORKER_URL);
+  const trimmed = u.replace(/\/+$/,'');
+  if(/\/latest$/i.test(trimmed)) return trimmed.replace(/\/latest$/i,'');
+  return trimmed || WORKER_ORIGIN;
 }
 /* =============================================================
    COMPANY INFO (v1.8)
@@ -3656,6 +3671,12 @@ function normalizeCompanyInfo(saved){
    phones is keyed by the driver's FULL roster name (the same key
    state.settings.drivers uses) and starts empty, so it neither
    duplicates the roster nor breaks when a driver is added.
+   Numbers live in this device's state — never in git.
+
+   v2.1.41: Twilio keys do NOT live on this page. The dispatch
+   Worker sends SMS. accountSid/authToken/fromNumber are still
+   normalized so an old save does not throw; they are no longer
+   shown or used.
    ============================================================= */
 function defaultSmsConfig(){
   return { accountSid:'', authToken:'', fromNumber:'', phones:{}, testTo:'' };
@@ -3671,26 +3692,23 @@ function normalizeSmsConfig(saved){
   }
   return out;
 }
-/* Configured = every field Twilio needs to send at all. The driver's own
-   number is checked per row, not here, so a half-filled phone table disables
-   the rows it is missing rather than the whole feature. */
-function smsConfigured(){
-  const c = state.sms || {};
-  return !!(String(c.accountSid||'').trim() && String(c.authToken||'').trim() && String(c.fromNumber||'').trim());
-}
 function driverPhone(name){ return String(((state.sms||{}).phones||{})[name]||'').trim(); }
-
-/* The dispatch template. Destination is the delivery point where the sheet
-   has one and the origin otherwise — a driver needs to know where it goes,
-   and on the non-Diamond rows that sit above the banners the origin is the
-   only place answer there is. */
-function smsTemplateFor(r){
-  const dest = String((r&&r.deliveryPoint)||'').trim() || String((r&&r.origin)||'').trim() || 'TBD';
-  const time = String((r&&(r.time||r.timeRaw))||'').trim() || 'TBD';
-  return 'FCT Dispatch: Load ' + (String((r&&r.po)||'').trim() || 'TBD')
-       + ' → ' + dest + ', ' + time + ' pickup, truck ' + (String((r&&r.truck)||'').trim() || 'TBD')
-       + '. Reply YES to accept, NO to decline. James';
+function setDriverPhone(name, value){
+  if(!state.sms) state.sms = defaultSmsConfig();
+  if(!state.sms.phones) state.sms.phones = {};
+  const v = String(value||'').trim();
+  if(v) state.sms.phones[name] = v; else delete state.sms.phones[name];
 }
+
+/* Short English driver text. No P&L dollars. Same shape the Worker composes. */
+function composeDispatchSms(r){
+  const origin = String((r&&r.origin)||'').trim() || 'TBD';
+  const dest = String((r&&(r.deliveryPoint||r.destination||r.destName))||'').trim() || 'TBD';
+  const appt = String((r&&(r.time||r.timeRaw))||'').trim() || 'TBD';
+  const po = String((r&&r.po)||'').trim() || 'TBD';
+  return 'FCT: '+origin+' → '+dest+', '+appt+', PO '+po+'. Reply YES to take it. — James';
+}
+function smsTemplateFor(r){ return composeDispatchSms(r); }
 
 /* ---- Rate-card reconciliation ----
    Runs AFTER mergeCustomerRates(), on the merged result, on EVERY load.
@@ -3850,8 +3868,8 @@ function loadState(){
       state.adpPay          = normalizeAdpPay(p.adpPay);
       /* v1.8 slots. Both absent on every pre-v1.8 save, which is the normal
          case on upgrade: contacts land from the shipped book with the
-         operator's edits merged by key, and the SMS block lands empty, which
-         is what keeps every Send-dispatch button correctly disabled. */
+         operator's edits merged by key, and the SMS block lands empty
+         (phones filled in Settings, never from git). */
       state.companyInfo     = normalizeCompanyInfo(p.companyInfo);
       state.sms             = normalizeSmsConfig(p.sms);
 
@@ -8686,6 +8704,93 @@ function sheetSections(rows){
   return out;
 }
 
+/* BEGIN DISPATCH_XLSX
+   v2.1.41 manual backup: download today's sheet in the 2026 FCT Dispatch
+   Log layout (header, date banner, D.P. LATHROP / RIPON, load columns).
+   PUSH / preload rows keep their status and sit in their D.P. section
+   (same as the Excel log — the app still hoists 🔒 PRELOADED on screen).
+   Tomorrow's preloads get tomorrow's date banner so a drop round-trips
+   through parseDispatchRows. */
+function dateBannerText(iso){
+  const d = new Date(String(iso||'')+'T00:00:00');
+  if(isNaN(d.getTime())) return iso||'';
+  const days = ['SUNDAY','MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURDAY'];
+  return days[d.getDay()]+'  '+(d.getMonth()+1)+'/'+d.getDate()+'/'+d.getFullYear();
+}
+function dispatchHeaderRow(){
+  return ['Time','PO / Rel #','Driver','Origin','FB #','Commodity','Truck','Status','Trailer 2'];
+}
+function bannerAoaRow(originText){
+  return ['','','', originText || '','','','','',''];
+}
+function loadAoaRow(r){
+  const trailer2 = (r && r.rawCells && r.rawCells[8]) ? r.rawCells[8] : '';
+  const drv = String((r && (r.driverRaw || r.driver)) || '').trim();
+  return [
+    (r && (r.time || r.timeRaw)) || '',
+    (r && r.po) || '',
+    drv,
+    (r && r.origin) || '',
+    (r && r.fb) || '',
+    (r && r.commodity) || '',
+    (r && r.truck) || '',
+    (r && r.status) || '',
+    trailer2
+  ];
+}
+function groupDispatchAoaRows(rows){
+  const above=[], lathrop=[], ripon=[], other=[];
+  (rows||[]).forEach(r=>{
+    if(!r || r.source==='manual') return;
+    const dp = String(r.deliveryPoint||'').toUpperCase();
+    if(/LATHROP/.test(dp)) lathrop.push(r);
+    else if(/RIPON/.test(dp)) ripon.push(r);
+    else if(dp) other.push(r);
+    else above.push(r);
+  });
+  return { above, lathrop, ripon, other };
+}
+function buildDispatchLogAoa(dateISO, todayRows, tomorrowRows){
+  const S = groupDispatchAoaRows(todayRows);
+  const aoa = [dispatchHeaderRow(), bannerAoaRow(dateBannerText(dateISO))];
+  const emit = list => (list||[]).forEach(r=>aoa.push(loadAoaRow(r)));
+  emit(S.above);
+  if(S.lathrop.length){ aoa.push(bannerAoaRow('D.P. LATHROP')); emit(S.lathrop); }
+  if(S.ripon.length){ aoa.push(bannerAoaRow('D.P. RIPON')); emit(S.ripon); }
+  if(S.other.length){ aoa.push(bannerAoaRow('D.P. OTHER')); emit(S.other); }
+  const tom = (tomorrowRows||[]).filter(r=>r && r.source!=='manual');
+  if(tom.length){
+    const tomISO = tom[0].date || '';
+    const P = groupDispatchAoaRows(tom);
+    aoa.push([]);
+    aoa.push(bannerAoaRow(dateBannerText(tomISO)));
+    emit(P.above);
+    if(P.lathrop.length){ aoa.push(bannerAoaRow('D.P. LATHROP')); emit(P.lathrop); }
+    if(P.ripon.length){ aoa.push(bannerAoaRow('D.P. RIPON')); emit(P.ripon); }
+    if(P.other.length){ aoa.push(bannerAoaRow('D.P. OTHER')); emit(P.other); }
+  }
+  return aoa;
+}
+/* END DISPATCH_XLSX */
+
+function downloadTodayDispatchXlsx(){
+  const dateISO = (state.dayRollup && state.dayRollup.date) || '';
+  if(!dateISO){ toast('Import a day first'); return; }
+  const today = (state.dayRollup.currentRows||[]).slice();
+  const tom = (typeof preloadSectionRows==='function') ? preloadSectionRows(dateISO) : [];
+  const aoa = buildDispatchLogAoa(dateISO, today, tom);
+  const name = 'FCT-Dispatch-'+dateISO+'.xlsx';
+  return loadSheetJS().then(XLSX=>{
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, '2026');
+    XLSX.writeFile(wb, name);
+    toast('Downloaded '+name+' — same layout as the dispatch log. Drop it back to round-trip.');
+  }).catch(e=>{
+    toast('Could not build the spreadsheet ('+String(e&&e.message||e)+')');
+  });
+}
+
 /* Week-to-date and month-to-date. These are ALWAYS anchored to the caller's
    `refDate` (which the header strip now passes as todayISO, not the
    day-in-view — see v2.0.1 fix below). Prior to v2.0.1 the header passed
@@ -9191,41 +9296,23 @@ function suggestCellHTML(r){
     + '</button>';
 }
 
-/* ---- Send dispatch (v1.8, Phase 3.2 groundwork) ----
-   Drawn only on an unassigned Section-1 row, directly under the suggestion,
-   because the message it would send goes to exactly that suggested driver —
-   putting the button anywhere else would hide which driver is being texted.
-
-   Three states, and the disabled ones say WHY rather than just greying out:
-     no Twilio config          -> "Requires Twilio setup — Phase 3.2"
-     configured, driver has no number -> names the driver and where to fix it
-     configured + number       -> enabled, and still does not call Twilio.
-                                  It composes, logs and shows the message.
-
-   Nothing here touches the network. The real send lands in Phase 3.2. */
+/* ---- Send dispatch (v2.1.41) ----
+   Always enabled on an unassigned row that has a suggested driver.
+   Tap assigns that driver (writes the name onto the load row) and, if
+   they have a cell, POSTs /send-sms on the dispatch Worker. No cell →
+   still assign, toast "no cell on file". Twilio missing on the Worker
+   → still assign, toast "SMS not configured". Queue Send uses the
+   same sendDispatch() as this button. */
 function smsButtonHTML(r){
   if(!isUnassigned(r)) return '';
   const top = picksForRow(r);
   if(!top.length) return '';
   const target = top[0];
-  const ready  = smsConfigured();
   const phone  = driverPhone(target.name);
-
-  let why, cls;
-  if(!ready){
-    why = 'Requires Twilio setup — Phase 3.2';
-    cls = ' off';
-  } else if(!phone){
-    why = 'No phone number for ' + target.short + ' — add it in Settings → SMS Dispatch';
-    cls = ' off';
-  } else {
-    why = 'Compose the dispatch text to ' + target.short + ' (' + phone + '). '
-        + 'Preview only — no message is sent until Phase 3.2.';
-    cls = '';
-  }
-  const enabled = ready && !!phone;
-  return '<button type="button" class="sms-btn' + cls + '" data-sms="' + esc(r.id) + '"'
-    + (enabled ? '' : ' disabled aria-disabled="true"')
+  const why = phone
+    ? 'Assign '+target.short+' and text '+phone+' via the dispatch Worker.'
+    : 'Assign '+target.short+' — no cell on file (add it in Settings).';
+  return '<button type="button" class="sms-btn" data-sms="' + esc(r.id) + '"'
     + ' title="' + esc(why) + '">✉ Send dispatch</button>';
 }
 
@@ -9247,7 +9334,7 @@ function openSugPop(btn, rowId){
     + top.map((t,i)=>'<button type="button" class="sug-opt" data-pick="'+esc(t.name)+'" data-row="'+esc(rowId)+'">'
         + '<span class="sug-opt-n">'+(i+1)+'. '+esc(t.short)+(t.known?'':' <span style="color:var(--text-faint)">?</span>')+'</span>'
         + '<span class="sug-opt-w">'+esc(t.why)+'</span></button>').join('')
-    + '<div class="sug-pop-f">Tap a driver to record the assignment. SMS goes out in Phase 3.2 — nothing is sent today.</div>';
+    + '<div class="sug-pop-f">Tap a driver to record the assignment. A cell on file also texts them via the dispatch Worker.</div>';
   document.body.appendChild(pop);
   const b = btn.getBoundingClientRect();
   const w = Math.min(280, window.innerWidth-20);
@@ -9270,14 +9357,17 @@ function findRowById(id){
       || ((state.dayRollup.lastImport&&state.dayRollup.lastImport.rows)||[]).find(x=>x.id===id)
       || null;
 }
-/* Record an assignment. This is the Phase 3.0 seam: today it writes the
-   driver onto the row, flips the status to DISPATCHED and logs the decision.
-   Phase 3.2 hangs the SMS off exactly this call. */
-function assignDriver(rowId, driverName, wasSuggested){
+/* Record an assignment. Writes the driver onto the load row in the day
+   in view AND the parsed import (so Download + the next drop round-trips,
+   and Power Automate Flow 2 can update the same Excel row). Then POSTs
+   the small assignment JSON to the Flow 2 URL if Settings has one.
+   Phase 3.2 SMS hangs off sendDispatch(), which calls this then texts. */
+function assignDriver(rowId, driverName, wasSuggested, opts){
+  opts = opts || {};
   const rows = [state.dayRollup.currentRows.find(x=>x.id===rowId),
                 ((state.dayRollup.lastImport&&state.dayRollup.lastImport.rows)||[]).find(x=>x.id===rowId)]
                .filter(Boolean);
-  if(!rows.length){ toast('That load is no longer in view'); return; }
+  if(!rows.length){ toast('That load is no longer in view'); return null; }
   const r0 = rows[0];
   // v1.8.34: capture the algo's top-3 at moment of assignment so we can
   // score agreement rate and mine drift patterns against James's picks.
@@ -9307,7 +9397,7 @@ function assignDriver(rowId, driverName, wasSuggested){
   rows.forEach(r=>{ r.driver = driverName; r.driverRaw = shortNameFor(driverName); r.status = 'DISPATCHED'; });
   state.dispatchOps.assignments[rowId] = {
     driver: driverName, at: new Date().toISOString(), date: r0.date||'',
-    po: r0.po||'', origin: r0.origin||'', dest: r0.destName || r0.destination || '',
+    po: r0.po||'', origin: r0.origin||'', dest: r0.destName || r0.destination || r0.deliveryPoint || '',
     time: r0.time||'', commodity: r0.commodity || r0.product || '',
     trailer: r0.trailer || '', customer: r0.customer || '',
     suggested: !!wasSuggested,
@@ -9320,7 +9410,79 @@ function assignDriver(rowId, driverName, wasSuggested){
   invalidateVerizonMatch();   // a newly-named driver can now claim a trip
   saveDayImport();
   renderDayRollup();          // re-renders the Queue on its way out
-  toast(shortNameFor(driverName)+' assigned — recorded, no SMS sent');
+  pushAssignmentToPowerAutomate(r0, driverName);
+  if(!opts.quiet) toast(shortNameFor(driverName)+' assigned');
+  return { ok:true, row:r0, driverName:driverName };
+}
+
+/* v2.1.41: Queue Send and Today Send share this. Assign first (always),
+   then SMS if a cell is on file. Worker missing Twilio → still assigned. */
+function sendDispatch(rowId, driverName, wasSuggested){
+  if(!driverName){ toast('Pick a driver first'); return; }
+  const asg = assignDriver(rowId, driverName, wasSuggested, { quiet:true });
+  if(!asg) return;
+  const short = shortNameFor(driverName);
+  const phone = driverPhone(driverName);
+  if(!phone){
+    toast(short+' assigned — no cell on file');
+    return;
+  }
+  postDispatchSms(asg.row, driverName, phone).then(r=>{
+    if(r && r.configured===false) toast(short+' assigned — SMS not configured');
+    else if(r && r.ok) toast(short+' assigned — text sent');
+    else toast(short+' assigned — text did not send');
+  });
+}
+
+function assignmentPushPayload(r, driverName){
+  return {
+    date: String((r&&r.date)||''),
+    po: String((r&&r.po)||''),
+    origin: String((r&&r.origin)||''),
+    dest: String((r&&(r.deliveryPoint||r.destination||r.destName))||''),
+    driver: String(driverName||(r&&r.driver)||''),
+    driverShort: shortNameFor(driverName||(r&&r.driver)||''),
+    truck: String((r&&r.truck)||''),
+    status: String((r&&r.status)||'DISPATCHED'),
+    time: String((r&&(r.time||r.timeRaw))||''),
+    commodity: String((r&&r.commodity)||''),
+    fb: String((r&&r.fb)||''),
+    id: String((r&&r.id)||'')
+  };
+}
+function pushAssignmentToPowerAutomate(r, driverName){
+  const paUrl = String((state.dispatchImport && state.dispatchImport.paPushUrl) || '').trim();
+  if(!paUrl) return Promise.resolve({ skipped:true });
+  const payload = assignmentPushPayload(r, driverName);
+  payload.pushUrl = paUrl;
+  const hop = dispatchWorkerBase()+'/push-row';
+  return fetch(hop, { method:'POST', cache:'no-store', headers:{ 'Content-Type':'application/json' },
+                      body: JSON.stringify(payload) })
+    .then(res=>res.json().then(j=>({ http:res.status, j:j }), ()=>({ http:res.status, j:null })))
+    .then(x=>{
+      if(x.j && (x.j.ok || x.j.skipped)) return x.j;
+      console.warn('[FCT] Power Automate row update did not confirm', x);
+      return x.j || { ok:false };
+    })
+    .catch(e=>{
+      console.warn('[FCT] Power Automate row update failed', e);
+      return { ok:false };
+    });
+}
+function postDispatchSms(r, driverName, phone){
+  const hop = dispatchWorkerBase()+'/send-sms';
+  const body = {
+    to: phone,
+    driver: driverName,
+    origin: String((r&&r.origin)||''),
+    dest: String((r&&(r.deliveryPoint||r.destination||r.destName))||''),
+    appt: String((r&&(r.time||r.timeRaw))||''),
+    po: String((r&&r.po)||'')
+  };
+  return fetch(hop, { method:'POST', cache:'no-store', headers:{ 'Content-Type':'application/json' },
+                      body: JSON.stringify(body) })
+    .then(res=>res.json().then(j=>j, ()=>({ ok:false, error:'bad reply' })))
+    .catch(()=>({ ok:false, error:'offline' }));
 }
 // v1.8.34b: after-the-fact note editor — click any assignment row to add or
 // change the "why" without having to re-dispatch. Notes are the drift-tuning
@@ -10600,6 +10762,9 @@ function renderDayRollup(){
     + (dayDiamondOnly?'var(--accent)':'var(--bg-inset)')
     + ';color:'+(dayDiamondOnly?'var(--accent-fg)':'var(--text-muted)')+'" title="Hide POC-brokered loads (Steve\'s scope)">'
     + (dayDiamondOnly?'💎 DIAMOND ONLY':'⚡ ALL LOADS')+'</button>'
+    + '<button type="button" id="dayDlXlsx" style="float:right;all:unset;cursor:pointer;font:600 10px/1 var(--body);'
+    + 'letter-spacing:.06em;padding:5px 9px;margin-right:6px;border-radius:4px;background:var(--bg-inset);'
+    + 'color:var(--text-muted)" title="Download today\'s sheet as xlsx in the dispatch-log layout (date banner, D.P. sections). Manual backup — Power Automate is the two-way path.">⬇ Sheet</button>'
     + '</h2>';
   // v1.8.6: notice showing hidden count when filter is on
   if(dayDiamondOnly && S.hiddenPoc > 0){
@@ -11004,24 +11169,20 @@ function wireDayRollup(){
     toast('AR alert acknowledged — it returns if the balance moves');
   }));
 
-  /* --- v1.8 SMS dispatch stub ---
-     Composes and shows. Does not send. The console line is the deliberate
-     part: Phase 3.2 replaces exactly this call site with the Twilio POST, so
-     what gets logged now is what will get sent then. */
+  /* --- v2.1.41 SMS dispatch — assign + optional Worker SMS ---
+     Queue Send and Today Send share sendDispatch(). */
   document.querySelectorAll(DAY_HOST+' [data-sms]').forEach(b=>b.addEventListener('click',e=>{
     e.stopPropagation();
     if(b.disabled) return;
-    const row = (state.dayRollup.currentRows||[]).find(x=>x.id===b.dataset.sms);
+    const row = findRowById(b.dataset.sms);
     if(!row) return;
-    const top = suggestDrivers(row, 1);
+    const top = picksForRow(row);
     const target = top.length ? top[0] : null;
-    const msg = smsTemplateFor(row);
-    const to  = target ? driverPhone(target.name) : '';
-    console.log('[FCT SMS stub — not sent] to=' + (to||'(no number)')
-      + ' driver=' + (target?target.name:'(none)')
-      + ' from=' + (state.sms.fromNumber||'(unset)') + '\n' + msg);
-    toast('Would send: ' + msg);
+    if(!target){ toast('No eligible driver right now'); return; }
+    sendDispatch(row.id, target.name, true);
   }));
+  const dlX = document.getElementById('dayDlXlsx');
+  if(dlX) dlX.addEventListener('click', e=>{ e.stopPropagation(); downloadTodayDispatchXlsx(); });
 
   /* --- sheet edit toggle (not a modal: the cells turn into inputs in place) --- */
   const editBtn = document.getElementById('daySheetEdit');
@@ -11479,21 +11640,36 @@ function syncFromWorker(opts){
         console.log('Worker has nothing newer — '+count+' rows, ingested at '+stamp+'. Kept the parsed day.');
         return null;
       }
+      const finishParse = (res, n)=>{
+        di.lastSyncAt      = new Date().toISOString();
+        di.lastIngestedAt  = stamp;
+        di.lastRowCount    = n;
+        workerState = { kind:'ok', at:di.lastSyncAt, ingestedAt:stamp, rowCount:n, msg:'' };
+        invalidateVerizonMatch();
+        const ok = saveDayImport();
+        renderDash();
+        console.log('Synced '+n+' rows from worker, ingested at '+stamp
+          + ' → '+res.rows.length+' loads across '+res.dates.length+' days');
+        if(!opts.quiet) toast(res.rows.length+' loads · '+res.dates.length+' days · synced');
+        if(!ok.ok) setDispStatus('<div class="hint" style="color:var(--red)">Storage refused the write — the sync is in memory only.</div>');
+        try { pushDispatchLog({days:8}).catch(()=>{}); } catch(_){}
+        return res;
+      };
+      /* v2.1.41: Power Automate may POST the xlsx. Worker stores bytes and
+         GET /latest says format:xlsx — pull /latest.xlsx and run the same
+         ingestWorkbook path a dropped file uses. JSON rows still go through
+         ingestWorkerPayload → parseDispatchRows. */
+      const xlsxOnly = payload && payload.format==='xlsx' && !(payload.rows && payload.rows.length);
+      if(xlsxOnly){
+        const xurl = dispatchWorkerBase()+'/latest.xlsx';
+        return fetch(xurl, { cache:'no-store' }).then(r=>{
+          if(!r.ok){ const e=new Error('HTTP '+r.status+' on /latest.xlsx'); e.kind='bad'; throw e; }
+          return r.arrayBuffer();
+        }).then(buf=>ingestWorkbook(buf, payload.fileName || 'dispatch.xlsx'))
+          .then(res=>finishParse(res, (res && res.rows && res.rows.length) || 0));
+      }
       const res = ingestWorkerPayload(payload);
-      di.lastSyncAt      = new Date().toISOString();
-      di.lastIngestedAt  = stamp;
-      di.lastRowCount    = count;
-      workerState = { kind:'ok', at:di.lastSyncAt, ingestedAt:stamp, rowCount:count, msg:'' };
-      invalidateVerizonMatch();
-      const ok = saveDayImport();
-      renderDash();
-      console.log('Synced '+count+' rows from worker, ingested at '+stamp
-        + ' → '+res.rows.length+' loads across '+res.dates.length+' days');
-      if(!opts.quiet) toast(res.rows.length+' loads · '+res.dates.length+' days · synced');
-      if(!ok.ok) setDispStatus('<div class="hint" style="color:var(--red)">Storage refused the write — the sync is in memory only.</div>');
-      /* v2.1.21: fresh dispatch → fresh calibration inputs. Fire-and-forget. */
-      try { pushDispatchLog({days:8}).catch(()=>{}); } catch(_){}
-      return res;
+      return finishParse(res, count);
     })
     .catch(e=>{
       const kind = (e && (e.kind==='empty' || e.kind==='bad')) ? e.kind : 'offline';
@@ -12543,11 +12719,10 @@ function saveDaySnapshot(){
    preloads; Section 2 groups those rows Lathrop → Ripon → Other
    instead of a flat dump. Revenue still belongs to tomorrow.
 
-   "Send dispatch" is deliberately a misnomer today: it records
-   the assignment, flips the row to DISPATCHED and nothing leaves
-   the device. Phase 3.2 turns that same call into an SMS. The
-   button is named for what it will do so the muscle memory is
-   already right — and the row says so, so nobody is misled.
+   "Send dispatch" assigns the driver onto the load row, POSTs the
+   assignment to Power Automate Flow 2 when that URL is set, and
+   texts the driver when a cell is on file (Worker / Twilio). Queue
+   Send and Today Send share sendDispatch().
    ============================================================= */
 function queueRows(){
   return state.dayRollup.currentRows
@@ -12601,7 +12776,11 @@ function renderQueue(){
   }
 
   const QCOL = 8;
-  h += '<div class="card sheet-card"><h2>Dispatch queue</h2>'
+  h += '<div class="card sheet-card"><h2>Dispatch queue'
+    + '<button type="button" id="qDlXlsx" style="float:right;all:unset;cursor:pointer;font:600 10px/1 var(--body);'
+    + 'letter-spacing:.06em;padding:5px 9px;border-radius:4px;background:var(--bg-inset);color:var(--text-muted)"'
+    + ' title="Download today\'s sheet as xlsx in the dispatch-log layout. Manual backup — Power Automate writes the driver back.">⬇ Sheet</button>'
+    + '</h2>'
     + '<div class="q-sum"><b class="q-open-n">'+openRows.length+' open</b> · '
     + assignedRows.length+' assigned'
     + (doneRows.length ? ' · '+doneRows.length+' done' : '')
@@ -12803,7 +12982,8 @@ function renderQueue(){
     h += '</table></div>';
     h += '<div class="legend">Same layout as the dispatch log — date banner, then D.P. Lathrop, then D.P. Ripon. '
       + 'Tomorrow\'s preloads sit under the blue 📦 banner, grouped the same way (Lathrop then Ripon). '
-      + 'Open rows have the driver list and <b>Send dispatch</b> (records the assignment, no SMS yet). '
+      + 'Open rows have the driver list and <b>Send dispatch</b> (assigns the driver, texts if a cell is on file, '
+      + 'and asks Power Automate to write the name back onto the Excel row). '
       + 'Assigned drivers are locked. Done stays on the sheet, greyed. '
       + 'Suggestions still walk the day in clock order with the 2-load cap.</div>';
   }
@@ -12878,8 +13058,10 @@ function renderQueue(){
     const name = sel ? sel.value : '';
     if(!name){ toast('Pick a driver first'); return; }
     const top = suggestDrivers(findRowById(id)||{}, 1);
-    assignDriver(id, name, !!(top[0] && top[0].name===name));
+    sendDispatch(id, name, !!(top[0] && top[0].name===name));
   }));
+  const qdl = document.getElementById('qDlXlsx');
+  if(qdl) qdl.addEventListener('click',()=>downloadTodayDispatchXlsx());
   const cl = document.getElementById('qClearLog');
   if(cl) cl.addEventListener('click',()=>{
     if(!confirm('Clear the recorded assignment log? The drivers already written onto the loads stay put.')) return;
@@ -13822,10 +14004,11 @@ function renderSet(){
       : 'not synced yet this session';
 
     h += '<div class="card"><h2>Dispatch data source '
-      + '<span style="font-size:10px;color:var(--green);text-transform:none;letter-spacing:0">v1.6</span></h2>'
-      + '<div class="hint" style="margin-bottom:12px">An Office Script in the dispatch workbook pushes the whole sheet to a '
-      + 'Cloudflare Worker; this app pulls it back on load. That is the default because it costs no taps in the morning — '
-      + 'the alternative is finding an xlsx on a phone every day.</div>'
+      + '<span style="font-size:10px;color:var(--green);text-transform:none;letter-spacing:0">v2.1.41</span></h2>'
+      + '<div class="hint" style="margin-bottom:12px">Power Automate is the Excel two-way bridge. OneDrive Excel is the board. '
+      + 'Flow 1 watches the file and POSTs here. Flow 2 is the HTTP trigger that writes the driver back. '
+      + 'This app pulls the Worker on load so the phone does not hunt for an xlsx every morning. '
+      + 'Download today\'s sheet remains a manual backup. Existing OneDrive import URL is unchanged.</div>'
       + '<div class="fld"><label for="sDataSrc">Source</label><select id="sDataSrc">'
       + opt('worker','Worker — fetch automatically on load (default)')
       + opt('file','File — drop the xlsx by hand, never call the worker')
@@ -13835,8 +14018,15 @@ function renderSet(){
       + '<b>file</b> the app behaves exactly as v1.5 did.</div></div>'
       + '<div class="fld"><label for="sWorkerUrl">Worker endpoint</label>'
       + '<input id="sWorkerUrl" type="url" spellcheck="false" value="'+esc(di.workerUrl||WORKER_URL)+'" placeholder="'+esc(WORKER_URL)+'">'
-      + '<div class="hint">Must answer <code>GET</code> with <code>{ rows, ingestedAt, rowCount }</code> and '
-      + '<code>Access-Control-Allow-Origin: *</code>. Blank resets to the shipped default.</div></div>'
+      + '<div class="hint">Must answer <code>GET</code> with <code>{ rows, ingestedAt, rowCount }</code> (or <code>format:xlsx</code> after a file push) and '
+      + '<code>Access-Control-Allow-Origin: *</code>. Blank resets to the shipped default. Power Automate Flow 1 POSTs to '
+      + '<code>'+esc(dispatchWorkerBase()+'/ingest')+'</code> with header <code>X-FCT-Key</code> (the Worker secret, not in this page).</div></div>'
+      + '<div class="hint" style="margin-bottom:12px"><b>Power Automate:</b> OneDrive Excel is the board. Flow 1 watches the file and POSTs here. Flow 2 is the HTTP trigger that writes the driver back.</div>'
+      + '<div class="fld"><label for="sPaPush">Flow 2 — HTTP trigger URL (write driver back)</label>'
+      + '<input id="sPaPush" type="url" spellcheck="false" value="'+esc(di.paPushUrl||'')+'" placeholder="https://…powerautomate.com / logic.azure.com HTTP trigger">'
+      + '<div class="hint">Paste the URL from Power Automate “When an HTTP request is received.” On Send dispatch (and any assign) the app POSTs '
+      + '{ date, po, origin, dest, driver, truck, status, … } so Flow 2 can Update that Excel row. Leave blank to skip — assignment still records here. '
+      + 'No Microsoft login in this app.</div></div>'
       + '<div class="row"><div class="row-l"><div class="row-t">Status</div>'
       + '<div class="row-s">'+stateLine+'</div></div></div>'
       + '<div class="row"><div class="row-l"><div class="row-t">Last successful sync</div>'
@@ -14068,6 +14258,9 @@ function renderSet(){
         + '<div style="flex:0 0 84px"><label style="font-size:9px;margin-bottom:3px" for="dhos'+i+'">HOS hrs</label>'
         + '<input id="dhos'+i+'" type="number" inputmode="decimal" step="0.5" min="0" max="14" value="'+esc(d.hos)+'" '
         + 'data-dophos="'+esc(d.name)+'" style="padding:6px 7px;font-size:13px;text-align:right"></div>'
+        + '<div style="flex:0 0 132px"><label style="font-size:9px;margin-bottom:3px" for="dphone'+i+'">Cell</label>'
+        + '<input id="dphone'+i+'" type="tel" spellcheck="false" inputmode="tel" data-smsphone="'+esc(d.name)+'" '
+        + 'value="'+esc(driverPhone(d.name))+'" placeholder="empty" style="padding:6px 7px;font-size:13px"></div>'
         + '<label style="flex:0 0 auto;display:flex;align-items:center;gap:6px;text-transform:none;letter-spacing:0;'
         + 'font-size:11px;font-weight:600;margin-bottom:0;cursor:pointer;color:'+(d.clockedIn?'var(--green)':'var(--text-faint)')+'">'
         + '<input type="checkbox" data-dopclk="'+esc(d.name)+'"'+(d.clockedIn?' checked':'')+' style="width:auto;flex:0 0 auto;margin:0">'
@@ -14121,67 +14314,31 @@ function renderSet(){
     + 'off ARA rather than FCG precisely because ARA runs two hours later.</div></div>';
 
   /* =============================================================
-     SMS DISPATCH (v1.8) — Phase 3.2 groundwork
-     Config only. Nothing in this build sends a message.
+     SMS DISPATCH (v2.1.41) — Worker hop, optional Twilio
+     Cell numbers on the driver list above. Keys stay on the Worker.
      ============================================================= */
   {
     const sms = state.sms;
-    const ready = smsConfigured();
     const roster = s.drivers;
     const withPhones = roster.filter(d=>driverPhone(d.name)).length;
 
     h += '<div class="card" id="smsCard"><h2>SMS dispatch '
-      + (ready ? '<span class="chip g">configured</span>' : '<span class="chip y">not configured</span>')+'</h2>'
-      + '<div class="banner amber" style="margin-bottom:14px"><b>⚑ Not wired up yet — Phase 3.2</b>'
-      + 'SMS dispatch requires: a Twilio account ($15/mo minimum), driver phone numbers, and message template '
-      + 'approval. Enable when ready for Phase 3.2 (autonomous dispatch). Until then the <b>Send dispatch</b> '
-      + 'buttons on the load list compose the message and show it to you — they do not send anything, and '
-      + 'nothing here talks to the network.</div>';
+      + '<span class="chip g">Worker hop</span></h2>'
+      + '<div class="hint" style="margin-bottom:12px">Twilio is the default provider (company number), not the only possible one. '
+      + 'The dispatch Worker sends the text so this phone never holds Twilio keys. Sinch or Telnyx can swap later on the Worker. '
+      + 'If those secrets are missing, Send dispatch still assigns and shows <b>SMS not configured</b>. '
+      + withPhones+' of '+roster.length+' drivers have a cell on file (empty is the default — stored on this device, not in git).</div>';
 
-    /* The security note is a card of its own weight, not a footnote. Anyone
-       typing a live auth token into a web page deserves to be told what
-       happens to it BEFORE they type it, not in a legend underneath. */
-    h += '<div class="banner" style="background:var(--red-bg);border:1px solid color-mix(in oklab,var(--red) 40%,transparent);'
-      + 'color:#f0b9b4;margin-bottom:14px"><b style="color:var(--red)">🔒 About the auth token</b>'
-      + 'This is a static page and everything it knows lives in this browser\'s localStorage, in the clear. '
-      + 'There is no key store to encrypt against — any key would have to sit next to what it encrypted, which '
-      + 'protects nothing. The field below is masked so it cannot be read over your shoulder, and that is the '
-      + 'whole of the protection on offer. <b>Use a scoped Twilio API key restricted to sending SMS, never the '
-      + 'account auth token</b>, so that anything with access to this browser profile cannot take over the '
-      + 'account. Tap <b>Copy all data</b> in the Data card and the token comes with it.</div>';
-
-    h += '<div class="fld"><label for="smsSid">Twilio Account SID</label>'
-      + '<input id="smsSid" spellcheck="false" autocomplete="off" value="'+esc(sms.accountSid)+'" placeholder="AC…"></div>'
-      + '<div class="fld"><label for="smsTok">Twilio Auth Token / API key secret</label>'
-      + '<input id="smsTok" type="password" spellcheck="false" autocomplete="new-password" value="'+esc(sms.authToken)+'" '
-      + 'placeholder="stored unencrypted — use a scoped API key"></div>'
-      + '<div class="fld"><label for="smsFrom">Twilio "from" number</label>'
-      + '<input id="smsFrom" type="tel" spellcheck="false" value="'+esc(sms.fromNumber)+'" placeholder="+1…"></div>';
-
-    h += '<h2 style="margin-top:18px">Driver phone numbers</h2>'
-      + '<div class="hint" style="margin-bottom:12px">'+withPhones+' of '+roster.length+' on file. A load\'s '
-      + '<b>Send dispatch</b> button stays disabled until the driver it would text has a number here, so a '
-      + 'half-filled table disables only the rows it is missing.</div>';
-    roster.forEach((d,i)=>{
-      h += '<div class="fld"><label for="smsP'+i+'">'+esc(shortNameFor(d.name))
-        + ' <span style="color:var(--text-faint);font-weight:400">'+esc(d.name)+'</span></label>'
-        + '<input id="smsP'+i+'" type="tel" spellcheck="false" data-smsphone="'+esc(d.name)+'" '
-        + 'value="'+esc(driverPhone(d.name))+'" placeholder="+1…"></div>';
-    });
-
-    h += '<h2 style="margin-top:18px">Test</h2>'
+    h += '<h2 style="margin-top:8px">Test</h2>'
       + '<div class="fld"><label for="smsTest">Your phone number</label>'
       + '<input id="smsTest" type="tel" spellcheck="false" value="'+esc(sms.testTo)+'" placeholder="+1…"></div>'
-      + '<div class="btn-row"><button class="act ghost" id="smsTestBtn"'+(ready?'':' disabled')+'>'
-      + 'Test SMS to my phone</button></div>'
-      + (ready ? '' : '<div class="hint">Enabled once the SID, token and from-number are all filled in.</div>');
+      + '<div class="btn-row"><button class="act ghost" id="smsTestBtn">Test SMS to my phone</button></div>'
+      + '<div class="hint">Hits the Worker. No send in CI. A missing Twilio secret comes back as SMS not configured — that is expected until James pastes the secrets in Cloudflare.</div>';
 
-    h += '<div class="legend"><b>The template.</b> Every dispatch text is composed as:<br>'
+    h += '<div class="legend"><b>The template.</b> Every dispatch text is:<br>'
       + '<span style="font-family:var(--mono);font-size:11px;color:var(--text-muted)">'
-      + esc('FCT Dispatch: Load [PO] → [Destination], [time] pickup, truck [truck]. Reply YES to accept, NO to decline. James')
-      + '</span><br><br>Destination is the delivery point where the sheet has one and the origin otherwise. '
-      + 'The reply handling — YES/NO back into the assignment — is Phase 3.2 along with the send itself; today '
-      + 'the button composes, logs to the console and shows you the message.</div></div>';
+      + esc('FCT: [origin] → [dest/DP], [appt], PO [PO]. Reply YES to take it. — James')
+      + '</span><br>No P&amp;L dollars. Destination is the delivery point where the sheet has one.</div></div>';
   }
 
   /* =============================================================
@@ -14366,32 +14523,29 @@ function renderSet(){
     });
   }
 
-  /* --- v1.8 SMS dispatch config ---
-     Re-renders the dash on every change because the Send-dispatch buttons on
-     the load list enable and disable off exactly these fields. */
+  /* --- v2.1.41 SMS: phones on the driver list; test hits the Worker --- */
   {
     const bindSms=(id,key)=>{ const el=document.getElementById(id); if(!el) return;
       el.addEventListener('change',()=>{
         state.sms[key] = el.value.trim();
-        save(); renderSet(); renderDash();
+        save();
       }); };
-    bindSms('smsSid','accountSid'); bindSms('smsTok','authToken');
-    bindSms('smsFrom','fromNumber'); bindSms('smsTest','testTo');
+    bindSms('smsTest','testTo');
 
     document.querySelectorAll('[data-smsphone]').forEach(el=>el.addEventListener('change',()=>{
-      const n = el.dataset.smsphone, v = el.value.trim();
-      if(v) state.sms.phones[n] = v; else delete state.sms.phones[n];
-      save(); renderSet(); renderDash();
+      setDriverPhone(el.dataset.smsphone, el.value);
+      save();
     }));
 
     const tb = document.getElementById('smsTestBtn');
     if(tb) tb.addEventListener('click',()=>{
-      if(!smsConfigured()) return;
       const to = String(state.sms.testTo||'').trim();
       if(!to){ toast('Add your phone number first'); return; }
-      const msg = 'FCT Dispatch: test message from the load calculator. Reply YES to accept, NO to decline. James';
-      console.log('[FCT SMS stub — not sent] to='+to+' from='+(state.sms.fromNumber||'(unset)')+'\n'+msg);
-      toast('Would send: '+msg);
+      postDispatchSms({ origin:'TEST', deliveryPoint:'YARD', time:'now', po:'TEST' }, 'James', to).then(r=>{
+        if(r && r.configured===false) toast('SMS not configured — Worker has no Twilio secrets yet');
+        else if(r && r.ok) toast('Test text sent');
+        else toast('Test text did not send'+(r && r.error ? ' — '+r.error : ''));
+      });
     });
   }
 
@@ -14418,6 +14572,14 @@ function renderSet(){
       state.dispatchImport.lastIngestedAt = '';
       save(); renderSet();
       toast(v ? 'Worker endpoint saved' : 'Worker endpoint reset to the default');
+    });
+    const paEl = document.getElementById('sPaPush');
+    if(paEl) paEl.addEventListener('change',()=>{
+      state.dispatchImport.paPushUrl = paEl.value.trim();
+      save();
+      toast(state.dispatchImport.paPushUrl
+        ? 'Flow 2 URL saved — Send dispatch will ask Power Automate to write the driver back'
+        : 'Flow 2 URL cleared — Excel write-back skipped');
     });
     const syncEl = document.getElementById('sWorkerSync');
     if(syncEl) syncEl.addEventListener('click',()=>{ syncFromWorker({force:true}).then(()=>renderSet()); });
@@ -15173,6 +15335,13 @@ SHADOW_TIMELINE_TEXT['2026-07-28'] = "**PARTIAL DAY — Phase 2 diff loop stoppe
 
 /* ---- v2.0 DATA: Changelog (in-app version history) ---- */
 const SHADOW_CHANGELOG = [
+  { ver:'v2.1.41-pa-sms', date:'2026-08-25', changes:[
+    'Power Automate is the Excel two-way bridge. OneDrive Excel stays the board. Flow 1 watches the file and POSTs the log (xlsx bytes or JSON rows) to the dispatch Worker /ingest with a shared-secret header. The app still parses that with the same importer as a dropped file',
+    'Flow 2 is an HTTP trigger URL in Settings. Send dispatch and any driver assign POST {date, po, origin, dest, driver, truck, status, …} so PA can Update the Excel row. Empty URL skips quietly — the assignment still records in the app. No Microsoft Graph OAuth',
+    'Download today\'s sheet as xlsx is a manual backup in the dispatch-log layout (date banner, D.P. Lathrop/Ripon, driver/origin/PO/commodity/truck/status). Drop it back to round-trip. PUSH/preload sections on Today and Queue are unchanged',
+    'Cell field on each driver in Settings (empty default, stored on this device). Send dispatch assigns even with no phone (“no cell on file”) or if Twilio secrets are missing on the Worker (“SMS not configured”). Queue Send and Today Send share one function. Twilio is the default SMS provider, not the only one — Worker has a Sinch/Telnyx hook. No secrets in git, no real text in CI',
+    'Does not change diesel, MPG, P&L, ADP blend, wear, WC, Queue ranking, or office rules'
+  ]},
   { ver:'v2.1.40-adp-blend', date:'2026-08-25', changes:[
     'James will not log into ADP on the phone. EST driver wages on the P&L / day-rollup now get a visible Settings calibration — ADP blend (OT & meals vs estimate), default 1.21 — so the month number is usable without a pay-file import',
     'Basis: Aug 1–23 2026 Employee Daily Totals, field drivers. Live P&L EST MTD was $88,195.38; same board after ADP import was $107,054.54 (closed days ADP $101,194.90 / 4,037.3 hr through 8/23; today 8/24 stayed EST $5,191.24). Ratio ≈ 1.214. Gap is mostly OT + meals, plus hours a bit light. ADP blended field $/hr through 8/23 was $25.07 vs defaultDriverRate $22.28',

@@ -1,0 +1,21 @@
+name = "fct-dispatch"
+main = "src/index.js"
+compatibility_date = "2026-07-27"
+workers_dev = true
+
+# Existing DISPATCH KV namespace (already bound on the live worker).
+[[kv_namespaces]]
+binding = "DISPATCH"
+id = "511e045236dc4b41b89538334f54414c"
+
+# Secrets already set in the Cloudflare dashboard (do not put values here):
+#   INGEST_KEY              — shared secret Power Automate sends as X-FCT-Key
+#   TWILIO_ACCOUNT_SID      — optional; SMS off if missing
+#   TWILIO_AUTH_TOKEN       — optional
+#   TWILIO_FROM             — optional company number
+#   POWER_AUTOMATE_PUSH_URL — optional; Flow 2 HTTP trigger (app Settings can also supply it)
+#
+# Optional (provider hook, unused until swapped in):
+#   SMS_PROVIDER            — twilio (default) | sinch | telnyx
+#   SINCH_SERVICE_PLAN_ID / SINCH_API_TOKEN / SINCH_FROM
+#   TELNYX_API_KEY / TELNYX_FROM

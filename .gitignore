@@ -4,3 +4,9 @@
 *Employee Daily*
 *.adp.xls
 *.adp.xlsx
+
+# Worker secrets
+.dev.vars
+.dev.vars.*
+.env
+.env.*
