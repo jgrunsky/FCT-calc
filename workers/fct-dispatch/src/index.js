@@ -1,35 +1,27 @@
 /**
  * FCT Dispatch Worker
  * ================================================================
- * Excel two-way via Power Automate + optional Twilio SMS.
+ * Existing GET /latest + POST /ingest (JSON rows) plus optional SMS.
+ *
+ * Excel two-way in the calc is download-xlsx then drop — not this Worker.
+ * POST /send-sms: if TWILIO_* (or another provider) is missing, return
+ * { error: "SMS not configured" } so the assignment on the phone still
+ * succeeds. Never commit secrets. CI does not send real texts.
  *
  * Endpoints:
- *   POST /ingest     — Flow 1 (file-modified). JSON rows or xlsx bytes.
- *                      Header X-FCT-Key = INGEST_KEY secret.
- *   GET  /latest     — Calc fetches this. { rows, ingestedAt, rowCount }
- *                      or { format:'xlsx', fileName, ingestedAt } after a file push.
- *   GET  /latest.xlsx— Raw workbook when the last ingest was file bytes.
- *   POST /push-row   — Calc → Flow 2 HTTP trigger (writes driver back to Excel).
- *                      Body includes pushUrl from Settings, or env POWER_AUTOMATE_PUSH_URL.
- *   POST /send-sms   — Optional. Twilio if TWILIO_* secrets exist; else
- *                      { error: "SMS not configured" } without failing the assignment.
  *   GET  /health
+ *   GET  /latest     — { rows, ingestedAt, rowCount }
+ *   POST /ingest     — JSON rows (X-FCT-Key = INGEST_KEY). Pre-existing.
+ *   POST /send-sms   — optional. Missing secrets → SMS not configured.
  *
  * KV binding: DISPATCH
- * Secret:     INGEST_KEY
- *
- * Do not commit secrets. Deploy does not create them:
- *   npx wrangler secret put INGEST_KEY
- *   npx wrangler secret put TWILIO_ACCOUNT_SID
- *   npx wrangler secret put TWILIO_AUTH_TOKEN
- *   npx wrangler secret put TWILIO_FROM
  */
 
 import { sendSms, composeDriverSms } from './sms.js';
 import {
-  KV_LATEST, KV_LATEST_XLSX,
+  KV_LATEST,
   ingestKeyFrom, readIngestRequest,
-  latestPayloadFromRows, latestPayloadFromXlsx, isHttpsUrl
+  latestPayloadFromRows
 } from './ingest.js';
 
 function corsHeaders(){
@@ -70,10 +62,7 @@ export default {
         return json({ error: parsed.error || 'bad_json' }, 400);
       }
       if(parsed.kind === 'xlsx'){
-        await env.DISPATCH.put(KV_LATEST_XLSX, parsed.bytes);
-        const payload = latestPayloadFromXlsx(parsed.fileName);
-        await env.DISPATCH.put(KV_LATEST, JSON.stringify(payload));
-        return json({ ok:true, format:'xlsx', fileName: payload.fileName, ingestedAt: payload.ingestedAt });
+        return json({ error:'xlsx_ingest_not_used', message:'Drop the xlsx in the calc. Excel two-way is download then import.' }, 400);
       }
       const payload = latestPayloadFromRows(parsed.rows, { fileName: parsed.fileName });
       await env.DISPATCH.put(KV_LATEST, JSON.stringify(payload));
@@ -88,51 +77,6 @@ export default {
       return new Response(raw, { headers: { 'Content-Type':'application/json', ...cors } });
     }
 
-    if((url.pathname === '/latest.xlsx' || url.pathname === '/latest.xls') && request.method === 'GET'){
-      const bytes = await env.DISPATCH.get(KV_LATEST_XLSX, { type: 'arrayBuffer' });
-      if(!bytes){
-        return json({ error:'no_xlsx', message:'No workbook ingested yet' }, 404);
-      }
-      let fileName = 'dispatch.xlsx';
-      try {
-        const meta = JSON.parse(await env.DISPATCH.get(KV_LATEST) || '{}');
-        if(meta && meta.fileName) fileName = String(meta.fileName);
-      } catch(_){}
-      return new Response(bytes, {
-        headers: {
-          'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-          'Content-Disposition': 'attachment; filename="'+fileName.replace(/"/g,'')+'"',
-          ...cors
-        }
-      });
-    }
-
-    if(url.pathname === '/push-row' && request.method === 'POST'){
-      let body;
-      try { body = await request.json(); }
-      catch(_){ return json({ error:'bad_json' }, 400); }
-      const target = String((body && body.pushUrl) || (env && env.POWER_AUTOMATE_PUSH_URL) || '').trim();
-      if(!target){
-        return json({ ok:true, skipped:true, reason:'no Power Automate URL' });
-      }
-      if(!isHttpsUrl(target)){
-        return json({ ok:false, error:'push URL must be https' }, 400);
-      }
-      const row = Object.assign({}, body);
-      delete row.pushUrl;
-      try {
-        const r = await fetch(target, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(row)
-        });
-        const text = await r.text();
-        return json({ ok: r.ok, status: r.status, preview: String(text||'').slice(0,200) });
-      } catch(e){
-        return json({ ok:false, error: String(e && e.message || e).slice(0,180) }, 502);
-      }
-    }
-
     if(url.pathname === '/send-sms' && request.method === 'POST'){
       let body;
       try { body = await request.json(); }
@@ -145,7 +89,7 @@ export default {
     }
 
     return new Response(
-      'FCT Dispatch Worker\n\nGET  /health\nGET  /latest\nGET  /latest.xlsx\nPOST /ingest (X-FCT-Key)\nPOST /push-row\nPOST /send-sms\n',
+      'FCT Dispatch Worker\n\nGET  /health\nGET  /latest\nPOST /ingest (X-FCT-Key)\nPOST /send-sms\n',
       { headers: { 'Content-Type':'text/plain', ...cors } }
     );
   }

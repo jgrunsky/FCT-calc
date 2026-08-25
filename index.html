@@ -11,7 +11,7 @@
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<meta name="app-version" content="2026-08-25-fct-calc-v2.1.41-pa-sms">
+<meta name="app-version" content="2026-08-25-fct-calc-v2.1.41-excel">
 <title data-id="th-modified">FCT Load Profitability — French Camp Transport</title>
 <link rel="manifest" href='data:application/manifest+json,{"name":"FCT Load Profitability","short_name":"FCT Calc","start_url":".","display":"standalone","background_color":"%2312100e","theme_color":"%2312100e","icons":[{"src":"data:image/svg%2Bxml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 192 192%27%3E%3Crect width=%27192%27 height=%27192%27 fill=%27%2312100e%27/%3E%3Ctext x=%2796%27 y=%27124%27 font-size=%2772%27 font-family=%27sans-serif%27 font-weight=%27700%27 fill=%27%238fb590%27 text-anchor=%27middle%27%3EFCT%3C/text%3E%3C/svg%3E","sizes":"192x192","type":"image/svg+xml"}]}'>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -1420,7 +1420,7 @@
    still exposes the Import JSON box for future refreshes.
    ============================================================= */
 
-const APP_VERSION = '2026-08-25-fct-calc-v2.1.41-pa-sms';
+const APP_VERSION = '2026-08-25-fct-calc-v2.1.41-excel';
 const STORAGE_KEY = 'fct-calc:state';
 const IDB_NAME = 'fct-calc-db';
 const IDB_STORE = 'kv';
@@ -3525,12 +3525,10 @@ function defaultColumnMap(){
    as the default and editable in Settings — the URL is infrastructure, not a
    constant, and a redeploy should not need a new build of this file. */
 const WORKER_URL = 'https://fct-dispatch.jamesgrunsky.workers.dev/latest';
-/* v2.1.41: Power Automate is the Excel two-way bridge. Flow 1 POSTs the
-   workbook (or JSON rows) to /ingest; the calc still parses that payload
-   with parseDispatchRows / ingestWorkbook. Flow 2 is an HTTP trigger the
-   calc POSTs an assignment to (via /push-row so the phone does not hit
-   CORS). Twilio SMS is optional on the same Worker — keys stay off the
-   page. */
+/* v2.1.41: Excel two-way is Download today's sheet (xlsx, dispatch-log
+   layout) then drop it back. No Power Automate, no Graph OAuth. The
+   Worker is still GET /latest for the existing push, plus optional
+   /send-sms (assignment succeeds if SMS is not configured). */
 const WORKER_ORIGIN = 'https://fct-dispatch.jamesgrunsky.workers.dev';
 /* 2026-08-18 v2.1.0: Verizon Reveal live-driver feed. Pulled every 10 min by
    the fct-verizon Worker. Vehicles enriched with per-vehicle GPS from
@@ -3559,15 +3557,13 @@ function defaultDispatchImport(){
               ours: it is what tells a boot fetch whether the worker actually
               has something newer, which is what keeps auto-sync from wiping
               per-row edits on every page load. */
-           workerUrl: WORKER_URL, lastSyncAt:'', lastIngestedAt:'', lastRowCount:0,
-           /* v2.1.41: Flow 2 HTTP trigger URL. Empty = skip Excel write-back. */
-           paPushUrl:'' };
+           workerUrl: WORKER_URL, lastSyncAt:'', lastIngestedAt:'', lastRowCount:0 };
 }
 function normalizeDispatchImport(d){
   const out = defaultDispatchImport();
   if(!d || typeof d!=='object') return out;
   if(d.columnMap && typeof d.columnMap==='object') out.columnMap = Object.assign(defaultColumnMap(), d.columnMap);
-  ['sheetName','lastUrl','filterDate','workerUrl','lastSyncAt','lastIngestedAt','excelWebUrl','paPushUrl']
+  ['sheetName','lastUrl','filterDate','workerUrl','lastSyncAt','lastIngestedAt','excelWebUrl']
     .forEach(k=>{ if(typeof d[k]==='string') out[k]=d[k]; });
   if(!out.workerUrl) out.workerUrl = WORKER_URL;
   if(typeof d.lastRowCount==='number') out.lastRowCount = d.lastRowCount;
@@ -3673,10 +3669,10 @@ function normalizeCompanyInfo(saved){
    duplicates the roster nor breaks when a driver is added.
    Numbers live in this device's state — never in git.
 
-   v2.1.41: Twilio keys do NOT live on this page. The dispatch
-   Worker sends SMS. accountSid/authToken/fromNumber are still
-   normalized so an old save does not throw; they are no longer
-   shown or used.
+   v2.1.41: SMS is optional. Twilio is not required (Hotmail, no
+   company email). Assignment succeeds if SMS is not configured.
+   accountSid/authToken/fromNumber are still normalized so an old
+   save does not throw; they are no longer shown or used.
    ============================================================= */
 function defaultSmsConfig(){
   return { accountSid:'', authToken:'', fromNumber:'', phones:{}, testTo:'' };
@@ -8705,12 +8701,12 @@ function sheetSections(rows){
 }
 
 /* BEGIN DISPATCH_XLSX
-   v2.1.41 manual backup: download today's sheet in the 2026 FCT Dispatch
-   Log layout (header, date banner, D.P. LATHROP / RIPON, load columns).
-   PUSH / preload rows keep their status and sit in their D.P. section
-   (same as the Excel log — the app still hoists 🔒 PRELOADED on screen).
-   Tomorrow's preloads get tomorrow's date banner so a drop round-trips
-   through parseDispatchRows. */
+   v2.1.41 Excel two-way: download today's sheet in the 2026 FCT Dispatch
+   Log layout (header, date banner, D.P. LATHROP / RIPON, load columns),
+   then drop it back. No Power Automate. PUSH / preload rows keep their
+   status and sit in their D.P. section (the app still hoists 🔒 PRELOADED
+   on screen). Tomorrow's preloads get tomorrow's date banner so a drop
+   round-trips through parseDispatchRows. */
 function dateBannerText(iso){
   const d = new Date(String(iso||'')+'T00:00:00');
   if(isNaN(d.getTime())) return iso||'';
@@ -8785,7 +8781,7 @@ function downloadTodayDispatchXlsx(){
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, '2026');
     XLSX.writeFile(wb, name);
-    toast('Downloaded '+name+' — same layout as the dispatch log. Drop it back to round-trip.');
+    toast('Downloaded '+name+' — drop it back to import. Same layout as the dispatch log.');
   }).catch(e=>{
     toast('Could not build the spreadsheet ('+String(e&&e.message||e)+')');
   });
@@ -9358,10 +9354,8 @@ function findRowById(id){
       || null;
 }
 /* Record an assignment. Writes the driver onto the load row in the day
-   in view AND the parsed import (so Download + the next drop round-trips,
-   and Power Automate Flow 2 can update the same Excel row). Then POSTs
-   the small assignment JSON to the Flow 2 URL if Settings has one.
-   Phase 3.2 SMS hangs off sendDispatch(), which calls this then texts. */
+   in view AND the parsed import so Download today's sheet + the next
+   drop round-trips. SMS hangs off sendDispatch() and never blocks this. */
 function assignDriver(rowId, driverName, wasSuggested, opts){
   opts = opts || {};
   const rows = [state.dayRollup.currentRows.find(x=>x.id===rowId),
@@ -9410,13 +9404,12 @@ function assignDriver(rowId, driverName, wasSuggested, opts){
   invalidateVerizonMatch();   // a newly-named driver can now claim a trip
   saveDayImport();
   renderDayRollup();          // re-renders the Queue on its way out
-  pushAssignmentToPowerAutomate(r0, driverName);
   if(!opts.quiet) toast(shortNameFor(driverName)+' assigned');
   return { ok:true, row:r0, driverName:driverName };
 }
 
-/* v2.1.41: Queue Send and Today Send share this. Assign first (always),
-   then SMS if a cell is on file. Worker missing Twilio → still assigned. */
+/* v2.1.41: Queue Send and Today Send share this. Assign first (always).
+   SMS is optional — no cell or Worker not configured still assigns. */
 function sendDispatch(rowId, driverName, wasSuggested){
   if(!driverName){ toast('Pick a driver first'); return; }
   const asg = assignDriver(rowId, driverName, wasSuggested, { quiet:true });
@@ -9430,45 +9423,10 @@ function sendDispatch(rowId, driverName, wasSuggested){
   postDispatchSms(asg.row, driverName, phone).then(r=>{
     if(r && r.configured===false) toast(short+' assigned — SMS not configured');
     else if(r && r.ok) toast(short+' assigned — text sent');
-    else toast(short+' assigned — text did not send');
+    else toast(short+' assigned — SMS not configured');
   });
 }
 
-function assignmentPushPayload(r, driverName){
-  return {
-    date: String((r&&r.date)||''),
-    po: String((r&&r.po)||''),
-    origin: String((r&&r.origin)||''),
-    dest: String((r&&(r.deliveryPoint||r.destination||r.destName))||''),
-    driver: String(driverName||(r&&r.driver)||''),
-    driverShort: shortNameFor(driverName||(r&&r.driver)||''),
-    truck: String((r&&r.truck)||''),
-    status: String((r&&r.status)||'DISPATCHED'),
-    time: String((r&&(r.time||r.timeRaw))||''),
-    commodity: String((r&&r.commodity)||''),
-    fb: String((r&&r.fb)||''),
-    id: String((r&&r.id)||'')
-  };
-}
-function pushAssignmentToPowerAutomate(r, driverName){
-  const paUrl = String((state.dispatchImport && state.dispatchImport.paPushUrl) || '').trim();
-  if(!paUrl) return Promise.resolve({ skipped:true });
-  const payload = assignmentPushPayload(r, driverName);
-  payload.pushUrl = paUrl;
-  const hop = dispatchWorkerBase()+'/push-row';
-  return fetch(hop, { method:'POST', cache:'no-store', headers:{ 'Content-Type':'application/json' },
-                      body: JSON.stringify(payload) })
-    .then(res=>res.json().then(j=>({ http:res.status, j:j }), ()=>({ http:res.status, j:null })))
-    .then(x=>{
-      if(x.j && (x.j.ok || x.j.skipped)) return x.j;
-      console.warn('[FCT] Power Automate row update did not confirm', x);
-      return x.j || { ok:false };
-    })
-    .catch(e=>{
-      console.warn('[FCT] Power Automate row update failed', e);
-      return { ok:false };
-    });
-}
 function postDispatchSms(r, driverName, phone){
   const hop = dispatchWorkerBase()+'/send-sms';
   const body = {
@@ -9481,8 +9439,8 @@ function postDispatchSms(r, driverName, phone){
   };
   return fetch(hop, { method:'POST', cache:'no-store', headers:{ 'Content-Type':'application/json' },
                       body: JSON.stringify(body) })
-    .then(res=>res.json().then(j=>j, ()=>({ ok:false, error:'bad reply' })))
-    .catch(()=>({ ok:false, error:'offline' }));
+    .then(res=>res.json().then(j=>j, ()=>({ ok:false, configured:false, error:'SMS not configured' })))
+    .catch(()=>({ ok:false, configured:false, error:'SMS not configured' }));
 }
 // v1.8.34b: after-the-fact note editor — click any assignment row to add or
 // change the "why" without having to re-dispatch. Notes are the drift-tuning
@@ -10764,7 +10722,7 @@ function renderDayRollup(){
     + (dayDiamondOnly?'💎 DIAMOND ONLY':'⚡ ALL LOADS')+'</button>'
     + '<button type="button" id="dayDlXlsx" style="float:right;all:unset;cursor:pointer;font:600 10px/1 var(--body);'
     + 'letter-spacing:.06em;padding:5px 9px;margin-right:6px;border-radius:4px;background:var(--bg-inset);'
-    + 'color:var(--text-muted)" title="Download today\'s sheet as xlsx in the dispatch-log layout (date banner, D.P. sections). Manual backup — Power Automate is the two-way path.">⬇ Sheet</button>'
+    + 'color:var(--text-muted)" title="Download today\'s sheet as xlsx in the dispatch-log layout (date banner, D.P. sections). Drop it back to import — that is the two-way path.">⬇ Sheet</button>'
     + '</h2>';
   // v1.8.6: notice showing hidden count when filter is on
   if(dayDiamondOnly && S.hiddenPoc > 0){
@@ -11640,36 +11598,21 @@ function syncFromWorker(opts){
         console.log('Worker has nothing newer — '+count+' rows, ingested at '+stamp+'. Kept the parsed day.');
         return null;
       }
-      const finishParse = (res, n)=>{
-        di.lastSyncAt      = new Date().toISOString();
-        di.lastIngestedAt  = stamp;
-        di.lastRowCount    = n;
-        workerState = { kind:'ok', at:di.lastSyncAt, ingestedAt:stamp, rowCount:n, msg:'' };
-        invalidateVerizonMatch();
-        const ok = saveDayImport();
-        renderDash();
-        console.log('Synced '+n+' rows from worker, ingested at '+stamp
-          + ' → '+res.rows.length+' loads across '+res.dates.length+' days');
-        if(!opts.quiet) toast(res.rows.length+' loads · '+res.dates.length+' days · synced');
-        if(!ok.ok) setDispStatus('<div class="hint" style="color:var(--red)">Storage refused the write — the sync is in memory only.</div>');
-        try { pushDispatchLog({days:8}).catch(()=>{}); } catch(_){}
-        return res;
-      };
-      /* v2.1.41: Power Automate may POST the xlsx. Worker stores bytes and
-         GET /latest says format:xlsx — pull /latest.xlsx and run the same
-         ingestWorkbook path a dropped file uses. JSON rows still go through
-         ingestWorkerPayload → parseDispatchRows. */
-      const xlsxOnly = payload && payload.format==='xlsx' && !(payload.rows && payload.rows.length);
-      if(xlsxOnly){
-        const xurl = dispatchWorkerBase()+'/latest.xlsx';
-        return fetch(xurl, { cache:'no-store' }).then(r=>{
-          if(!r.ok){ const e=new Error('HTTP '+r.status+' on /latest.xlsx'); e.kind='bad'; throw e; }
-          return r.arrayBuffer();
-        }).then(buf=>ingestWorkbook(buf, payload.fileName || 'dispatch.xlsx'))
-          .then(res=>finishParse(res, (res && res.rows && res.rows.length) || 0));
-      }
       const res = ingestWorkerPayload(payload);
-      return finishParse(res, count);
+      di.lastSyncAt      = new Date().toISOString();
+      di.lastIngestedAt  = stamp;
+      di.lastRowCount    = count;
+      workerState = { kind:'ok', at:di.lastSyncAt, ingestedAt:stamp, rowCount:count, msg:'' };
+      invalidateVerizonMatch();
+      const ok = saveDayImport();
+      renderDash();
+      console.log('Synced '+count+' rows from worker, ingested at '+stamp
+        + ' → '+res.rows.length+' loads across '+res.dates.length+' days');
+      if(!opts.quiet) toast(res.rows.length+' loads · '+res.dates.length+' days · synced');
+      if(!ok.ok) setDispStatus('<div class="hint" style="color:var(--red)">Storage refused the write — the sync is in memory only.</div>');
+      /* v2.1.21: fresh dispatch → fresh calibration inputs. Fire-and-forget. */
+      try { pushDispatchLog({days:8}).catch(()=>{}); } catch(_){}
+      return res;
     })
     .catch(e=>{
       const kind = (e && (e.kind==='empty' || e.kind==='bad')) ? e.kind : 'offline';
@@ -12719,10 +12662,9 @@ function saveDaySnapshot(){
    preloads; Section 2 groups those rows Lathrop → Ripon → Other
    instead of a flat dump. Revenue still belongs to tomorrow.
 
-   "Send dispatch" assigns the driver onto the load row, POSTs the
-   assignment to Power Automate Flow 2 when that URL is set, and
-   texts the driver when a cell is on file (Worker / Twilio). Queue
-   Send and Today Send share sendDispatch().
+   "Send dispatch" assigns the driver onto the load row. Download
+   today's sheet then drop it back — that is Excel two-way. SMS is
+   optional. Queue Send and Today Send share sendDispatch().
    ============================================================= */
 function queueRows(){
   return state.dayRollup.currentRows
@@ -12779,7 +12721,7 @@ function renderQueue(){
   h += '<div class="card sheet-card"><h2>Dispatch queue'
     + '<button type="button" id="qDlXlsx" style="float:right;all:unset;cursor:pointer;font:600 10px/1 var(--body);'
     + 'letter-spacing:.06em;padding:5px 9px;border-radius:4px;background:var(--bg-inset);color:var(--text-muted)"'
-    + ' title="Download today\'s sheet as xlsx in the dispatch-log layout. Manual backup — Power Automate writes the driver back.">⬇ Sheet</button>'
+    + ' title="Download today\'s sheet as xlsx in the dispatch-log layout. Drop it back to import — that is the two-way path.">⬇ Sheet</button>'
     + '</h2>'
     + '<div class="q-sum"><b class="q-open-n">'+openRows.length+' open</b> · '
     + assignedRows.length+' assigned'
@@ -12982,8 +12924,8 @@ function renderQueue(){
     h += '</table></div>';
     h += '<div class="legend">Same layout as the dispatch log — date banner, then D.P. Lathrop, then D.P. Ripon. '
       + 'Tomorrow\'s preloads sit under the blue 📦 banner, grouped the same way (Lathrop then Ripon). '
-      + 'Open rows have the driver list and <b>Send dispatch</b> (assigns the driver, texts if a cell is on file, '
-      + 'and asks Power Automate to write the name back onto the Excel row). '
+      + 'Open rows have the driver list and <b>Send dispatch</b> (assigns the driver; texts only if a cell is on file and SMS is configured). '
+      + '<b>⬇ Sheet</b> downloads today\'s xlsx — drop it back to round-trip with Excel. '
       + 'Assigned drivers are locked. Done stays on the sheet, greyed. '
       + 'Suggestions still walk the day in clock order with the 2-load cap.</div>';
   }
@@ -14005,10 +13947,8 @@ function renderSet(){
 
     h += '<div class="card"><h2>Dispatch data source '
       + '<span style="font-size:10px;color:var(--green);text-transform:none;letter-spacing:0">v2.1.41</span></h2>'
-      + '<div class="hint" style="margin-bottom:12px">Power Automate is the Excel two-way bridge. OneDrive Excel is the board. '
-      + 'Flow 1 watches the file and POSTs here. Flow 2 is the HTTP trigger that writes the driver back. '
-      + 'This app pulls the Worker on load so the phone does not hunt for an xlsx every morning. '
-      + 'Download today\'s sheet remains a manual backup. Existing OneDrive import URL is unchanged.</div>'
+      + '<div class="hint" style="margin-bottom:12px">Excel two-way does <b>not</b> need Power Automate. Download today\'s sheet as xlsx (dispatch-log layout: date banner, D.P. Lathrop/Ripon, driver/origin/PO/commodity/truck/status), then drop it back to import. '
+      + 'The Worker still auto-fetches <code>/latest</code> on load. Existing OneDrive import URL is unchanged. No Microsoft login in this app.</div>'
       + '<div class="fld"><label for="sDataSrc">Source</label><select id="sDataSrc">'
       + opt('worker','Worker — fetch automatically on load (default)')
       + opt('file','File — drop the xlsx by hand, never call the worker')
@@ -14018,15 +13958,8 @@ function renderSet(){
       + '<b>file</b> the app behaves exactly as v1.5 did.</div></div>'
       + '<div class="fld"><label for="sWorkerUrl">Worker endpoint</label>'
       + '<input id="sWorkerUrl" type="url" spellcheck="false" value="'+esc(di.workerUrl||WORKER_URL)+'" placeholder="'+esc(WORKER_URL)+'">'
-      + '<div class="hint">Must answer <code>GET</code> with <code>{ rows, ingestedAt, rowCount }</code> (or <code>format:xlsx</code> after a file push) and '
-      + '<code>Access-Control-Allow-Origin: *</code>. Blank resets to the shipped default. Power Automate Flow 1 POSTs to '
-      + '<code>'+esc(dispatchWorkerBase()+'/ingest')+'</code> with header <code>X-FCT-Key</code> (the Worker secret, not in this page).</div></div>'
-      + '<div class="hint" style="margin-bottom:12px"><b>Power Automate:</b> OneDrive Excel is the board. Flow 1 watches the file and POSTs here. Flow 2 is the HTTP trigger that writes the driver back.</div>'
-      + '<div class="fld"><label for="sPaPush">Flow 2 — HTTP trigger URL (write driver back)</label>'
-      + '<input id="sPaPush" type="url" spellcheck="false" value="'+esc(di.paPushUrl||'')+'" placeholder="https://…powerautomate.com / logic.azure.com HTTP trigger">'
-      + '<div class="hint">Paste the URL from Power Automate “When an HTTP request is received.” On Send dispatch (and any assign) the app POSTs '
-      + '{ date, po, origin, dest, driver, truck, status, … } so Flow 2 can Update that Excel row. Leave blank to skip — assignment still records here. '
-      + 'No Microsoft login in this app.</div></div>'
+      + '<div class="hint">Must answer <code>GET</code> with <code>{ rows, ingestedAt, rowCount }</code> and '
+      + '<code>Access-Control-Allow-Origin: *</code>. Blank resets to the shipped default.</div></div>'
       + '<div class="row"><div class="row-l"><div class="row-t">Status</div>'
       + '<div class="row-s">'+stateLine+'</div></div></div>'
       + '<div class="row"><div class="row-l"><div class="row-t">Last successful sync</div>'
@@ -14323,17 +14256,17 @@ function renderSet(){
     const withPhones = roster.filter(d=>driverPhone(d.name)).length;
 
     h += '<div class="card" id="smsCard"><h2>SMS dispatch '
-      + '<span class="chip g">Worker hop</span></h2>'
-      + '<div class="hint" style="margin-bottom:12px">Twilio is the default provider (company number), not the only possible one. '
-      + 'The dispatch Worker sends the text so this phone never holds Twilio keys. Sinch or Telnyx can swap later on the Worker. '
-      + 'If those secrets are missing, Send dispatch still assigns and shows <b>SMS not configured</b>. '
-      + withPhones+' of '+roster.length+' drivers have a cell on file (empty is the default — stored on this device, not in git).</div>';
+      + '<span class="chip y">optional</span></h2>'
+      + '<div class="hint" style="margin-bottom:12px">SMS is optional. Twilio was not set up (Hotmail, no company email). '
+      + 'Send dispatch still assigns the driver if SMS is not configured. '
+      + withPhones+' of '+roster.length+' drivers have a cell on file (empty is the default — stored on this device, not in git). '
+      + 'If a Worker SMS path is configured later, the phone still does not hold provider keys.</div>';
 
     h += '<h2 style="margin-top:8px">Test</h2>'
       + '<div class="fld"><label for="smsTest">Your phone number</label>'
       + '<input id="smsTest" type="tel" spellcheck="false" value="'+esc(sms.testTo)+'" placeholder="+1…"></div>'
       + '<div class="btn-row"><button class="act ghost" id="smsTestBtn">Test SMS to my phone</button></div>'
-      + '<div class="hint">Hits the Worker. No send in CI. A missing Twilio secret comes back as SMS not configured — that is expected until James pastes the secrets in Cloudflare.</div>';
+      + '<div class="hint">Hits the dispatch Worker. Expected today: <b>SMS not configured</b>. No real text in CI.</div>';
 
     h += '<div class="legend"><b>The template.</b> Every dispatch text is:<br>'
       + '<span style="font-family:var(--mono);font-size:11px;color:var(--text-muted)">'
@@ -14572,14 +14505,6 @@ function renderSet(){
       state.dispatchImport.lastIngestedAt = '';
       save(); renderSet();
       toast(v ? 'Worker endpoint saved' : 'Worker endpoint reset to the default');
-    });
-    const paEl = document.getElementById('sPaPush');
-    if(paEl) paEl.addEventListener('change',()=>{
-      state.dispatchImport.paPushUrl = paEl.value.trim();
-      save();
-      toast(state.dispatchImport.paPushUrl
-        ? 'Flow 2 URL saved — Send dispatch will ask Power Automate to write the driver back'
-        : 'Flow 2 URL cleared — Excel write-back skipped');
     });
     const syncEl = document.getElementById('sWorkerSync');
     if(syncEl) syncEl.addEventListener('click',()=>{ syncFromWorker({force:true}).then(()=>renderSet()); });
@@ -15335,11 +15260,10 @@ SHADOW_TIMELINE_TEXT['2026-07-28'] = "**PARTIAL DAY — Phase 2 diff loop stoppe
 
 /* ---- v2.0 DATA: Changelog (in-app version history) ---- */
 const SHADOW_CHANGELOG = [
-  { ver:'v2.1.41-pa-sms', date:'2026-08-25', changes:[
-    'Power Automate is the Excel two-way bridge. OneDrive Excel stays the board. Flow 1 watches the file and POSTs the log (xlsx bytes or JSON rows) to the dispatch Worker /ingest with a shared-secret header. The app still parses that with the same importer as a dropped file',
-    'Flow 2 is an HTTP trigger URL in Settings. Send dispatch and any driver assign POST {date, po, origin, dest, driver, truck, status, …} so PA can Update the Excel row. Empty URL skips quietly — the assignment still records in the app. No Microsoft Graph OAuth',
-    'Download today\'s sheet as xlsx is a manual backup in the dispatch-log layout (date banner, D.P. Lathrop/Ripon, driver/origin/PO/commodity/truck/status). Drop it back to round-trip. PUSH/preload sections on Today and Queue are unchanged',
-    'Cell field on each driver in Settings (empty default, stored on this device). Send dispatch assigns even with no phone (“no cell on file”) or if Twilio secrets are missing on the Worker (“SMS not configured”). Queue Send and Today Send share one function. Twilio is the default SMS provider, not the only one — Worker has a Sinch/Telnyx hook. No secrets in git, no real text in CI',
+  { ver:'v2.1.41-excel', date:'2026-08-25', changes:[
+    'Excel two-way does not need Power Automate. Download today\'s sheet as xlsx in the dispatch-log layout (date banner, D.P. Lathrop/Ripon, driver/origin/PO/commodity/truck/status), then drop it back to import. Send dispatch writes the driver onto that load row in state so the download round-trips. No Graph OAuth, no OneDrive write-back, no PA flows',
+    'SMS is optional. Twilio was not set up (Hotmail, no company email). Send dispatch still assigns with “no cell on file” or “SMS not configured.” Queue Send and Today Send share one function. Cell field on each driver in Settings (empty default, this device, not git)',
+    'PUSH/preload sections on Today and Queue are unchanged. Existing OneDrive import URL is unchanged',
     'Does not change diesel, MPG, P&L, ADP blend, wear, WC, Queue ranking, or office rules'
   ]},
   { ver:'v2.1.40-adp-blend', date:'2026-08-25', changes:[
