@@ -9,6 +9,11 @@ binding = "DISPATCH"
 id = "511e045236dc4b41b89538334f54414c"
 
 # Secrets (Cloudflare dashboard only — never commit values):
-#   INGEST_KEY           — existing /ingest header X-FCT-Key
-#   TWILIO_*             — optional; SMS off if missing
-#   SMS_PROVIDER         — optional twilio | sinch | telnyx
+#   INGEST_KEY              — shared secret Power Automate sends as X-FCT-Key
+#   TWILIO_*                — optional; SMS off if missing (Hotmail, no company email)
+#   POWER_AUTOMATE_PUSH_URL — optional; Flow 2 HTTP trigger (app Settings can also supply it)
+#
+# Optional (provider hook, unused until swapped in):
+#   SMS_PROVIDER            — twilio (default) | sinch | telnyx
+#   SINCH_SERVICE_PLAN_ID / SINCH_API_TOKEN / SINCH_FROM
+#   TELNYX_API_KEY / TELNYX_FROM

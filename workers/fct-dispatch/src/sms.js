@@ -1,8 +1,8 @@
 /* SMS provider hook.
- * Default is Twilio (FCT company number). Sinch / Telnyx swap by setting
- * SMS_PROVIDER and that vendor's env vars — no app change.
- * Missing secrets → { ok:false, error:'SMS not configured' }. Never throw
- * for that case; the assignment on the phone must still succeed. */
+ * Optional. Twilio is the default if TWILIO_* secrets exist later;
+ * Sinch / Telnyx swap via SMS_PROVIDER. Not required (Hotmail, no
+ * company email). Missing secrets → { ok:false, error:'SMS not configured' }.
+ * Never throw for that case; the assignment on the phone must still succeed. */
 
 export const SMS_NOT_CONFIGURED = 'SMS not configured';
 

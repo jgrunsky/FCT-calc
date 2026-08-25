@@ -1,6 +1,8 @@
-/* Dispatch ingest (existing /ingest). JSON rows from the live Worker.
- * File bytes are accepted by the parser helpers for tests; the calc's
- * Excel two-way is download xlsx then drop — not this endpoint. */
+/* Power Automate → Worker ingest.
+ * Accepts JSON rows (Excel List rows) or file bytes from consumer
+ * OneDrive Get file content ($content / raw xlsx). Auth is INGEST_KEY
+ * via X-FCT-Key. The calc still parses through parseDispatchRows /
+ * ingestWorkbook. */
 
 export const KV_LATEST = 'latest';
 export const KV_LATEST_XLSX = 'latest-xlsx';

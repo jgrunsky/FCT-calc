@@ -419,9 +419,18 @@ assert.equal(looksLikeAdpAoa([['Date','Driver','Grower','FB','Commodity']]), fal
     'August 1–23 2026 EST $88,195.38 → ADP $107,054.54 is the recorded basis');
   assert.ok(/id="adpBlendCard"/.test(html), 'Settings has a visible ADP blend card');
   assert.ok(/OT &amp; meals vs estimate/.test(html), 'operator-facing name is on the card');
-  assert.ok(/2026-08-25-fct-calc-v2\.1\.41-excel/.test(html), 'APP_VERSION is v2.1.41');
+  assert.ok(/2026-08-25-fct-calc-v2\.1\.41-pa-sms/.test(html), 'APP_VERSION is v2.1.41');
   assert.ok(/v2\.1\.40-adp-blend/.test(html), 'changelog still has v2.1.40');
-  assert.ok(/v2\.1\.41-excel/.test(html), 'changelog has v2.1.41');
+  assert.ok(/v2\.1\.41-pa-sms/.test(html), 'changelog has v2.1.41');
+  assert.ok(/id="sPaPush"/.test(html), 'Settings has Flow 2 HTTP trigger URL');
+  assert.ok(/Power Automate is the Excel two-way bridge/.test(html), 'PA is the live Excel path');
+  assert.ok(/Microsoft 365 Personal/.test(html), 'M365 Personal / consumer OneDrive');
+  assert.ok(/HTTP is a premium connector/.test(html), 'HTTP premium documented');
+  assert.ok(/Import from OneDrive/.test(html), 'standard OneDrive import fallback stays');
+  assert.ok(/SMS is optional/.test(html), 'SMS stays optional');
+  assert.ok(/Hotmail, no company email/.test(html), 'Twilio not required');
+  assert.ok(/Manual backup — Power Automate is the two-way path/.test(html),
+    'download xlsx is backup, not the main path');
 
   /* Do not regress the v2.1.39 cost stack. */
   assert.ok(/wearPerMile:\s*0\.498\b/.test(html), 'wear unchanged');
