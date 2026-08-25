@@ -423,16 +423,18 @@ assert.equal(looksLikeAdpAoa([['Date','Driver','Grower','FB','Commodity']]), fal
   assert.ok(/v2\.1\.40-adp-blend/.test(html), 'changelog still has v2.1.40');
   assert.ok(/v2\.1\.41-pa-sms/.test(html), 'changelog has v2.1.41');
   assert.ok(/id="sPaPush"/.test(html), 'Settings has Flow 2 HTTP trigger URL');
-  assert.ok(/Power Automate is the Excel two-way bridge/.test(html), 'PA is the live Excel path');
+  assert.ok(/Worker FETCHes the work OneDrive/.test(html), 'Worker pulls the share server-side');
   assert.ok(/Microsoft 365 Business Basic/.test(html), 'M365 Business Basic / work OneDrive');
   assert.ok(/Excel Online \(Business\)/.test(html), 'Excel Online (Business) on the work tenant');
-  assert.ok(/copy the dispatch xlsx into the work OneDrive/.test(html), 'xlsx is copied into work OneDrive, not shared from Hotmail');
+  assert.ok(/copy the dispatch xlsx into the work OneDrive/i.test(html), 'xlsx is copied into work OneDrive, not shared from Hotmail');
   assert.ok(!/Microsoft 365 Personal/.test(html), 'Personal is not the live PA path');
   assert.ok(/HTTP is a premium connector/.test(html), 'HTTP premium documented');
+  assert.ok(/PA HTTP was not purchased|Power Automate HTTP was not purchased/.test(html), 'PA HTTP not purchased');
   assert.ok(/Import from OneDrive/.test(html), 'standard OneDrive import fallback stays');
+  assert.ok(/leave empty — PA HTTP not purchased/.test(html), 'Flow 2 URL stays empty');
   assert.ok(/SMS is optional/.test(html), 'SMS stays optional');
   assert.ok(/Hotmail, no company email/.test(html), 'Twilio not required');
-  assert.ok(/Manual backup — Power Automate is the two-way path/.test(html),
+  assert.ok(/Manual backup — the Worker pulls the work OneDrive share/.test(html),
     'download xlsx is backup, not the main path');
 
   /* Do not regress the v2.1.39 cost stack. */

@@ -1,33 +1,26 @@
 /**
  * FCT Dispatch Worker
  * ================================================================
- * Excel two-way via Power Automate + optional SMS.
+ * Live Excel path: Worker FETCHes the work OneDrive Anyone-can-edit
+ * share server-side (download=1 + FedAuth cookie across redirects) and
+ * stores it as /latest.xlsx — same as Flow 1 ingest. The calc GETs
+ * /latest then /latest.xlsx. No Microsoft login in the browser. CORS is
+ * this Worker's problem. Power Automate HTTP was not purchased.
  *
  * Microsoft 365 Business Basic (work OneDrive / Excel Online (Business)).
- * HTTP in Power Automate is premium — /ingest and /push-row stay; if the
- * HTTP action is gated the calc still imports via the OneDrive share URL.
+ * POST /ingest and POST /push-row stay; Flow 2 URL stays empty.
  *
  * Endpoints:
- *   POST /ingest     — Flow 1 (file-modified). JSON rows or xlsx bytes.
- *                      Header X-FCT-Key = INGEST_KEY secret.
- *   GET  /latest     — Calc fetches this. { rows, ingestedAt, rowCount }
- *                      or { format:'xlsx', fileName, ingestedAt } after a file push.
- *   GET  /latest.xlsx— Raw workbook when the last ingest was file bytes.
- *   POST /push-row   — Calc → Flow 2 HTTP trigger (writes driver back to Excel).
- *                      Body includes pushUrl from Settings, or env POWER_AUTOMATE_PUSH_URL.
- *   POST /send-sms   — Optional. Twilio if TWILIO_* secrets exist; else
- *                      { error: "SMS not configured" } without failing the assignment.
+ *   POST /ingest      — optional Flow 1. JSON rows or xlsx bytes. X-FCT-Key.
+ *   GET  /latest      — Calc sync. Pulls the share if stale, then
+ *                       { format:'xlsx', fileName, ingestedAt } or JSON rows.
+ *   GET  /latest.xlsx — Workbook bytes.
+ *   POST /push-row    — Flow 2 hop. Empty URL → skipped.
+ *   POST /send-sms    — Optional. Missing secrets → SMS not configured.
  *   GET  /health
  *
  * KV binding: DISPATCH
- * Secret:     INGEST_KEY
- *
- * Do not commit secrets. Deploy does not create them:
- *   npx wrangler secret put INGEST_KEY
- * Optional SMS (leave unset — assignment still works):
- *   npx wrangler secret put TWILIO_ACCOUNT_SID
- *   npx wrangler secret put TWILIO_AUTH_TOKEN
- *   npx wrangler secret put TWILIO_FROM
+ * Cron:       */2 * * * *  (refresh the share)
  */
 
 import { sendSms, composeDriverSms } from './sms.js';
@@ -36,6 +29,10 @@ import {
   ingestKeyFrom, readIngestRequest,
   latestPayloadFromRows, latestPayloadFromXlsx, isHttpsUrl
 } from './ingest.js';
+import {
+  KV_SHARE_PULL, fetchShareXlsx, shareUrlFromEnv, xlsxNameFromEnv,
+  pullIsFresh, sha256hex
+} from './share.js';
 
 function corsHeaders(){
   return {
@@ -52,7 +49,85 @@ function json(obj, status){
   });
 }
 
+async function readPullMeta(env){
+  try { return JSON.parse((await env.DISPATCH.get(KV_SHARE_PULL)) || '{}'); }
+  catch(_){ return {}; }
+}
+
+async function storeXlsx(env, bytes, fileName, extra){
+  const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  const hash = await sha256hex(u8);
+  const prevMeta = await readPullMeta(env);
+  const unchanged = !!(prevMeta && prevMeta.hash === hash && prevMeta.ok);
+  await env.DISPATCH.put(KV_LATEST_XLSX, u8);
+  let ingestedAt = prevMeta.ingestedAt;
+  if(!unchanged || !ingestedAt){
+    const payload = latestPayloadFromXlsx(fileName, extra);
+    ingestedAt = payload.ingestedAt;
+    await env.DISPATCH.put(KV_LATEST, JSON.stringify(payload));
+  }
+  const meta = {
+    ok: true,
+    pulledAt: new Date().toISOString(),
+    ingestedAt,
+    unchanged,
+    bytes: u8.length,
+    hash,
+    fileName,
+    error: ''
+  };
+  await env.DISPATCH.put(KV_SHARE_PULL, JSON.stringify(meta));
+  return meta;
+}
+
+export async function pullShareIntoKv(env, fetchImpl){
+  const url = shareUrlFromEnv(env);
+  if(!url){
+    const meta = { ok:false, pulledAt: new Date().toISOString(), error:'no_share_url' };
+    await env.DISPATCH.put(KV_SHARE_PULL, JSON.stringify(meta));
+    return meta;
+  }
+  const got = await fetchShareXlsx(url, fetchImpl || fetch);
+  if(!got.ok){
+    const meta = {
+      ok:false,
+      pulledAt: new Date().toISOString(),
+      error: got.error || 'fetch_failed',
+      message: got.message || '',
+      url: got.url || url
+    };
+    await env.DISPATCH.put(KV_SHARE_PULL, JSON.stringify(meta));
+    return meta;
+  }
+  return storeXlsx(env, got.bytes, got.fileName || xlsxNameFromEnv(env), {
+    source: 'share',
+    shareHops: got.hops
+  });
+}
+
+async function ensureShareXlsx(env, opts){
+  opts = opts || {};
+  const meta = await readPullMeta(env);
+  if(!opts.force && pullIsFresh(meta, Date.now())) return meta;
+  try {
+    return await pullShareIntoKv(env, fetch);
+  } catch(e){
+    const fail = {
+      ok:false,
+      pulledAt: new Date().toISOString(),
+      error: 'exception',
+      message: String(e && e.message || e).slice(0,180)
+    };
+    try { await env.DISPATCH.put(KV_SHARE_PULL, JSON.stringify(fail)); } catch(_){}
+    return fail;
+  }
+}
+
 export default {
+  async scheduled(event, env, ctx){
+    ctx.waitUntil(pullShareIntoKv(env, fetch));
+  },
+
   async fetch(request, env){
     const url = new URL(request.url);
     const cors = corsHeaders();
@@ -62,7 +137,8 @@ export default {
     }
 
     if(url.pathname === '/health' && request.method === 'GET'){
-      return json({ ok:true, ts: Date.now() });
+      const pull = await readPullMeta(env);
+      return json({ ok:true, ts: Date.now(), sharePull: pull });
     }
 
     if(url.pathname === '/ingest' && request.method === 'POST'){
@@ -75,10 +151,8 @@ export default {
         return json({ error: parsed.error || 'bad_json' }, 400);
       }
       if(parsed.kind === 'xlsx'){
-        await env.DISPATCH.put(KV_LATEST_XLSX, parsed.bytes);
-        const payload = latestPayloadFromXlsx(parsed.fileName);
-        await env.DISPATCH.put(KV_LATEST, JSON.stringify(payload));
-        return json({ ok:true, format:'xlsx', fileName: payload.fileName, ingestedAt: payload.ingestedAt });
+        const meta = await storeXlsx(env, parsed.bytes, parsed.fileName);
+        return json({ ok:true, format:'xlsx', fileName: meta.fileName, ingestedAt: meta.ingestedAt });
       }
       const payload = latestPayloadFromRows(parsed.rows, { fileName: parsed.fileName });
       await env.DISPATCH.put(KV_LATEST, JSON.stringify(payload));
@@ -86,19 +160,33 @@ export default {
     }
 
     if(url.pathname === '/latest' && request.method === 'GET'){
+      await ensureShareXlsx(env, { force: url.searchParams.get('refresh') === '1' });
       const raw = await env.DISPATCH.get(KV_LATEST);
       if(!raw){
-        return json({ error:'no_data', message:'No dispatch data ingested yet' }, 404);
+        const pull = await readPullMeta(env);
+        return json({
+          error:'no_data',
+          message: pull && pull.error==='login_wall'
+            ? (pull.message || 'Share redirected to Microsoft login')
+            : 'No dispatch data ingested yet',
+          sharePull: pull
+        }, 404);
       }
       return new Response(raw, { headers: { 'Content-Type':'application/json', ...cors } });
     }
 
     if((url.pathname === '/latest.xlsx' || url.pathname === '/latest.xls') && request.method === 'GET'){
+      await ensureShareXlsx(env);
       const bytes = await env.DISPATCH.get(KV_LATEST_XLSX, { type: 'arrayBuffer' });
       if(!bytes){
-        return json({ error:'no_xlsx', message:'No workbook ingested yet' }, 404);
+        const pull = await readPullMeta(env);
+        return json({
+          error:'no_xlsx',
+          message: (pull && pull.message) || 'No workbook ingested yet',
+          sharePull: pull
+        }, 404);
       }
-      let fileName = 'dispatch.xlsx';
+      let fileName = xlsxNameFromEnv(env);
       try {
         const meta = JSON.parse(await env.DISPATCH.get(KV_LATEST) || '{}');
         if(meta && meta.fileName) fileName = String(meta.fileName);

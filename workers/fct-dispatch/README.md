@@ -2,82 +2,53 @@
 
 Production: `https://fct-dispatch.jamesgrunsky.workers.dev`
 
-Power Automate is the Excel two-way bridge. **Microsoft 365 Business
-Basic** (work / Entra tenant, new `onmicrosoft.com` mailbox) — work
-OneDrive / Excel Online (Business). Personal does **not** include Power
-Automate. Hotmail stays personal mail only; **copy** the dispatch xlsx
-into the work OneDrive (do not merely share it from Hotmail). This Worker
-is the hop the calc talks to — James builds the two flows in Microsoft
-(no flow designer in the HTML app). Use **OneDrive for Business** and
-**Excel Online (Business)** connectors on the work tenant.
+**Live path (2026-08-25):** the Worker FETCHes the work OneDrive
+Anyone-can-edit share **server-side** and stores it as `/latest.xlsx`
+(same as Flow 1 ingest). The calc GETs `/latest` then `/latest.xlsx` and
+parses with the same importer as a dropped file. No Microsoft login in
+the browser. CORS is this Worker’s problem.
 
-**HTTP in Power Automate is a premium connector.** The webhook design
-stays (`POST /ingest`, `POST /push-row`). If the HTTP action is gated,
-do **not** buy Premium just to feed the board:
+Share (Anyone can edit) — `2026 FCT Dispatch Log.xlsx`, sheet `2026`,
+account `JamesGrunsky@FrenchCampTransport.onmicrosoft.com`:
 
-- Keep the dispatch xlsx in **work** OneDrive (copied onto Business Basic).
-- Use the calc’s existing **Import from OneDrive** share URL (`dispUrl` /
-  `lastUrl` on Today). That standard path still parses with the same
-  importer.
-- Leave the Flow 2 URL empty — assignment still records in the app.
-- Download today’s sheet remains a **manual backup**, not the live path.
+`https://frenchcamptransport-my.sharepoint.com/:x:/g/personal/jamesgrunsky_frenchcamptransport_onmicrosoft_com/IQBGRbC6973TRowZbmxEeoQEAS6NSIu-Zazhwpp9Pu5BitI?e=coV1OH`
 
-**Flow 1 — Excel → app** (when HTTP is available). OneDrive file-modified
-(or a scheduled Get file content on OneDrive for Business)
-POSTs the dispatch log here. JSON rows *or* xlsx bytes. Header `X-FCT-Key`
-= the `INGEST_KEY` secret (paste the same value into PA). The calc GETs
-`/latest` (or `/latest.xlsx`) and runs the same importer it uses for a
-dropped file.
+Verified: unauthenticated GET with `?download=1` follows to
+`.../Documents/2026 FCT Dispatch Log.xlsx?ga=1` **only if** the Worker
+keeps `FedAuth` from the first SharePoint 302 (Workers `fetch` does not).
+Without that cookie the same URL hits `login.microsoftonline.com`. Graph
+`/shares` is 401 without an app token — not used. No Power Automate
+Premium (HTTP was not purchased).
 
-**Flow 2 — app → Excel** (premium HTTP trigger). Settings holds the HTTP
-trigger URL. On Send dispatch / assign, the calc POSTs `{ date, po,
-origin, dest, driver, truck, status, … }` to this Worker’s `/push-row`,
-which forwards to that URL so PA can Update a row. Empty URL → skip,
-assignment still records in the app.
+Flow 2 (`paPushUrl`) stays **empty** — Excel write-back skipped.
+Download today’s sheet is a **manual backup**. Browser **Import from
+OneDrive** stays as a fallback (the SharePoint anyone-link CORS-fails in
+the page; that is expected).
 
 SMS is **optional**. Twilio was not set up (Hotmail, no company email).
-Missing `TWILIO_*` secrets return `"SMS not configured"` and do **not**
-fail the assignment. Never commit secrets. CI does not send real texts.
 
 ## Deploy
 
 ```bash
 cd workers/fct-dispatch
 npx wrangler deploy
-npx wrangler secret put INGEST_KEY
-# optional SMS — leave unset; assignment still works
-# npx wrangler secret put TWILIO_ACCOUNT_SID
-# npx wrangler secret put TWILIO_AUTH_TOKEN
-# npx wrangler secret put TWILIO_FROM
 ```
 
-`DISPATCH` KV is already bound. `wrangler deploy` updates the script only.
+`DISPATCH` KV is already bound. Cron `*/2 * * * *` refreshes the share.
+`GET /latest` also pulls if the last pull is older than 90s.
+
+Do not put secrets in git. SMS stays off until provider env vars exist.
 
 ## Endpoints
 
 | Method | Path | Auth | Role |
 |--------|------|------|------|
-| POST | `/ingest` | `X-FCT-Key` | PA Flow 1. JSON `{ rows \| value }` or `{ $content / fileBase64 }` or raw xlsx |
-| GET | `/latest` | public | Calc sync. `{ rows, ingestedAt, rowCount }` or `{ format:"xlsx", fileName, ingestedAt }` |
-| GET | `/latest.xlsx` | public | Workbook bytes when the last ingest was a file |
-| POST | `/push-row` | public | Calc → PA Flow 2. Body may include `pushUrl` from Settings |
-| POST | `/send-sms` | public | `{ to, driver, origin, dest, appt, po }`. Optional; `"SMS not configured"` if secrets missing |
-| GET | `/health` | public | Sanity |
-
-Ingest JSON shapes Power Automate actually sends (work OneDrive Get
-file content uses the same `$content` envelope):
-
-```json
-{ "rows": [ { "time":"", "po":"", "driver":"", "origin":"", "fb":"", "commodity":"", "truck":"", "status":"", "extra":"" } ] }
-```
-
-```json
-{ "value": [ /* Excel List rows present in a table */ ] }
-```
-
-```json
-{ "$content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "$content": "<base64>" }
-```
+| GET | `/latest` | public | Pull share if stale, then `{ format:"xlsx", fileName, ingestedAt }` |
+| GET | `/latest.xlsx` | public | Workbook bytes |
+| GET | `/health` | public | `{ ok, sharePull }` |
+| POST | `/ingest` | `X-FCT-Key` | Optional Flow 1. JSON or xlsx |
+| POST | `/push-row` | public | Flow 2 hop. Empty URL → skip |
+| POST | `/send-sms` | public | Optional; `"SMS not configured"` if secrets missing |
 
 ## Tests
 
@@ -85,4 +56,4 @@ file content uses the same `$content` envelope):
 npm test
 ```
 
-No network, no Twilio, no secrets. SMS-missing-env asserts `"SMS not configured"`.
+No network, no Twilio, no secrets. Share tests mock redirects + FedAuth.

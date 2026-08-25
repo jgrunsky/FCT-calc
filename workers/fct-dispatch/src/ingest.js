@@ -1,7 +1,7 @@
-/* Power Automate → Worker ingest.
- * Accepts JSON rows (Excel List rows) or file bytes from work OneDrive
- * Get file content ($content / raw xlsx). Auth is INGEST_KEY via
- * X-FCT-Key. The calc still parses through parseDispatchRows /
+/* Work OneDrive share → Worker ingest.
+ * Cookie-aware GET of the Anyone-can-edit link (download=1) stores xlsx
+ * bytes. POST /ingest still accepts JSON rows or file bytes. Auth is
+ * INGEST_KEY via X-FCT-Key. The calc parses through parseDispatchRows /
  * ingestWorkbook. */
 
 export const KV_LATEST = 'latest';
