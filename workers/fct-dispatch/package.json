@@ -1,0 +1,9 @@
+{
+  "name": "fct-dispatch",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node src/ingest.test.mjs && node src/sms.test.mjs && node src/share.test.mjs",
+    "deploy": "wrangler deploy"
+  }
+}

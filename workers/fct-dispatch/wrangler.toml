@@ -1,0 +1,29 @@
+name = "fct-dispatch"
+main = "src/index.js"
+compatibility_date = "2026-07-27"
+workers_dev = true
+
+# Existing DISPATCH KV namespace (already bound on the live worker).
+[[kv_namespaces]]
+binding = "DISPATCH"
+id = "511e045236dc4b41b89538334f54414c"
+
+# Anyone-can-edit work OneDrive share (not a secret). Worker FETCHes this
+# server-side; the browser must not. PA HTTP was not purchased.
+[vars]
+DISPATCH_SHARE_URL = "https://frenchcamptransport-my.sharepoint.com/:x:/g/personal/jamesgrunsky_frenchcamptransport_onmicrosoft_com/IQBGRbC6973TRowZbmxEeoQEAS6NSIu-Zazhwpp9Pu5BitI?e=coV1OH"
+DISPATCH_XLSX_NAME = "2026 FCT Dispatch Log.xlsx"
+
+# Refresh the share so GET /latest is warm.
+[triggers]
+crons = ["*/2 * * * *"]
+
+# Secrets (Cloudflare dashboard only — never commit values):
+#   INGEST_KEY              — shared secret Power Automate sends as X-FCT-Key
+#   TWILIO_*                — optional; SMS off if missing (Hotmail, no company email)
+#   POWER_AUTOMATE_PUSH_URL — leave unset; Flow 2 write-back stays skipped
+#
+# Optional (provider hook, unused until swapped in):
+#   SMS_PROVIDER            — twilio (default) | sinch | telnyx
+#   SINCH_SERVICE_PLAN_ID / SINCH_API_TOKEN / SINCH_FROM
+#   TELNYX_API_KEY / TELNYX_FROM
