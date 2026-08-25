@@ -325,4 +325,95 @@ assert.equal(looksLikeAdpAoa([['Date','Driver','Grower','FB','Commodity']]), fal
   assert.ok(/truckLease'[\s\S]{0,80}amount:470000/.test(html), 'lease amount unchanged');
 }
 
+{
+  /* v2.1.40: EST-only OT/meals blend. Aug 1–23 2026 field EST $88,195.38
+     → ADP $107,054.54. Default 1.21. ADP days stay 1:1. Queue / computeDayRow
+     stay unadjusted. */
+  const blendStart = html.indexOf('/* BEGIN EST_DRIVER_BLEND */');
+  const blendEnd = html.indexOf('/* END EST_DRIVER_BLEND */');
+  assert.ok(blendStart >= 0 && blendEnd > blendStart, 'EST_DRIVER_BLEND markers missing');
+  const blendSandbox = { state: { settings: { estDriverWageBlend: 1.21 } } };
+  runInContext(html.slice(blendStart, blendEnd), createContext(blendSandbox));
+  const { estDriverWageBlendFactor, blendEstDriverWages, applyEstDriverBlendToTotals } = blendSandbox;
+  assert.equal(typeof blendEstDriverWages, 'function');
+
+  const EST = 88195.38, ADP = 107054.54;
+  const ratio = ADP / EST;
+  assert.ok(Math.abs(ratio - 1.214) < 0.001, 'August ADP/EST ratio is ≈1.214, got '+ratio);
+  const noAdpMtd = blendEstDriverWages(EST);
+  assert.ok(Math.abs(noAdpMtd - 106716.41) < 0.02, 'EST $88,195.38 × 1.21 ≈ $106,716 (~$107k)');
+  assert.ok(Math.abs(noAdpMtd - ADP) < 400, 'default 1.21 lands ~$107k vs ADP $107,054.54');
+
+  assert.equal(estDriverWageBlendFactor(), 1.21);
+  assert.equal(blendEstDriverWages(100), 121);
+  assert.equal(blendEstDriverWages(0), 0);
+
+  const T = applyEstDriverBlendToTotals({ revenue:1000, varCost:400, driverCost:200, cm:600 });
+  assert.equal(T.driverCost, 242);
+  assert.equal(T.varCost, 442); // 400 - 200 + 242
+  assert.equal(T.cm, 558);      // 1000 - 442
+  assert.equal(T.estDriverCostUnblended, 200);
+
+  blendSandbox.state.settings.estDriverWageBlend = 0;
+  assert.equal(estDriverWageBlendFactor(), 1.21, 'invalid/zero factor falls back to 1.21');
+  blendSandbox.state.settings.estDriverWageBlend = 1.00;
+  assert.equal(blendEstDriverWages(88195.38), 88195.38, '1.00 is a true no-lift');
+
+  /* ADP path: applyAdpToModeled still 1:1 — no 1.21 on top of actuals. */
+  const adpVar = applyAdpToModeled(400, 200, 250);
+  assert.equal(adpVar, 450, 'ADP replaces driver 1:1 (400-200+250), no blend');
+
+  /* applyAdpDayTotals: EST blends; ADP does not. */
+  sandbox.state.settings.estDriverWageBlend = 1.21;
+  sandbox.state.adpPay = { openDate:'2026-08-24', endOfDay:false };
+  const parsed = parseAdpDailyTotals(fixture, { rosters:rosters, matchPerson: matchAdpPerson });
+  rebuildAdpIndex(parsed.rows);
+  const estT = sandbox.applyAdpDayTotals('2026-08-24', {
+    loads:10, revenue:20000, varCost:8000, driverCost:5191.24, hours:200, cm:12000, otherPlug:0
+  });
+  assert.equal(estT.varSource, 'EST');
+  assert.equal(Math.round(estT.driverCost*100)/100, Math.round(5191.24*1.21*100)/100);
+  assert.ok(estT.driverCost > 5191.24, 'open today EST is lifted');
+
+  const adpT = sandbox.applyAdpDayTotals('2026-08-01', {
+    loads:10, revenue:20000, varCost:8000, driverCost:144, hours:20, cm:12000, otherPlug:0
+  });
+  assert.equal(adpT.varSource, 'ADP');
+  assert.equal(Math.round(adpT.driverCost*100)/100, 677.38, 'ADP field dollars 1:1, no 1.21 on top');
+  assert.equal(Math.round(adpT.varCost*100)/100, Math.round((8000-144+677.38)*100)/100);
+
+  /* Guards: computeDayRow / Queue do not read the blend. P&L paths do. */
+  const computeFn = html.slice(html.indexOf('function computeDayRow(r){'), html.indexOf('function computeDay(){'));
+  assert.ok(/do NOT apply estDriverWageBlend here/.test(computeFn), 'computeDayRow documents the Queue split');
+  assert.ok(!/blendEstDriverWages/.test(computeFn), 'computeDayRow does not call the blend');
+  const suggestFn = html.slice(html.indexOf('function suggestDrivers('), html.indexOf('function isUnassigned('));
+  assert.ok(!/estDriverWageBlend|blendEstDriverWages|applyEstDriverBlend/.test(suggestFn),
+    'Queue suggestDrivers does not use the blend');
+  const varCompFn = html.slice(html.indexOf('function variableComponents('), html.indexOf('function variableCostPerLoad('));
+  assert.ok(!/estDriverWageBlend|blendEstDriverWages/.test(varCompFn),
+    'variableComponents (Queue/calc) does not use the blend');
+  const accumFn = html.slice(html.indexOf('function accumulatePnlByDay(){'), html.indexOf('function pnlSumRange('));
+  assert.ok(/blendEstDriverWages/.test(accumFn), 'P&L accumulate applies the blend on EST days');
+  assert.ok(/adp\.dollars/.test(accumFn) && /driverSrc = 'ADP'/.test(accumFn),
+    'P&L accumulate still assigns ADP dollars 1:1');
+  const runFn = html.slice(html.indexOf('function runningTotals(refDate){'), html.indexOf('function verizonFuelDollarsForDate('));
+  assert.ok(/blendEstDriverWages/.test(runFn), 'WTD/MTD runningTotals blends EST days');
+
+  assert.ok(/estDriverWageBlend:\s*1\.21/.test(html), 'default settings ship 1.21');
+  assert.ok(/estDollars:\s*88195\.38/.test(html) && /adpDollars:\s*107054\.54/.test(html),
+    'August 1–23 2026 EST $88,195.38 → ADP $107,054.54 is the recorded basis');
+  assert.ok(/id="adpBlendCard"/.test(html), 'Settings has a visible ADP blend card');
+  assert.ok(/OT &amp; meals vs estimate/.test(html), 'operator-facing name is on the card');
+  assert.ok(/2026-08-25-fct-calc-v2\.1\.40-adp-blend/.test(html), 'APP_VERSION is v2.1.40');
+  assert.ok(/v2\.1\.40-adp-blend/.test(html), 'changelog has v2.1.40');
+
+  /* Do not regress the v2.1.39 cost stack. */
+  assert.ok(/wearPerMile:\s*0\.498\b/.test(html), 'wear unchanged');
+  assert.ok(/otherVariablePerLoad:\s*0\b/.test(html), 'other stays 0');
+  assert.ok(/amount:92922/.test(html), 'WC stays $92,922');
+  assert.ok(/truckLease'[\s\S]{0,80}amount:470000/.test(html), 'lease stays $470k');
+  assert.ok(/currentDieselPricePerGal:\s*4\.50/.test(html), 'diesel unchanged');
+  assert.ok(/fleetAvgMPG:\s*6\.0/.test(html), 'MPG unchanged');
+}
+
 console.log('adp-daily-totals.test.mjs: ok');
