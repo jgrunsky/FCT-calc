@@ -1,0 +1,15 @@
+name = "fct-dispatch"
+main = "src/index.js"
+compatibility_date = "2026-07-27"
+workers_dev = true
+
+# Existing DISPATCH KV namespace (already bound on the live worker).
+[[kv_namespaces]]
+binding = "DISPATCH"
+id = "511e045236dc4b41b89538334f54414c"
+
+# Secrets already set / to set in the Cloudflare dashboard (do not put values here):
+#   INGEST_KEY
+#   TWILIO_ACCOUNT_SID
+#   TWILIO_AUTH_TOKEN
+#   TWILIO_FROM
