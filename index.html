@@ -11,7 +11,7 @@
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<meta name="app-version" content="2026-08-25-fct-calc-v2.1.40-adp-blend">
+<meta name="app-version" content="2026-08-25-fct-calc-v2.1.41-excel-sms">
 <title data-id="th-modified">FCT Load Profitability — French Camp Transport</title>
 <link rel="manifest" href='data:application/manifest+json,{"name":"FCT Load Profitability","short_name":"FCT Calc","start_url":".","display":"standalone","background_color":"%2312100e","theme_color":"%2312100e","icons":[{"src":"data:image/svg%2Bxml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 192 192%27%3E%3Crect width=%27192%27 height=%27192%27 fill=%27%2312100e%27/%3E%3Ctext x=%2796%27 y=%27124%27 font-size=%2772%27 font-family=%27sans-serif%27 font-weight=%27700%27 fill=%27%238fb590%27 text-anchor=%27middle%27%3EFCT%3C/text%3E%3C/svg%3E","sizes":"192x192","type":"image/svg+xml"}]}'>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -1061,6 +1061,11 @@
       enable and log the composed message — they do NOT call Twilio.
       That call lands in Phase 3.2.
 
+      v2.1.41: Send dispatch assigns then POSTs /sms on the dispatch
+      Worker. Twilio keys live on the Worker, not in this page.
+      Driver cells persist in state.sms.phones. Missing Twilio or
+      missing cell does not fail the assignment.
+
       ON STORING THE AUTH TOKEN: this is a static page and its state
       lives in localStorage. There is no key store to encrypt
       against — any key would have to sit next to the ciphertext,
@@ -1270,10 +1275,10 @@
       loads with a "Send dispatch" button that RECORDS the
       assignment in state and nothing more.
 
-      NOT built, by instruction: SMS (Phase 3.2), ELD/Verizon API
-      (3.1), GPS matching (3.3), autonomous dispatch (Phase 4).
-      The clock-in toggle and the HOS field are placeholders that
-      those phases will drive; today they are hand-set.
+      v2.1.41: that same Send dispatch now texts via the dispatch
+      Worker when a cell is on file. Queue and Today share
+      sendDispatch(). ELD login and YES/NO reply handling are still
+      later work. GPS matching and Verizon live already shipped.
 
    WHAT CHANGED IN v1.3 (T12M reconciliation, 2026-07-27)
    -------------------------------------------------------------
@@ -1420,7 +1425,7 @@
    still exposes the Import JSON box for future refreshes.
    ============================================================= */
 
-const APP_VERSION = '2026-08-25-fct-calc-v2.1.40-adp-blend';
+const APP_VERSION = '2026-08-25-fct-calc-v2.1.41-excel-sms';
 const STORAGE_KEY = 'fct-calc:state';
 const IDB_NAME = 'fct-calc-db';
 const IDB_STORE = 'kv';
@@ -3525,6 +3530,9 @@ function defaultColumnMap(){
    as the default and editable in Settings — the URL is infrastructure, not a
    constant, and a redeploy should not need a new build of this file. */
 const WORKER_URL = 'https://fct-dispatch.jamesgrunsky.workers.dev/latest';
+/* v2.1.41: SMS hops through the same Worker so Twilio keys never sit in the
+   phone app. Derived from workerUrl (strip a trailing /latest). */
+const WORKER_SMS_PATH = '/sms';
 /* 2026-08-18 v2.1.0: Verizon Reveal live-driver feed. Pulled every 10 min by
    the fct-verizon Worker. Vehicles enriched with per-vehicle GPS from
    /rad/v1/vehicles/{id}/location. Drivers from /cmd/v1/drivers. Feature-flag
@@ -3639,23 +3647,18 @@ function normalizeCompanyInfo(saved){
 }
 
 /* =============================================================
-   SMS DISPATCH CONFIG (v1.8) — Phase 3.2 groundwork
+   SMS DISPATCH CONFIG (v1.8, wired v2.1.41)
    -------------------------------------------------------------
-   UI-level only. Nothing in this build makes a network call to
-   Twilio; smsSend() composes the message, logs it and toasts it.
+   Driver cell numbers live in state.sms.phones (IndexedDB / local
+   state — never git). Twilio keys do NOT live here. Send dispatch
+   POSTs { to, driver, origin, dest, appt, po } to the dispatch
+   Worker (/sms). If TWILIO_* is missing the Worker returns
+   "SMS not configured"; the assignment still stands.
 
-   The auth token is stored in the clear, like every other field in
-   this app's state, and the Settings card says so. A static page
-   has no key store — encrypting it would mean shipping the key in
-   the same localStorage blob as the ciphertext, which protects
-   against nothing and would be a false claim on screen. The field
-   is masked against shoulder-surfing and that is the whole of the
-   protection offered. The mitigation that actually works is a
-   scoped Twilio API key rather than the account auth token.
-
+   Legacy accountSid / authToken / fromNumber on old saves are
+   kept in normalize so an upgrade does not throw, then ignored.
    phones is keyed by the driver's FULL roster name (the same key
-   state.settings.drivers uses) and starts empty, so it neither
-   duplicates the roster nor breaks when a driver is added.
+   state.settings.drivers uses) and starts empty.
    ============================================================= */
 function defaultSmsConfig(){
   return { accountSid:'', authToken:'', fromNumber:'', phones:{}, testTo:'' };
@@ -3671,25 +3674,51 @@ function normalizeSmsConfig(saved){
   }
   return out;
 }
-/* Configured = every field Twilio needs to send at all. The driver's own
-   number is checked per row, not here, so a half-filled phone table disables
-   the rows it is missing rather than the whole feature. */
-function smsConfigured(){
-  const c = state.sms || {};
-  return !!(String(c.accountSid||'').trim() && String(c.authToken||'').trim() && String(c.fromNumber||'').trim());
+function setDriverPhone(name, value){
+  if(!state.sms) state.sms = defaultSmsConfig();
+  if(!state.sms.phones || typeof state.sms.phones!=='object') state.sms.phones = {};
+  const n = String(name||'').trim();
+  if(!n) return;
+  const v = String(value||'').trim();
+  if(v) state.sms.phones[n] = v; else delete state.sms.phones[n];
 }
-function driverPhone(name){ return String(((state.sms||{}).phones||{})[name]||'').trim(); }
+/* Worker origin from the saved /latest URL so a Settings override still
+   finds /sms on the same host. */
+function dispatchWorkerOrigin(){
+  const u = String((state.dispatchImport && state.dispatchImport.workerUrl) || WORKER_URL || '').trim();
+  return u.replace(/\/latest\/?$/i, '').replace(/\/$/, '');
+}
+function dispatchSmsUrl(){
+  return dispatchWorkerOrigin() + WORKER_SMS_PATH;
+}
+/* Client no longer holds Twilio keys. smsConfigured() is kept so old call
+   sites compile; it is not a send gate. */
+function smsConfigured(){ return true; }
+function driverPhone(name){
+  const phones = ((state.sms||{}).phones) || {};
+  const n = String(name||'').trim();
+  if(!n) return '';
+  const direct = String(phones[n]||'').trim();
+  if(direct) return direct;
+  const short = (typeof shortNameFor==='function') ? shortNameFor(n) : '';
+  if(short && phones[short]) return String(phones[short]||'').trim();
+  const upper = n.toUpperCase();
+  const hit = Object.keys(phones).find(k => String(k).toUpperCase()===upper
+    || ((typeof shortNameFor==='function') && shortNameFor(k).toUpperCase()===upper));
+  return hit ? String(phones[hit]||'').trim() : '';
+}
 
-/* The dispatch template. Destination is the delivery point where the sheet
-   has one and the origin otherwise — a driver needs to know where it goes,
-   and on the non-Diamond rows that sit above the banners the origin is the
-   only place answer there is. */
-function smsTemplateFor(r){
-  const dest = String((r&&r.deliveryPoint)||'').trim() || String((r&&r.origin)||'').trim() || 'TBD';
+/* Short English load text a driver can act on. Origin, dest/DP, appt, PO.
+   No P&L dollars. */
+function smsTemplateFor(r, driverName){
+  const dest = String((r&&(r.deliveryPoint||r.destination||r.destName))||'').trim()
+            || String((r&&r.origin)||'').trim() || 'TBD';
+  const origin = String((r&&r.origin)||'').trim() || 'TBD';
   const time = String((r&&(r.time||r.timeRaw))||'').trim() || 'TBD';
-  return 'FCT Dispatch: Load ' + (String((r&&r.po)||'').trim() || 'TBD')
-       + ' → ' + dest + ', ' + time + ' pickup, truck ' + (String((r&&r.truck)||'').trim() || 'TBD')
-       + '. Reply YES to accept, NO to decline. James';
+  const po = String((r&&r.po)||'').trim() || 'TBD';
+  const who = driverName ? (shortNameFor(driverName)+', ') : '';
+  return 'FCT Dispatch: ' + who + 'PO ' + po + ', ' + origin + ' to ' + dest
+       + ', appt ' + time + '. Reply YES to take it. James';
 }
 
 /* ---- Rate-card reconciliation ----
@@ -3850,8 +3879,8 @@ function loadState(){
       state.adpPay          = normalizeAdpPay(p.adpPay);
       /* v1.8 slots. Both absent on every pre-v1.8 save, which is the normal
          case on upgrade: contacts land from the shipped book with the
-         operator's edits merged by key, and the SMS block lands empty, which
-         is what keeps every Send-dispatch button correctly disabled. */
+         operator's edits merged by key, and the SMS block lands empty
+         (no driver cells until James fills them — Send still assigns). */
       state.companyInfo     = normalizeCompanyInfo(p.companyInfo);
       state.sms             = normalizeSmsConfig(p.sms);
 
@@ -7840,6 +7869,7 @@ function autoMap(aoa){
    So we walk top-to-bottom carrying current-date and current-D.P.
    as state, and emit one load per non-banner row.
    ============================================================= */
+/* BEGIN DISPATCH_PARSER */
 function parseDispatchRows(aoa, map, headerRow){
   const rows = [];
   const dates = {};
@@ -7953,6 +7983,175 @@ function parseDispatchRows(aoa, map, headerRow){
     .map(k=>({label:k, n:unassigned[k]})).sort((a,b)=>b.n-a.n);
   return { rows:rows, dates:dateList, skipped:skipped, noDate:noDate,
            buckets:buckets, unassigned:unassignedList };
+}
+/* END DISPATCH_PARSER */
+
+/* BEGIN DISPATCH_SHEET_IO */
+/* v2.1.41: same A..I layout as "2026 FCT Dispatch Log.xlsx" so a download
+   round-trips through parseDispatchRows — date banner in the origin column,
+   then D.P. LATHROP / D.P. RIPON, then load rows. PUSH rows stay on the
+   sheet. Tomorrow's pre-6am preloads get their own date banner after today.
+   Do not duplicate the 🔒 PRELOADED hoist; those loads already sit under
+   their plant section, matching the Excel plant list. */
+var DISPATCH_XLSX_HEADERS = ['Time','PO / Rel #','Driver','Grower / Origin','FB #','Commodity','Truck','Status','Trailer 2'];
+function dispatchDateBannerText(iso){
+  const d = dateFromISO(iso);
+  if(!d) return iso || '';
+  return DOW_LONG[d.getDay()].toUpperCase()+'  '+(d.getMonth()+1)+'/'+d.getDate()+'/'+d.getFullYear();
+}
+function dispatchDpBannerText(dp){
+  const s = String(dp||'').toUpperCase().trim();
+  if(/LATHROP/.test(s)) return 'D.P. LATHROP';
+  if(/RIPON/.test(s)) return 'D.P. RIPON';
+  return s ? ('D.P. '+s) : '';
+}
+function dispatchDriverCell(r){
+  const raw = String((r && r.driverRaw) || '').trim();
+  if(raw) return raw;
+  const name = String((r && r.driver) || '').trim();
+  if(!name) return '';
+  return (typeof shortNameFor === 'function') ? shortNameFor(name) : name;
+}
+function dispatchLoadAoaRow(r){
+  const cells = (r && Array.isArray(r.rawCells)) ? r.rawCells : [];
+  return [
+    String((r && (r.time || r.timeRaw)) || ''),
+    String((r && r.po) || ''),
+    dispatchDriverCell(r),
+    String((r && r.origin) || ''),
+    String((r && r.fb) || ''),
+    String((r && r.commodity) || ''),
+    String((r && r.truck) || ''),
+    String((r && r.status) || ''),
+    String(cells[8] || '')
+  ];
+}
+function dispatchBannerAoaRow(text){
+  return ['','','', String(text||''), '','','','',''];
+}
+function dispatchEmptyAoaRow(){
+  return ['','','','','','','','',''];
+}
+function emitDispatchLoadList(aoa, rows){
+  (rows||[]).forEach(r=>{ if(r) aoa.push(dispatchLoadAoaRow(r)); });
+}
+function buildDispatchSheetAoa(parts){
+  parts = parts || {};
+  const aoa = [DISPATCH_XLSX_HEADERS.slice()];
+  const dateLabel = parts.dateLabel || dispatchDateBannerText(parts.dateISO);
+  if(dateLabel) aoa.push(dispatchBannerAoaRow(dateLabel));
+  emitDispatchLoadList(aoa, parts.above);
+  if((parts.lathrop||[]).length){
+    aoa.push(dispatchEmptyAoaRow());
+    aoa.push(dispatchBannerAoaRow(dispatchDpBannerText('LATHROP')));
+    emitDispatchLoadList(aoa, parts.lathrop);
+  }
+  if((parts.ripon||[]).length){
+    aoa.push(dispatchEmptyAoaRow());
+    aoa.push(dispatchBannerAoaRow(dispatchDpBannerText('RIPON')));
+    emitDispatchLoadList(aoa, parts.ripon);
+  }
+  if((parts.other||[]).length){
+    const byDp = {};
+    const order = [];
+    (parts.other||[]).forEach(r=>{
+      const dp = String((r && r.deliveryPoint) || '').trim() || '_';
+      if(!byDp[dp]){ byDp[dp] = []; order.push(dp); }
+      byDp[dp].push(r);
+    });
+    order.forEach(dp=>{
+      aoa.push(dispatchEmptyAoaRow());
+      if(dp && dp!=='_') aoa.push(dispatchBannerAoaRow(dispatchDpBannerText(dp)));
+      emitDispatchLoadList(aoa, byDp[dp]);
+    });
+  }
+  const tomN = (parts.tomAbove||[]).length + (parts.tomLathrop||[]).length
+    + (parts.tomRipon||[]).length + (parts.tomOther||[]).length;
+  if(parts.tomorrowISO && tomN){
+    aoa.push(dispatchEmptyAoaRow());
+    const tomLabel = parts.tomorrowLabel || dispatchDateBannerText(parts.tomorrowISO);
+    aoa.push(dispatchBannerAoaRow(tomLabel));
+    emitDispatchLoadList(aoa, parts.tomAbove);
+    if((parts.tomLathrop||[]).length){
+      aoa.push(dispatchBannerAoaRow(dispatchDpBannerText('LATHROP')));
+      emitDispatchLoadList(aoa, parts.tomLathrop);
+    }
+    if((parts.tomRipon||[]).length){
+      aoa.push(dispatchBannerAoaRow(dispatchDpBannerText('RIPON')));
+      emitDispatchLoadList(aoa, parts.tomRipon);
+    }
+    if((parts.tomOther||[]).length){
+      emitDispatchLoadList(aoa, parts.tomOther);
+    }
+  }
+  return aoa;
+}
+/* END DISPATCH_SHEET_IO */
+
+function recsToDispatchRows(list){
+  return (list||[]).map(x=> x && x.r ? x.r : x).filter(Boolean);
+}
+function dispatchSheetAoaForView(dateISO){
+  const shown = dateISO || (state.dayRollup && state.dayRollup.date) || '';
+  const prevDiamond = dayDiamondOnly;
+  dayDiamondOnly = false;
+  let S, SPre, dayPre;
+  try {
+    S = sheetSections((state.dayRollup && state.dayRollup.currentRows) || []);
+    dayPre = (typeof preloadSectionRows === 'function' && shown) ? preloadSectionRows(shown) : [];
+    SPre = sheetSections(dayPre);
+  } finally { dayDiamondOnly = prevDiamond; }
+  const tomOther = recsToDispatchRows(SPre.other)
+    .concat(recsToDispatchRows(SPre.above), recsToDispatchRows(SPre.manual));
+  return buildDispatchSheetAoa({
+    dateISO: shown,
+    above: recsToDispatchRows(S.above),
+    lathrop: recsToDispatchRows(S.lathrop),
+    ripon: recsToDispatchRows(S.ripon),
+    other: recsToDispatchRows(S.other),
+    tomorrowISO: shown ? nextDayISO(shown) : '',
+    tomAbove: [],
+    tomLathrop: recsToDispatchRows(SPre.lathrop),
+    tomRipon: recsToDispatchRows(SPre.ripon),
+    tomOther: tomOther
+  });
+}
+function downloadDispatchXlsx(dateISO){
+  const shown = dateISO || (state.dayRollup && state.dayRollup.date) || '';
+  if(!shown){ toast('Import the dispatch log first'); return Promise.resolve(null); }
+  const aoa = dispatchSheetAoaForView(shown);
+  return loadSheetJS().then(XLSX=>{
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, '2026');
+    const out = XLSX.write(wb, { bookType:'xlsx', type:'array' });
+    const blob = new Blob([out], { type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'FCT-Dispatch-Log-'+shown+'.xlsx';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(()=>URL.revokeObjectURL(url), 1000);
+    toast('Downloaded '+shown+' — same layout as the dispatch log. Drop it back in to round-trip.');
+    return aoa;
+  }).catch(e=>{
+    toast(String(e && e.message || e));
+    return null;
+  });
+}
+/* Full OneDrive / Microsoft Graph write-back is not in this build — the
+   Worker has no Microsoft OAuth. excelWebUrl and the OneDrive import URL
+   still work. When Graph lands, PUT the driver cell for row.sheetRow here.
+   Do not invent tokens. The assignment is already on the row in state and
+   on Download today's sheet. */
+function stubExcelWriteback(row){
+  const di = (state && state.dispatchImport) || {};
+  const url = di.excelWebUrl || di.lastUrl || '';
+  if(!url) return;
+  try {
+    console.log('[FCT Excel write-back stub] driver='+dispatchDriverCell(row)
+      +' sheetRow='+(row && row.sheetRow || '?')+' onedrive='+url);
+  } catch(_){}
 }
 
 /* Re-parseable in memory so a mapping change does not need a re-upload.
@@ -9191,41 +9390,24 @@ function suggestCellHTML(r){
     + '</button>';
 }
 
-/* ---- Send dispatch (v1.8, Phase 3.2 groundwork) ----
+/* ---- Send dispatch (v1.8, SMS hop v2.1.41) ----
    Drawn only on an unassigned Section-1 row, directly under the suggestion,
-   because the message it would send goes to exactly that suggested driver —
-   putting the button anywhere else would hide which driver is being texted.
+   because the message goes to exactly that suggested driver.
 
-   Three states, and the disabled ones say WHY rather than just greying out:
-     no Twilio config          -> "Requires Twilio setup — Phase 3.2"
-     configured, driver has no number -> names the driver and where to fix it
-     configured + number       -> enabled, and still does not call Twilio.
-                                  It composes, logs and shows the message.
-
-   Nothing here touches the network. The real send lands in Phase 3.2. */
+   Send always assigns. If the driver has a cell, POST /sms on the dispatch
+   Worker. If not, still assign and say "no cell on file." Twilio missing
+   on the Worker is "SMS not configured" — the assignment stands. Queue
+   Send and Today Send share sendDispatch(). */
 function smsButtonHTML(r){
   if(!isUnassigned(r)) return '';
   const top = picksForRow(r);
   if(!top.length) return '';
   const target = top[0];
-  const ready  = smsConfigured();
   const phone  = driverPhone(target.name);
-
-  let why, cls;
-  if(!ready){
-    why = 'Requires Twilio setup — Phase 3.2';
-    cls = ' off';
-  } else if(!phone){
-    why = 'No phone number for ' + target.short + ' — add it in Settings → SMS Dispatch';
-    cls = ' off';
-  } else {
-    why = 'Compose the dispatch text to ' + target.short + ' (' + phone + '). '
-        + 'Preview only — no message is sent until Phase 3.2.';
-    cls = '';
-  }
-  const enabled = ready && !!phone;
-  return '<button type="button" class="sms-btn' + cls + '" data-sms="' + esc(r.id) + '"'
-    + (enabled ? '' : ' disabled aria-disabled="true"')
+  const why = phone
+    ? ('Assign '+target.short+' and text the load to '+phone+'.')
+    : ('Assign '+target.short+' — no cell on file. Add it in Settings → Drivers.');
+  return '<button type="button" class="sms-btn" data-sms="' + esc(r.id) + '"'
     + ' title="' + esc(why) + '">✉ Send dispatch</button>';
 }
 
@@ -9247,7 +9429,7 @@ function openSugPop(btn, rowId){
     + top.map((t,i)=>'<button type="button" class="sug-opt" data-pick="'+esc(t.name)+'" data-row="'+esc(rowId)+'">'
         + '<span class="sug-opt-n">'+(i+1)+'. '+esc(t.short)+(t.known?'':' <span style="color:var(--text-faint)">?</span>')+'</span>'
         + '<span class="sug-opt-w">'+esc(t.why)+'</span></button>').join('')
-    + '<div class="sug-pop-f">Tap a driver to record the assignment. SMS goes out in Phase 3.2 — nothing is sent today.</div>';
+    + '<div class="sug-pop-f">Tap a driver to record the assignment. Send dispatch texts them if a cell is on file.</div>';
   document.body.appendChild(pop);
   const b = btn.getBoundingClientRect();
   const w = Math.min(280, window.innerWidth-20);
@@ -9270,14 +9452,15 @@ function findRowById(id){
       || ((state.dayRollup.lastImport&&state.dayRollup.lastImport.rows)||[]).find(x=>x.id===id)
       || null;
 }
-/* Record an assignment. This is the Phase 3.0 seam: today it writes the
-   driver onto the row, flips the status to DISPATCHED and logs the decision.
-   Phase 3.2 hangs the SMS off exactly this call. */
-function assignDriver(rowId, driverName, wasSuggested){
+/* Record an assignment. Writes the driver onto the row (current day + last
+   import), flips status to DISPATCHED, logs the decision. sendDispatch() is
+   the Send-dispatch entry — it calls this then hops SMS through the Worker. */
+function assignDriver(rowId, driverName, wasSuggested, opts){
+  opts = opts || {};
   const rows = [state.dayRollup.currentRows.find(x=>x.id===rowId),
                 ((state.dayRollup.lastImport&&state.dayRollup.lastImport.rows)||[]).find(x=>x.id===rowId)]
                .filter(Boolean);
-  if(!rows.length){ toast('That load is no longer in view'); return; }
+  if(!rows.length){ toast('That load is no longer in view'); return null; }
   const r0 = rows[0];
   // v1.8.34: capture the algo's top-3 at moment of assignment so we can
   // score agreement rate and mine drift patterns against James's picks.
@@ -9307,7 +9490,7 @@ function assignDriver(rowId, driverName, wasSuggested){
   rows.forEach(r=>{ r.driver = driverName; r.driverRaw = shortNameFor(driverName); r.status = 'DISPATCHED'; });
   state.dispatchOps.assignments[rowId] = {
     driver: driverName, at: new Date().toISOString(), date: r0.date||'',
-    po: r0.po||'', origin: r0.origin||'', dest: r0.destName || r0.destination || '',
+    po: r0.po||'', origin: r0.origin||'', dest: r0.destName || r0.destination || r0.deliveryPoint || '',
     time: r0.time||'', commodity: r0.commodity || r0.product || '',
     trailer: r0.trailer || '', customer: r0.customer || '',
     suggested: !!wasSuggested,
@@ -9318,9 +9501,71 @@ function assignDriver(rowId, driverName, wasSuggested){
     note: note,
   };
   invalidateVerizonMatch();   // a newly-named driver can now claim a trip
+  try { stubExcelWriteback(r0); } catch(_){}
   saveDayImport();
-  renderDayRollup();          // re-renders the Queue on its way out
-  toast(shortNameFor(driverName)+' assigned — recorded, no SMS sent');
+  if(!opts.quiet){
+    renderDayRollup();          // re-renders the Queue on its way out
+    toast(shortNameFor(driverName)+' assigned');
+  }
+  return r0;
+}
+
+/* Queue Send dispatch and Today Send share this. Assignment never waits on
+   SMS. No cell → still assign, toast "no cell on file." Worker missing
+   Twilio → still assign, "SMS not configured." */
+function smsPayloadFor(row, driverName, phone){
+  const dest = String((row&&(row.deliveryPoint||row.destination||row.destName))||'').trim();
+  return {
+    to: phone,
+    driver: shortNameFor(driverName) || String(driverName||''),
+    origin: String((row&&row.origin)||'').trim(),
+    dest: dest,
+    dp: dest,
+    appt: String((row&&(row.time||row.timeRaw))||'').trim(),
+    po: String((row&&row.po)||'').trim(),
+    body: smsTemplateFor(row, driverName)
+  };
+}
+function postDispatchSms(payload){
+  const url = dispatchSmsUrl();
+  return fetch(url, {
+    method:'POST',
+    cache:'no-store',
+    headers:{ 'Content-Type':'application/json', 'Accept':'application/json' },
+    body: JSON.stringify(payload)
+  }).then(r=> r.json().then(j=>({ http:r.status, body:j }), ()=>({ http:r.status, body:null })))
+    .catch(e=>({ http:0, body:null, error:String(e && e.message || e) }));
+}
+function sendDispatch(rowId, driverName, wasSuggested){
+  const name = String(driverName||'').trim();
+  if(!name){ toast('Pick a driver first'); return Promise.resolve(null); }
+  const assigned = assignDriver(rowId, name, wasSuggested, {quiet:true});
+  if(!assigned) return Promise.resolve(null);
+  renderDayRollup();
+  const short = shortNameFor(name);
+  const phone = driverPhone(name);
+  if(!phone){
+    toast(short+' assigned — no cell on file');
+    return Promise.resolve(assigned);
+  }
+  return postDispatchSms(smsPayloadFor(assigned, name, phone)).then(res=>{
+    const body = (res && res.body) || {};
+    if(body.sent || body.ok){
+      toast(short+' assigned · text sent');
+      return assigned;
+    }
+    const err = String(body.error || res.error || '');
+    if(/not configured/i.test(err)){
+      toast(short+' assigned · SMS not configured');
+      return assigned;
+    }
+    if(!res.http){
+      toast(short+' assigned · text not sent (worker unreachable)');
+      return assigned;
+    }
+    toast(short+' assigned · text not sent'+(err ? ' — '+err : ''));
+    return assigned;
+  });
 }
 // v1.8.34b: after-the-fact note editor — click any assignment row to add or
 // change the "why" without having to re-dispatch. Notes are the drift-tuning
@@ -10438,6 +10683,9 @@ function renderDayRollup(){
       + '<button type="button" id="adpPick" title="Import ADP Employee Daily Totals (field-driver pay). Replaces that date range; does not wipe dispatch."'
       + ' style="all:unset;cursor:pointer;padding:4px 8px;border-radius:4px;border:1px solid var(--border-strong);'
       + 'color:var(--text-muted);font:700 10px/1 var(--body);letter-spacing:.04em">ADP</button>'
+      + '<button type="button" id="dispXlsx" title="Download today\'s sheet as xlsx — same date banner, D.P. Lathrop/Ripon, driver/origin/PO layout as the dispatch log. Drop it back in to round-trip."'
+      + ' style="all:unset;cursor:pointer;padding:4px 8px;border-radius:4px;border:1px solid var(--border-strong);'
+      + 'color:var(--text-muted);font:700 10px/1 var(--body);letter-spacing:.04em">📗 xlsx</button>'
       + '</div></div>'
       + '<input type="file" id="dispFile" accept=".xlsx,.xlsm,.xls,.csv" multiple style="display:none">'
       + '<div id="dispStatus" style="font-size:10px;color:var(--text-faint)"></div></div>';
@@ -11004,23 +11252,16 @@ function wireDayRollup(){
     toast('AR alert acknowledged — it returns if the balance moves');
   }));
 
-  /* --- v1.8 SMS dispatch stub ---
-     Composes and shows. Does not send. The console line is the deliberate
-     part: Phase 3.2 replaces exactly this call site with the Twilio POST, so
-     what gets logged now is what will get sent then. */
+  /* --- v2.1.41 SMS dispatch — assign first, then Worker /sms --- */
   document.querySelectorAll(DAY_HOST+' [data-sms]').forEach(b=>b.addEventListener('click',e=>{
     e.stopPropagation();
     if(b.disabled) return;
-    const row = (state.dayRollup.currentRows||[]).find(x=>x.id===b.dataset.sms);
+    const row = findRowById(b.dataset.sms);
     if(!row) return;
-    const top = suggestDrivers(row, 1);
+    const top = picksForRow(row);
     const target = top.length ? top[0] : null;
-    const msg = smsTemplateFor(row);
-    const to  = target ? driverPhone(target.name) : '';
-    console.log('[FCT SMS stub — not sent] to=' + (to||'(no number)')
-      + ' driver=' + (target?target.name:'(none)')
-      + ' from=' + (state.sms.fromNumber||'(unset)') + '\n' + msg);
-    toast('Would send: ' + msg);
+    if(!target){ toast('Pick a driver first'); return; }
+    sendDispatch(row.id, target.name, true);
   }));
 
   /* --- sheet edit toggle (not a modal: the cells turn into inputs in place) --- */
@@ -11158,6 +11399,10 @@ function wireDayRollup(){
     const u = ((uEl&&uEl.value)||'').trim();
     if(!u){ toast('Paste the OneDrive link first'); return; }
     di.lastUrl = u; save(); fetchDispatchUrl(u);
+  });
+  const xlsxBtn = document.getElementById('dispXlsx');
+  if(xlsxBtn) xlsxBtn.addEventListener('click',()=>{
+    downloadDispatchXlsx(state.dayRollup.date);
   });
 
   /* --- calibration shortcut --- */
@@ -12543,11 +12788,10 @@ function saveDaySnapshot(){
    preloads; Section 2 groups those rows Lathrop → Ripon → Other
    instead of a flat dump. Revenue still belongs to tomorrow.
 
-   "Send dispatch" is deliberately a misnomer today: it records
-   the assignment, flips the row to DISPATCHED and nothing leaves
-   the device. Phase 3.2 turns that same call into an SMS. The
-   button is named for what it will do so the muscle memory is
-   already right — and the row says so, so nobody is misled.
+   v2.1.41: Send dispatch assigns the driver onto the load row and
+   texts them via the dispatch Worker when a cell is on file.
+   Download today's sheet writes the same Excel layout the importer
+   reads. PUSH rows and preload sections are unchanged.
    ============================================================= */
 function queueRows(){
   return state.dayRollup.currentRows
@@ -12606,6 +12850,9 @@ function renderQueue(){
     + assignedRows.length+' assigned'
     + (doneRows.length ? ' · '+doneRows.length+' done' : '')
     + (allRows.length ? ' · '+allRows.length+' load'+(allRows.length===1?'':'s')+' on the day' : '')
+    + '</div>'
+    + '<div class="btn-row" style="margin:-4px 0 12px">'
+    + '<button type="button" class="act" id="qDownloadXlsx" title="Same date banner, D.P. Lathrop/Ripon, driver/origin/PO/commodity/truck/status as the dispatch log. Drop the file back in to round-trip.">📗 Download today\'s sheet</button>'
     + '</div>';
 
   /* v2.1.32: tomorrow preloads at the TOP, not only the bottom. Same
@@ -12803,9 +13050,10 @@ function renderQueue(){
     h += '</table></div>';
     h += '<div class="legend">Same layout as the dispatch log — date banner, then D.P. Lathrop, then D.P. Ripon. '
       + 'Tomorrow\'s preloads sit under the blue 📦 banner, grouped the same way (Lathrop then Ripon). '
-      + 'Open rows have the driver list and <b>Send dispatch</b> (records the assignment, no SMS yet). '
+      + 'Open rows have the driver list and <b>Send dispatch</b> (assigns the driver; texts them if a cell is on file). '
+      + '<b>Download today\'s sheet</b> writes that same Excel so the next drop round-trips. '
       + 'Assigned drivers are locked. Done stays on the sheet, greyed. '
-      + 'Suggestions still walk the day in clock order with the 2-load cap.</div>';
+      + 'Suggestions still walk the day in clock order with the 2-load cap. PUSH rows stay on the sheet.</div>';
   }
   h += '</div>';
 
@@ -12878,8 +13126,12 @@ function renderQueue(){
     const name = sel ? sel.value : '';
     if(!name){ toast('Pick a driver first'); return; }
     const top = suggestDrivers(findRowById(id)||{}, 1);
-    assignDriver(id, name, !!(top[0] && top[0].name===name));
+    sendDispatch(id, name, !!(top[0] && top[0].name===name));
   }));
+  const qXlsx = document.getElementById('qDownloadXlsx');
+  if(qXlsx) qXlsx.addEventListener('click',()=>{
+    downloadDispatchXlsx(state.dayRollup.date);
+  });
   const cl = document.getElementById('qClearLog');
   if(cl) cl.addEventListener('click',()=>{
     if(!confirm('Clear the recorded assignment log? The drivers already written onto the loads stay put.')) return;
@@ -14068,6 +14320,10 @@ function renderSet(){
         + '<div style="flex:0 0 84px"><label style="font-size:9px;margin-bottom:3px" for="dhos'+i+'">HOS hrs</label>'
         + '<input id="dhos'+i+'" type="number" inputmode="decimal" step="0.5" min="0" max="14" value="'+esc(d.hos)+'" '
         + 'data-dophos="'+esc(d.name)+'" style="padding:6px 7px;font-size:13px;text-align:right"></div>'
+        + '<div style="flex:0 0 118px"><label style="font-size:9px;margin-bottom:3px" for="dcell'+i+'">Cell</label>'
+        + '<input id="dcell'+i+'" type="tel" spellcheck="false" inputmode="tel" placeholder="+1…" '
+        + 'value="'+esc(driverPhone(d.name))+'" data-smsphone="'+esc(d.name)+'" '
+        + 'style="padding:6px 7px;font-size:13px"></div>'
         + '<label style="flex:0 0 auto;display:flex;align-items:center;gap:6px;text-transform:none;letter-spacing:0;'
         + 'font-size:11px;font-weight:600;margin-bottom:0;cursor:pointer;color:'+(d.clockedIn?'var(--green)':'var(--text-faint)')+'">'
         + '<input type="checkbox" data-dopclk="'+esc(d.name)+'"'+(d.clockedIn?' checked':'')+' style="width:auto;flex:0 0 auto;margin:0">'
@@ -14079,7 +14335,8 @@ function renderSet(){
         + '</div>';
     });
     h += '<div class="legend">Origin pairings are the driver\'s five most-run origins out of the 2026 log — the signal the '
-      + 'suggestion engine ranks on. Untick <b>available</b> to take a driver out of suggestions entirely (vacation, out of '
+      + 'suggestion engine ranks on. Cell numbers stay on this phone (not in git). Send dispatch texts that number via the '
+      + 'dispatch Worker — Twilio keys never sit in the app. Untick <b>available</b> to take a driver out of suggestions entirely (vacation, out of '
       + 'service) without removing them from payroll above. '
       + (off ? '<b>'+off+' driver'+(off===1?' is':'s are')+' currently unavailable.</b> ' : '')
       + 'Names are bridged to the dispatch log\'s short names — Manuel = Munoz, Rafa = Rafael, and Felipe and Felix are two '
@@ -14121,47 +14378,25 @@ function renderSet(){
     + 'off ARA rather than FCG precisely because ARA runs two hours later.</div></div>';
 
   /* =============================================================
-     SMS DISPATCH (v1.8) — Phase 3.2 groundwork
-     Config only. Nothing in this build sends a message.
+     SMS DISPATCH (v2.1.41)
+     Driver cells on this page. Twilio keys on the dispatch Worker.
      ============================================================= */
   {
     const sms = state.sms;
-    const ready = smsConfigured();
     const roster = s.drivers;
     const withPhones = roster.filter(d=>driverPhone(d.name)).length;
 
     h += '<div class="card" id="smsCard"><h2>SMS dispatch '
-      + (ready ? '<span class="chip g">configured</span>' : '<span class="chip y">not configured</span>')+'</h2>'
-      + '<div class="banner amber" style="margin-bottom:14px"><b>⚑ Not wired up yet — Phase 3.2</b>'
-      + 'SMS dispatch requires: a Twilio account ($15/mo minimum), driver phone numbers, and message template '
-      + 'approval. Enable when ready for Phase 3.2 (autonomous dispatch). Until then the <b>Send dispatch</b> '
-      + 'buttons on the load list compose the message and show it to you — they do not send anything, and '
-      + 'nothing here talks to the network.</div>';
+      + '<span class="chip g">via Worker</span></h2>'
+      + '<div class="hint" style="margin-bottom:12px">Send dispatch assigns the load first, then POSTs to '
+      + '<code>'+esc(dispatchSmsUrl())+'</code> when that driver has a cell. Twilio '
+      + '(TWILIO_ACCOUNT_SID / AUTH_TOKEN / FROM) lives on the Worker — not in this app, not in git. '
+      + 'If those secrets are missing the Worker says <b>SMS not configured</b> and the assignment still stands. '
+      + 'No cell → still assign, toast “no cell on file.”</div>';
 
-    /* The security note is a card of its own weight, not a footnote. Anyone
-       typing a live auth token into a web page deserves to be told what
-       happens to it BEFORE they type it, not in a legend underneath. */
-    h += '<div class="banner" style="background:var(--red-bg);border:1px solid color-mix(in oklab,var(--red) 40%,transparent);'
-      + 'color:#f0b9b4;margin-bottom:14px"><b style="color:var(--red)">🔒 About the auth token</b>'
-      + 'This is a static page and everything it knows lives in this browser\'s localStorage, in the clear. '
-      + 'There is no key store to encrypt against — any key would have to sit next to what it encrypted, which '
-      + 'protects nothing. The field below is masked so it cannot be read over your shoulder, and that is the '
-      + 'whole of the protection on offer. <b>Use a scoped Twilio API key restricted to sending SMS, never the '
-      + 'account auth token</b>, so that anything with access to this browser profile cannot take over the '
-      + 'account. Tap <b>Copy all data</b> in the Data card and the token comes with it.</div>';
-
-    h += '<div class="fld"><label for="smsSid">Twilio Account SID</label>'
-      + '<input id="smsSid" spellcheck="false" autocomplete="off" value="'+esc(sms.accountSid)+'" placeholder="AC…"></div>'
-      + '<div class="fld"><label for="smsTok">Twilio Auth Token / API key secret</label>'
-      + '<input id="smsTok" type="password" spellcheck="false" autocomplete="new-password" value="'+esc(sms.authToken)+'" '
-      + 'placeholder="stored unencrypted — use a scoped API key"></div>'
-      + '<div class="fld"><label for="smsFrom">Twilio "from" number</label>'
-      + '<input id="smsFrom" type="tel" spellcheck="false" value="'+esc(sms.fromNumber)+'" placeholder="+1…"></div>';
-
-    h += '<h2 style="margin-top:18px">Driver phone numbers</h2>'
-      + '<div class="hint" style="margin-bottom:12px">'+withPhones+' of '+roster.length+' on file. A load\'s '
-      + '<b>Send dispatch</b> button stays disabled until the driver it would text has a number here, so a '
-      + 'half-filled table disables only the rows it is missing.</div>';
+    h += '<h2 style="margin-top:8px">Driver cell numbers</h2>'
+      + '<div class="hint" style="margin-bottom:12px">'+withPhones+' of '+roster.length+' on file. Empty until you fill them. '
+      + 'Same fields as <b>Drivers — dispatch</b> above. Stored on this phone, not in git.</div>';
     roster.forEach((d,i)=>{
       h += '<div class="fld"><label for="smsP'+i+'">'+esc(shortNameFor(d.name))
         + ' <span style="color:var(--text-faint);font-weight:400">'+esc(d.name)+'</span></label>'
@@ -14172,16 +14407,14 @@ function renderSet(){
     h += '<h2 style="margin-top:18px">Test</h2>'
       + '<div class="fld"><label for="smsTest">Your phone number</label>'
       + '<input id="smsTest" type="tel" spellcheck="false" value="'+esc(sms.testTo)+'" placeholder="+1…"></div>'
-      + '<div class="btn-row"><button class="act ghost" id="smsTestBtn"'+(ready?'':' disabled')+'>'
-      + 'Test SMS to my phone</button></div>'
-      + (ready ? '' : '<div class="hint">Enabled once the SID, token and from-number are all filled in.</div>');
+      + '<div class="btn-row"><button class="act ghost" id="smsTestBtn">Test SMS to my phone</button></div>'
+      + '<div class="hint">Hits the Worker. If Twilio is not set there you get “SMS not configured” — no text goes out.</div>';
 
     h += '<div class="legend"><b>The template.</b> Every dispatch text is composed as:<br>'
       + '<span style="font-family:var(--mono);font-size:11px;color:var(--text-muted)">'
-      + esc('FCT Dispatch: Load [PO] → [Destination], [time] pickup, truck [truck]. Reply YES to accept, NO to decline. James')
-      + '</span><br><br>Destination is the delivery point where the sheet has one and the origin otherwise. '
-      + 'The reply handling — YES/NO back into the assignment — is Phase 3.2 along with the send itself; today '
-      + 'the button composes, logs to the console and shows you the message.</div></div>';
+      + esc('FCT Dispatch: [driver], PO [PO], [origin] to [dest], appt [time]. Reply YES to take it. James')
+      + '</span><br><br>No P&amp;L dollars. Dest is the D.P. when the sheet has one. '
+      + 'YES/NO reply handling is still later work — this PR only sends the outbound text.</div></div>';
   }
 
   /* =============================================================
@@ -14366,32 +14599,38 @@ function renderSet(){
     });
   }
 
-  /* --- v1.8 SMS dispatch config ---
-     Re-renders the dash on every change because the Send-dispatch buttons on
-     the load list enable and disable off exactly these fields. */
+  /* --- v2.1.41 SMS dispatch — phones in state, Twilio on the Worker --- */
   {
-    const bindSms=(id,key)=>{ const el=document.getElementById(id); if(!el) return;
-      el.addEventListener('change',()=>{
-        state.sms[key] = el.value.trim();
-        save(); renderSet(); renderDash();
-      }); };
-    bindSms('smsSid','accountSid'); bindSms('smsTok','authToken');
-    bindSms('smsFrom','fromNumber'); bindSms('smsTest','testTo');
+    const testEl = document.getElementById('smsTest');
+    if(testEl) testEl.addEventListener('change',()=>{
+      state.sms.testTo = testEl.value.trim();
+      save();
+    });
 
     document.querySelectorAll('[data-smsphone]').forEach(el=>el.addEventListener('change',()=>{
-      const n = el.dataset.smsphone, v = el.value.trim();
-      if(v) state.sms.phones[n] = v; else delete state.sms.phones[n];
+      setDriverPhone(el.dataset.smsphone, el.value);
       save(); renderSet(); renderDash();
     }));
 
     const tb = document.getElementById('smsTestBtn');
     if(tb) tb.addEventListener('click',()=>{
-      if(!smsConfigured()) return;
-      const to = String(state.sms.testTo||'').trim();
+      const to = String((document.getElementById('smsTest')||{}).value || state.sms.testTo || '').trim();
       if(!to){ toast('Add your phone number first'); return; }
-      const msg = 'FCT Dispatch: test message from the load calculator. Reply YES to accept, NO to decline. James';
-      console.log('[FCT SMS stub — not sent] to='+to+' from='+(state.sms.fromNumber||'(unset)')+'\n'+msg);
-      toast('Would send: '+msg);
+      state.sms.testTo = to; save();
+      const payload = {
+        to: to, driver: 'James', origin: 'yard', dest: 'test',
+        appt: 'now', po: 'TEST',
+        body: 'FCT Dispatch: test message from the load calculator. Reply YES to take it. James'
+      };
+      toast('Sending test via Worker…');
+      postDispatchSms(payload).then(res=>{
+        const body = (res && res.body) || {};
+        if(body.sent || body.ok){ toast('Test text sent'); return; }
+        const err = String(body.error || res.error || '');
+        if(/not configured/i.test(err)) toast('SMS not configured on the Worker');
+        else if(!res.http) toast('Worker unreachable — assignment would still stand');
+        else toast(err || ('Worker HTTP '+res.http));
+      });
     });
   }
 
@@ -15173,6 +15412,11 @@ SHADOW_TIMELINE_TEXT['2026-07-28'] = "**PARTIAL DAY — Phase 2 diff loop stoppe
 
 /* ---- v2.0 DATA: Changelog (in-app version history) ---- */
 const SHADOW_CHANGELOG = [
+  { ver:'v2.1.41-excel-sms', date:'2026-08-25', changes:[
+    'Dispatch is one board with Excel. Send dispatch writes the driver onto that load row (Today and Queue share sendDispatch). Download today\'s sheet as xlsx in the same layout as 2026 FCT Dispatch Log.xlsx — date banner, D.P. Lathrop / D.P. Ripon, driver / origin / PO / commodity / truck / status — so the next drop round-trips through the importer. OneDrive import URL and excelWebUrl are unchanged; full OneDrive write-back is stubbed (no Microsoft OAuth). PUSH rows and preload sections behave as today',
+    'Cell field on each driver in Settings (Drivers — dispatch and SMS card). Empty until James fills. Stored in state, not git. Send dispatch: if that driver has a phone, POST { to, driver, origin, dest, appt, po } to the dispatch Worker /sms (fct-dispatch.jamesgrunsky.workers.dev). No cell → still assign, toast “no cell on file.” Worker uses TWILIO_ACCOUNT_SID / AUTH_TOKEN / FROM when set; if missing returns “SMS not configured” and does not fail the assignment. Twilio keys never sit in the phone app. No P&L dollars in the text. CI does not send a real text',
+    'Does not change diesel, MPG, P&L, ADP blend, wear, WC, Queue ranking math, or office rules'
+  ]},
   { ver:'v2.1.40-adp-blend', date:'2026-08-25', changes:[
     'James will not log into ADP on the phone. EST driver wages on the P&L / day-rollup now get a visible Settings calibration — ADP blend (OT & meals vs estimate), default 1.21 — so the month number is usable without a pay-file import',
     'Basis: Aug 1–23 2026 Employee Daily Totals, field drivers. Live P&L EST MTD was $88,195.38; same board after ADP import was $107,054.54 (closed days ADP $101,194.90 / 4,037.3 hr through 8/23; today 8/24 stayed EST $5,191.24). Ratio ≈ 1.214. Gap is mostly OT + meals, plus hours a bit light. ADP blended field $/hr through 8/23 was $25.07 vs defaultDriverRate $22.28',
