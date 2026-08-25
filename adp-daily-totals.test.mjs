@@ -368,6 +368,18 @@ assert.equal(looksLikeAdpAoa([['Date','Driver','Grower','FB','Commodity']]), fal
   sandbox.state.adpPay = { openDate:'2026-08-24', endOfDay:false };
   const parsed = parseAdpDailyTotals(fixture, { rosters:rosters, matchPerson: matchAdpPerson });
   rebuildAdpIndex(parsed.rows);
+
+  /* Hook: file now / API later — same gate. Closed day has actuals; open today does not. */
+  assert.equal(typeof sandbox.adpFieldActualsForDate, 'function', 'adpFieldActualsForDate is the actuals hook');
+  const closed = sandbox.adpFieldActualsForDate('2026-08-01');
+  assert.ok(closed && closed.dollars > 0, 'closed day with file actuals is the real deal');
+  assert.equal(Math.round(closed.dollars*100)/100, 677.38);
+  assert.equal(sandbox.adpFieldActualsForDate('2026-08-24'), null, 'open today has no applying actuals — EST blend may run');
+  assert.ok(/adpPayRows/.test(html) && /adpFieldActualsForDate/.test(html),
+    'future ADP API is hooked to adpPayRows / adpFieldActualsForDate');
+  assert.ok(/Do not build the API in this PR/.test(html), 'API is not built in this PR');
+  assert.ok(/when an ADP API exists he wants the real deal/.test(html), 'James API intent is in the hook comment');
+
   const estT = sandbox.applyAdpDayTotals('2026-08-24', {
     loads:10, revenue:20000, varCost:8000, driverCost:5191.24, hours:200, cm:12000, otherPlug:0
   });
@@ -381,6 +393,7 @@ assert.equal(looksLikeAdpAoa([['Date','Driver','Grower','FB','Commodity']]), fal
   assert.equal(adpT.varSource, 'ADP');
   assert.equal(Math.round(adpT.driverCost*100)/100, 677.38, 'ADP field dollars 1:1, no 1.21 on top');
   assert.equal(Math.round(adpT.varCost*100)/100, Math.round((8000-144+677.38)*100)/100);
+  assert.ok(Math.abs(adpT.driverCost - 677.38*1.21) > 1, 'ADP path is not EST×1.21');
 
   /* Guards: computeDayRow / Queue do not read the blend. P&L paths do. */
   const computeFn = html.slice(html.indexOf('function computeDayRow(r){'), html.indexOf('function computeDay(){'));
@@ -393,10 +406,12 @@ assert.equal(looksLikeAdpAoa([['Date','Driver','Grower','FB','Commodity']]), fal
   assert.ok(!/estDriverWageBlend|blendEstDriverWages/.test(varCompFn),
     'variableComponents (Queue/calc) does not use the blend');
   const accumFn = html.slice(html.indexOf('function accumulatePnlByDay(){'), html.indexOf('function pnlSumRange('));
+  assert.ok(/adpFieldActualsForDate/.test(accumFn), 'P&L accumulate uses the actuals hook');
   assert.ok(/blendEstDriverWages/.test(accumFn), 'P&L accumulate applies the blend on EST days');
-  assert.ok(/adp\.dollars/.test(accumFn) && /driverSrc = 'ADP'/.test(accumFn),
+  assert.ok(/actuals\.dollars/.test(accumFn) && /driverSrc = 'ADP'/.test(accumFn),
     'P&L accumulate still assigns ADP dollars 1:1');
   const runFn = html.slice(html.indexOf('function runningTotals(refDate){'), html.indexOf('function verizonFuelDollarsForDate('));
+  assert.ok(/adpFieldActualsForDate/.test(runFn), 'WTD/MTD runningTotals uses the actuals hook');
   assert.ok(/blendEstDriverWages/.test(runFn), 'WTD/MTD runningTotals blends EST days');
 
   assert.ok(/estDriverWageBlend:\s*1\.21/.test(html), 'default settings ship 1.21');
