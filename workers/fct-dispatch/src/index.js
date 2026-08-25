@@ -3,7 +3,7 @@
  * ================================================================
  * Excel two-way via Power Automate + optional SMS.
  *
- * Microsoft 365 Personal (consumer OneDrive / Excel Online on OneDrive).
+ * Microsoft 365 Business Basic (work OneDrive / Excel Online (Business)).
  * HTTP in Power Automate is premium — /ingest and /push-row stay; if the
  * HTTP action is gated the calc still imports via the OneDrive share URL.
  *

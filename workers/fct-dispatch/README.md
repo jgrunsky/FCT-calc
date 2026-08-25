@@ -2,18 +2,20 @@
 
 Production: `https://fct-dispatch.jamesgrunsky.workers.dev`
 
-Power Automate is the Excel two-way bridge. **Microsoft 365 Personal** on
-`jamesgrunsky@hotmail.com` — consumer OneDrive / Excel Online on OneDrive,
-not a work tenant and not Excel Online (Business) / SharePoint-only.
-This Worker is the hop the calc talks to — James builds the two flows in
-Microsoft (no flow designer in the HTML app). Use **OneDrive (personal)**
-and Excel-on-OneDrive connectors, not OneDrive for Business.
+Power Automate is the Excel two-way bridge. **Microsoft 365 Business
+Basic** (work / Entra tenant, new `onmicrosoft.com` mailbox) — work
+OneDrive / Excel Online (Business). Personal does **not** include Power
+Automate. Hotmail stays personal mail only; **copy** the dispatch xlsx
+into the work OneDrive (do not merely share it from Hotmail). This Worker
+is the hop the calc talks to — James builds the two flows in Microsoft
+(no flow designer in the HTML app). Use **OneDrive for Business** and
+**Excel Online (Business)** connectors on the work tenant.
 
 **HTTP in Power Automate is a premium connector.** The webhook design
 stays (`POST /ingest`, `POST /push-row`). If the HTTP action is gated,
 do **not** buy Premium just to feed the board:
 
-- Keep the dispatch xlsx in consumer OneDrive.
+- Keep the dispatch xlsx in **work** OneDrive (copied onto Business Basic).
 - Use the calc’s existing **Import from OneDrive** share URL (`dispUrl` /
   `lastUrl` on Today). That standard path still parses with the same
   importer.
@@ -21,7 +23,7 @@ do **not** buy Premium just to feed the board:
 - Download today’s sheet remains a **manual backup**, not the live path.
 
 **Flow 1 — Excel → app** (when HTTP is available). OneDrive file-modified
-(or a scheduled Get file content on the personal OneDrive connector)
+(or a scheduled Get file content on OneDrive for Business)
 POSTs the dispatch log here. JSON rows *or* xlsx bytes. Header `X-FCT-Key`
 = the `INGEST_KEY` secret (paste the same value into PA). The calc GETs
 `/latest` (or `/latest.xlsx`) and runs the same importer it uses for a
@@ -62,7 +64,7 @@ npx wrangler secret put INGEST_KEY
 | POST | `/send-sms` | public | `{ to, driver, origin, dest, appt, po }`. Optional; `"SMS not configured"` if secrets missing |
 | GET | `/health` | public | Sanity |
 
-Ingest JSON shapes Power Automate actually sends (personal OneDrive Get
+Ingest JSON shapes Power Automate actually sends (work OneDrive Get
 file content uses the same `$content` envelope):
 
 ```json

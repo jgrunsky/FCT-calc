@@ -3526,8 +3526,10 @@ function defaultColumnMap(){
    constant, and a redeploy should not need a new build of this file. */
 const WORKER_URL = 'https://fct-dispatch.jamesgrunsky.workers.dev/latest';
 /* v2.1.41: Power Automate is the Excel two-way bridge. Microsoft 365
-   Personal (jamesgrunsky@hotmail.com) — consumer OneDrive / Excel Online
-   on OneDrive, not a work tenant or Excel Online (Business)/SharePoint.
+   Business Basic (work / Entra tenant, new onmicrosoft.com mailbox) —
+   work OneDrive / Excel Online (Business). Personal does not include
+   Power Automate. Hotmail stays personal mail only; copy the dispatch
+   xlsx into the work OneDrive (do not merely share it from Hotmail).
    Flow 1 POSTs the workbook (or JSON rows) to /ingest; the calc still
    parses that payload with parseDispatchRows / ingestWorkbook. Flow 2 is
    an HTTP trigger the calc POSTs an assignment to (via /push-row so the
@@ -10595,7 +10597,7 @@ function renderDayRollup(){
       + (dataSource()!=='file'
           ? '<button type="button" id="dispSync" title="Re-fetch the dispatch log from the worker" style="all:unset;cursor:pointer;'
             + 'padding:4px 8px;border-radius:4px;border:1px solid var(--border-strong);color:var(--text-muted);font-size:13px">🔄</button>'
-          + '<button type="button" id="dispForceSync" title="Open the dispatch Excel in a background tab (which fires the push script), then re-sync. Uses the OneDrive Excel Online URL you\'ve saved (Microsoft 365 Personal / consumer OneDrive — not SharePoint-only)." style="all:unset;cursor:pointer;'
+          + '<button type="button" id="dispForceSync" title="Open the dispatch Excel in a background tab (which fires the push script), then re-sync. Uses the work OneDrive / Excel Online (Business) URL from Microsoft 365 Business Basic." style="all:unset;cursor:pointer;'
             + 'padding:4px 8px;border-radius:4px;border:1px solid var(--border-strong);color:var(--text-muted);font-size:13px" title="Force full sync">⚡</button>'
           : '')
       + '<button type="button" id="dispPick" title="'
@@ -11295,16 +11297,16 @@ function wireDayRollup(){
     });
   });
 
-  // v1.8.24: Force sync via Excel Online. Opens the OneDrive Excel URL in a
-  // background tab which fires the push-to-worker Office Script, then waits
-  // ~15 sec and pulls fresh data from the worker. Personal OneDrive / Microsoft
-  // 365 Personal may not support Power Automate "Run a script"; Flow 1 uses
-  // file-modified + Get file content (or the OneDrive share-URL import fallback).
+  // v1.8.24: Force sync via Excel Online. Opens the work OneDrive Excel URL
+  // in a background tab which fires the push-to-worker Office Script, then
+  // waits ~15 sec and pulls fresh data from the worker. Live path is Microsoft
+  // 365 Business Basic (Excel Online (Business) / work OneDrive). Flow 1 uses
+  // file-modified + Get file content, or the OneDrive share-URL import fallback.
   const forceSyncBtn = document.getElementById('dispForceSync');
   if(forceSyncBtn) forceSyncBtn.addEventListener('click',()=>{
     let url = (state.dispatchImport && state.dispatchImport.excelWebUrl) || '';
     if(!url){
-      url = prompt('Paste the OneDrive Excel Online URL to the dispatch Excel (Microsoft 365 Personal — the link that opens it in Excel for the Web). Saved for future use.');
+      url = prompt('Paste the work OneDrive / Excel Online (Business) URL to the dispatch Excel (Microsoft 365 Business Basic — the link that opens it in Excel for the Web). Saved for future use.');
       if(!url) return;
       state.dispatchImport = state.dispatchImport || {};
       state.dispatchImport.excelWebUrl = url.trim();
@@ -14013,7 +14015,8 @@ function renderSet(){
     h += '<div class="card"><h2>Dispatch data source '
       + '<span style="font-size:10px;color:var(--green);text-transform:none;letter-spacing:0">v2.1.41</span></h2>'
       + '<div class="hint" style="margin-bottom:12px">Power Automate is the Excel two-way bridge. OneDrive Excel is the board — '
-      + '<b>Microsoft 365 Personal</b> on jamesgrunsky@hotmail.com (consumer OneDrive / Excel Online on OneDrive, not a work tenant, not Excel Online (Business) / SharePoint). '
+      + '<b>Microsoft 365 Business Basic</b> (work / Entra tenant, new onmicrosoft.com mailbox). Work OneDrive / Excel Online (Business). '
+      + 'Personal does not include Power Automate. Hotmail stays personal mail only — copy the dispatch xlsx into the work OneDrive; do not merely share it from Hotmail. '
       + 'Flow 1 watches the file and POSTs here. Flow 2 is the HTTP trigger that writes the driver back. '
       + 'This app pulls the Worker on load so the phone does not hunt for an xlsx every morning. '
       + 'Download today\'s sheet remains a manual backup.</div>'
@@ -14029,9 +14032,9 @@ function renderSet(){
       + '<div class="hint">Must answer <code>GET</code> with <code>{ rows, ingestedAt, rowCount }</code> (or <code>format:xlsx</code> after a file push) and '
       + '<code>Access-Control-Allow-Origin: *</code>. Blank resets to the shipped default. Power Automate Flow 1 POSTs to '
       + '<code>'+esc(dispatchWorkerBase()+'/ingest')+'</code> with header <code>X-FCT-Key</code> (the Worker secret, not in this page). '
-      + 'Use OneDrive (personal) / Excel on OneDrive connectors — not Excel Online (Business) or SharePoint-only.</div></div>'
-      + '<div class="hint" style="margin-bottom:12px"><b>Power Automate:</b> OneDrive Excel is the board. Flow 1 watches the file and POSTs here. Flow 2 is the HTTP trigger that writes the driver back. '
-      + '<b>HTTP is a premium connector.</b> If that action is gated, skip Flow 1/2 HTTP: keep the xlsx in OneDrive and use <b>Import from OneDrive</b> on Today (paste the share URL). That standard path still feeds the app — Power Automate Premium is not required for a usable board. Download xlsx stays a manual backup.</div>'
+      + 'Use OneDrive for Business / Excel Online (Business) connectors on the work tenant.</div></div>'
+      + '<div class="hint" style="margin-bottom:12px"><b>Power Automate:</b> Work OneDrive Excel is the board (copy the xlsx into the Business Basic OneDrive). Flow 1 watches the file and POSTs here. Flow 2 is the HTTP trigger that writes the driver back. '
+      + '<b>HTTP is a premium connector.</b> If that action is gated, skip Flow 1/2 HTTP: keep the xlsx in work OneDrive and use <b>Import from OneDrive</b> on Today (paste the share URL). That standard path still feeds the app — Power Automate Premium is not required for a usable board. Download xlsx stays a manual backup.</div>'
       + '<div class="fld"><label for="sPaPush">Flow 2 — HTTP trigger URL (write driver back)</label>'
       + '<input id="sPaPush" type="url" spellcheck="false" value="'+esc(di.paPushUrl||'')+'" placeholder="https://…powerautomate.com / logic.azure.com HTTP trigger">'
       + '<div class="hint">Paste the URL from Power Automate “When an HTTP request is received” (premium). On Send dispatch (and any assign) the app POSTs '
@@ -15346,7 +15349,7 @@ SHADOW_TIMELINE_TEXT['2026-07-28'] = "**PARTIAL DAY — Phase 2 diff loop stoppe
 /* ---- v2.0 DATA: Changelog (in-app version history) ---- */
 const SHADOW_CHANGELOG = [
   { ver:'v2.1.41-pa-sms', date:'2026-08-25', changes:[
-    'Power Automate is the Excel two-way bridge. Microsoft 365 Personal on jamesgrunsky@hotmail.com — consumer OneDrive / Excel Online on OneDrive (not a work tenant, not Excel Online (Business) / SharePoint-only). Flow 1 watches the file and POSTs the log (xlsx bytes or JSON rows) to the dispatch Worker /ingest with a shared-secret header. The app still parses that with the same importer as a dropped file',
+    'Power Automate is the Excel two-way bridge. Microsoft 365 Business Basic (work / Entra tenant, new onmicrosoft.com mailbox) — work OneDrive / Excel Online (Business). Personal does not include Power Automate. Hotmail stays personal mail only; copy the dispatch xlsx into the work OneDrive, do not merely share it from Hotmail. Flow 1 watches the file and POSTs the log (xlsx bytes or JSON rows) to the dispatch Worker /ingest with a shared-secret header. The app still parses that with the same importer as a dropped file',
     'HTTP in Power Automate is a premium connector. Keep the webhook design, but if HTTP is gated the board still feeds via the existing OneDrive import URL (Import from OneDrive on Today — standard connectors, no Premium required). Flow 2 is an HTTP trigger URL in Settings. Send dispatch and any driver assign POST {date, po, origin, dest, driver, truck, status, …} so PA can Update the Excel row. Empty URL skips quietly — the assignment still records in the app. No Microsoft Graph OAuth',
     'Download today\'s sheet as xlsx is a manual backup in the dispatch-log layout (date banner, D.P. Lathrop/Ripon, driver/origin/PO/commodity/truck/status), not the main path. PUSH/preload sections on Today and Queue are unchanged',
     'SMS is optional. Twilio was not set up (Hotmail, no company email). Send dispatch still assigns with “no cell on file” or “SMS not configured.” Queue Send and Today Send share one function. Cell field on each driver in Settings (empty default, this device, not git). No secrets in git, no real text in CI',
