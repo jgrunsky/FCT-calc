@@ -11,7 +11,7 @@
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<meta name="app-version" content="2026-08-24-fct-calc-v2.1.39-tarps-lease">
+<meta name="app-version" content="2026-08-25-fct-calc-v2.1.40-adp-blend">
 <title data-id="th-modified">FCT Load Profitability — French Camp Transport</title>
 <link rel="manifest" href='data:application/manifest+json,{"name":"FCT Load Profitability","short_name":"FCT Calc","start_url":".","display":"standalone","background_color":"%2312100e","theme_color":"%2312100e","icons":[{"src":"data:image/svg%2Bxml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 192 192%27%3E%3Crect width=%27192%27 height=%27192%27 fill=%27%2312100e%27/%3E%3Ctext x=%2796%27 y=%27124%27 font-size=%2772%27 font-family=%27sans-serif%27 font-weight=%27700%27 fill=%27%238fb590%27 text-anchor=%27middle%27%3EFCT%3C/text%3E%3C/svg%3E","sizes":"192x192","type":"image/svg+xml"}]}'>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -1420,7 +1420,7 @@
    still exposes the Import JSON box for future refreshes.
    ============================================================= */
 
-const APP_VERSION = '2026-08-24-fct-calc-v2.1.39-tarps-lease';
+const APP_VERSION = '2026-08-25-fct-calc-v2.1.40-adp-blend';
 const STORAGE_KEY = 'fct-calc:state';
 const IDB_NAME = 'fct-calc-db';
 const IDB_STORE = 'kv';
@@ -1438,7 +1438,9 @@ const IDB_ROWS_KEY = 'fct-calc:lastImportRows';
 /* v2.1.33: ADP Workforce Now Employee Daily Totals live under their own
    IDB key — pay rows are large and must never ride in the localStorage
    state blob. Re-import replaces that date range only; dispatch rows
-   (IDB_ROWS_KEY) are untouched. Pay data stays on-device. */
+   (IDB_ROWS_KEY) are untouched. Pay data stays on-device.
+   Future ADP API: write the same { rows } shape here. P&L reads actuals
+   through adpFieldActualsForDate — not a second wage path, not the 1.21 blend. */
 const IDB_ADP_KEY = 'fct-calc:adpPayRows';
 
 /* =============================================================
@@ -3110,6 +3112,12 @@ function defaultSettings(){
     fuelPriceConfirmed: false,
     driverLoadingFactor: 1.50,  // v2.0.6: payroll taxes 35.53% + health/benefits. v2.1.37: WC is NOT in this loading for P&L — it sits once in the fixed nut at $92,922 (2025 304.2). ADP is gross wages; employer WC premium is not in those dollars.
     defaultDriverRate: 22.28,   // v2.0.6: mean of 9 QBO-sampled active driver contract rates ($21-$24 range, all >$20)
+    /* v2.1.40: EST-only overtime/meals blend for P&L + day-rollup.
+       Aug 1–23 2026 Employee Daily Totals, field drivers: EST $88,195.38
+       → ADP $107,054.54 (ratio ≈ 1.214). Default 1.21. Does not apply
+       when a day already has ADP field dollars, and does not reprice
+       Queue / computeDayRow. */
+    estDriverWageBlend: 1.21,
     // v1.8.7: 312 -> 350. James confirmed 2026-07-29 the fleet runs 7 days
     // most weeks (Sat + Sun), not just 6. 350 = 7 × 50 weeks, leaving room
     // for holidays and light-crew days. Drops fixed cost from $7,212 to
@@ -3278,7 +3286,8 @@ function defaultVerizon(){
 
 /* v2.1.33: ADP Employee Daily Totals metadata. The pay ROWS live in IDB
    under IDB_ADP_KEY; this shell is what LS may hold (file name, range,
-   dollar totals). Never put rows here. */
+   dollar totals). Never put rows here. File import and a future API
+   share that IDB store so actuals still replace EST 1:1. */
 function defaultAdpPay(){
   return {
     fileName:'', importedAt:'', dateMin:'', dateMax:'',
@@ -3925,7 +3934,9 @@ function loadState(){
          // v1.4 dispatch heuristics — same treatment: land from the shipped
          // defaults when a pre-v1.4 save has no opinion, never overwrite one.
          'preloadHrsPerLoad','afternoonHrsPerDriver','defaultDriverHosHrs',
-         'detentionThresholdMin'].forEach(k=>{
+         'detentionThresholdMin',
+         // v2.1.40: EST-only OT/meals blend on P&L. Land 1.21 when absent.
+         'estDriverWageBlend'].forEach(k=>{
           if(state.settings[k] == null || isNaN(Number(state.settings[k]))) state.settings[k] = seed[k];
         });
         /* Fleet correction 2026-07-27: the fleet is 24 trucks, not 12.
@@ -7201,7 +7212,9 @@ function matchDriver(raw){
    Field-driver dollars replace the modelled driver-wage line on
    that date. Office names stay off load variable. Parser only —
    never bake sample pay into source, never persist pay in
-   localStorage.
+   localStorage. A future ADP API must land rows in this same
+   adpPayRows store (see adpFieldActualsForDate) so actuals still
+   replace EST 1:1 — not the 1.21 blend.
    ============================================================= */
 
 function adpNormName(s){
@@ -7498,8 +7511,7 @@ function adpFieldDay(dateISO){
    Totals pull at 2pm is a partial clock, not the day's P&L. Apply ADP to
    closed days (dates before the import's openDate) and to MTD/WTD through
    yesterday. Today stays on modelled driver cost unless this import is
-   clearly an end-of-day re-drop (after ADP_TODAY_CLOSE_HOUR local).
-   Live API pull is out of scope — file import only. */
+   clearly an end-of-day re-drop (after ADP_TODAY_CLOSE_HOUR local). */
 const ADP_TODAY_CLOSE_HOUR = 20; // 8:00pm local
 
 function adpFileIsEndOfDay(importedAt, openDate, now){
@@ -7536,6 +7548,27 @@ function adpAppliesToDate(dateISO, opts){
   if(dateISO > openDate) return false;
   return endOfDay;
 }
+
+/* BEGIN ADP_ACTUALS_HOOK */
+/* James 2026-08-25: when an ADP API exists he wants the real deal, not
+   the 1.21 EST blend. File import (now) and a live API (later) MUST
+   share this path:
+
+     1. Land field-driver pay rows into __adpRows / IDB adpPayRows
+        (same store ingestAdpParse already writes — call rebuildAdpIndex).
+     2. Read them through adpFieldActualsForDate.
+     3. If this returns a record, P&L uses dollars + hours 1:1.
+        NEVER multiply ADP dollars by estDriverWageBlend.
+
+   Do not invent a second wage path. Do not build the API in this PR.
+   adpFieldDay is the raw lookup; this gate is "actuals apply today". */
+function adpFieldActualsForDate(dateISO, opts){
+  const adp = (typeof adpFieldDay==='function') ? adpFieldDay(dateISO) : null;
+  if(!adp) return null;
+  if(!adpAppliesToDate(dateISO, opts)) return null;
+  return adp;
+}
+/* END ADP_ACTUALS_HOOK */
 
 function adpMetaFromRows(rows, fileName){
   const sum = summarizeAdpRows(rows);
@@ -7582,6 +7615,9 @@ function mergeAdpRowsForRange(existing, incoming, dateMin, dateMax){
 }
 
 function ingestAdpParse(parsed, fileName){
+  /* File drop → __adpRows / IDB adpPayRows. A future ADP API feed must
+     merge into this same store and stop here — actuals then replace EST
+     via adpFieldActualsForDate. Do not add a parallel API wage path. */
   if(!parsed || !parsed.rows || !parsed.rows.length)
     throw new Error('No pay rows found in that ADP report.');
   const incoming = parsed.rows;
@@ -7624,26 +7660,76 @@ async function hydrateAdpPay(){
   }
 }
 
+/* BEGIN EST_DRIVER_BLEND */
+/* v2.1.40: EST-only overtime/meals blend so the P&L month number is
+   usable without an ADP drop. Calibrated to Aug 1–23 2026 Employee
+   Daily Totals, field drivers: EST $88,195.38 → ADP $107,054.54
+   (ratio ≈ 1.214). Default 1.21. Queue scoring and computeDayRow stay
+   on unadjusted hours × loaded $/hr.
+
+   EST-ONLY. If adpFieldActualsForDate(date) returns a record — file
+   import now, ADP API later, same path — use those field dollars 1:1.
+   Never call blendEstDriverWages / applyEstDriverBlendToTotals on ADP
+   actuals. James: when the API exists he wants the real deal, not 1.21. */
+const EST_DRIVER_WAGE_BLEND_DEFAULT = 1.21;
+const EST_DRIVER_WAGE_BLEND_BASIS = {
+  from: '2026-08-01',
+  through: '2026-08-23',
+  source: 'Employee Daily Totals',
+  role: 'field',
+  estDollars: 88195.38,
+  adpDollars: 107054.54
+};
+
+function estDriverWageBlendFactor(){
+  const n = Number(state && state.settings && state.settings.estDriverWageBlend);
+  if(!isFinite(n) || n <= 0) return EST_DRIVER_WAGE_BLEND_DEFAULT;
+  return n;
+}
+
+function blendEstDriverWages(driverDollars){
+  /* Modelled EST dollars only. Never pass ADP field dollars through here. */
+  return (Number(driverDollars)||0) * estDriverWageBlendFactor();
+}
+
+function applyEstDriverBlendToTotals(T){
+  /* Mutates T: lift modelled driver by the EST blend. Fuel / wear /
+     sub / other stay. Call ONLY when adpFieldActualsForDate is null. */
+  const raw = Number(T.driverCost)||0;
+  const blended = blendEstDriverWages(raw);
+  if(T.estDriverCostUnblended == null) T.estDriverCostUnblended = raw;
+  T.varCost = (Number(T.varCost)||0) - raw + blended;
+  T.driverCost = blended;
+  T.cm = (Number(T.revenue)||0) - (Number(T.varCost)||0);
+  T.driverBlend = estDriverWageBlendFactor();
+  return T;
+}
+/* END EST_DRIVER_BLEND */
+
 function applyAdpDayTotals(dateISO, T){
   /* T: { loads, revenue, varCost, driverCost, hours, cm, otherPlug } — mutates in place.
      Only swap when the day has loads; otherwise ADP would become a
      no-revenue labor charge on an empty picker. Today (openDate) stays
      on the model unless this file was an after-close re-drop.
-     Fuel / wear / $150 sub stay. A leftover other plug still drops. */
-  const adp = adpFieldDay(dateISO);
-  T.adp = adp;
+     Fuel / wear / $150 sub stay. A leftover other plug still drops.
+     Actuals (file now, API later — adpFieldActualsForDate) replace EST
+     1:1. EST-only days get the v2.1.40 OT/meals blend. Never 1.21 on ADP. */
+  const raw = adpFieldDay(dateISO);
+  const actuals = adpFieldActualsForDate(dateISO);
+  T.adp = raw;
   T.estVarCost = T.varCost;
   T.estDriverCost = T.driverCost;
   T.estHours = T.hours;
-  T.adpHeld = !!(adp && !adpAppliesToDate(dateISO));
-  if(!adp || !(Number(T.loads)>0) || !adpAppliesToDate(dateISO)){
+  T.adpHeld = !!(raw && !actuals);
+  if(!actuals || !(Number(T.loads)>0)){
     T.varSource = 'EST';
+    if(Number(T.loads)>0) applyEstDriverBlendToTotals(T);
     return T;
   }
   T.varSource = 'ADP';
-  T.varCost = applyAdpToModeled(T.varCost, T.driverCost, adp.dollars, T.otherPlug);
-  T.driverCost = adp.dollars;
-  T.hours = adp.hours;
+  T.varCost = applyAdpToModeled(T.varCost, T.driverCost, actuals.dollars, T.otherPlug);
+  T.driverCost = actuals.dollars;
+  T.hours = actuals.hours;
   T.cm = T.revenue - T.varCost;
   return T;
 }
@@ -8109,6 +8195,10 @@ function subHaulFeeForDriver(drv){
 }
 /* END SUBHAUL_AS_USED */
 function computeDayRow(r){
+  /* v2.1.40: do NOT apply estDriverWageBlend here. This function prices
+     a load for the sheet and for Queue scoring. The OT/meals blend is
+     EST-only on the P&L accumulate / applyAdpDayTotals / runningTotals
+     path so dispatch ranking stays on unadjusted variable. */
   const s = state.settings;
   const lbs   = Number(r.lbs)||0;
   const miles = Number(r.miles)||0;
@@ -8389,7 +8479,9 @@ function dayTotalsHTML(d){
     + line('Total variable cost', T.varSource==='ADP'
         ? '<span class="chip g">ADP</span> field-driver '+money(T.driverCost)+' + modelled fuel/wear/sub'
           + (T.estDriverCost!=null ? ' · was '+money(T.estDriverCost)+' estimated driver' : '')
-        : T.loads+' × '+money(variableCostPerLoad())+'/load — fuel + driver + wear (sub $150 only on Lopez/Prado slash rows; other $0)',
+        : T.loads+' × '+money(variableCostPerLoad())+'/load — fuel + driver + wear. Driver wages on this total are hours × loaded $/hr × ADP blend '
+          + num((typeof estDriverWageBlendFactor==='function')?estDriverWageBlendFactor():1.21,2)
+          + ' (OT &amp; meals vs estimate). Load rows stay unblended. Sub $150 only on Lopez/Prado slash rows; other $0',
         '−'+money2(T.varCost),'var(--red)')
     + line('<b>Total contribution margin</b>', T.varSource==='ADP'
         ? 'revenue − variable with ADP driver wages'
@@ -8628,10 +8720,15 @@ function runningTotals(refDate){
     let loads=0, rev=0, varc=0, adpDays=0, estDays=0;
     Object.keys(perDay).forEach(dt=>{
       const d = perDay[dt];
-      const adp = adpFieldDay(dt);
+      const actuals = (typeof adpFieldActualsForDate==='function') ? adpFieldActualsForDate(dt) : null;
       let dayVar = d.varc;
-      if(adp && adpAppliesToDate(dt)){ dayVar = applyAdpToModeled(d.varc, d.driver, adp.dollars, d.otherPlug); adpDays++; }
-      else estDays++;
+      if(actuals){ dayVar = applyAdpToModeled(d.varc, d.driver, actuals.dollars, d.otherPlug); adpDays++; }
+      else {
+        /* EST-only OT/meals blend. Actuals (file/API) already took the other branch 1:1. */
+        const blended = (typeof blendEstDriverWages==='function') ? blendEstDriverWages(d.driver) : d.driver;
+        dayVar = d.varc - d.driver + blended;
+        estDays++;
+      }
       loads += d.loads; rev += d.rev; varc += dayVar;
     });
     const nDays = Object.keys(perDay).length;
@@ -8683,9 +8780,9 @@ function emptyPnlDay(){
 function seedPnlDayFromAdp(dateISO){
   const b = emptyPnlDay();
   b.office = (typeof adpOfficeDollarsForDate==='function') ? adpOfficeDollarsForDate(dateISO) : 0;
-  const adp = (typeof adpFieldDay==='function') ? adpFieldDay(dateISO) : null;
-  if(adp && adpAppliesToDate(dateISO)){
-    b.driver = adp.dollars; b.driverSrc = 'ADP'; b.hours = adp.hours;
+  const actuals = (typeof adpFieldActualsForDate==='function') ? adpFieldActualsForDate(dateISO) : null;
+  if(actuals){
+    b.driver = actuals.dollars; b.driverSrc = 'ADP'; b.hours = actuals.hours;
   }
   const vf = verizonFuelDollarsForDate(dateISO);
   if(vf!=null){ b.fuel = vf; b.fuelSrc = 'Verizon'; }
@@ -8715,16 +8812,19 @@ function accumulatePnlByDay(){
   });
   Object.keys(byDay).forEach(d=>{
     const b = byDay[d];
-    const adp = (typeof adpFieldDay==='function') ? adpFieldDay(d) : null;
-    if(adp && adpAppliesToDate(d)){
-      b.driver = adp.dollars;
+    const actuals = (typeof adpFieldActualsForDate==='function') ? adpFieldActualsForDate(d) : null;
+    if(actuals){
+      b.driver = actuals.dollars;
       b.driverSrc = 'ADP';
-      b.hours = adp.hours;
+      b.hours = actuals.hours;
       /* Drop a leftover other plug. Wear and Lopez/Prado $150 stay.
          varCostOverride lumps are not in otherPlug, so they remain in other. */
       b.other = stripAdpOtherPlug(b.other, b.otherPlug, true);
       b.otherPlug = 0;
     } else {
+      /* EST-only OT/meals blend. Actuals already took the ADP branch 1:1 —
+         file import now, API later, same adpFieldActualsForDate gate. */
+      b.driver = (typeof blendEstDriverWages==='function') ? blendEstDriverWages(b.driver) : b.driver;
       b.driverSrc = 'EST';
     }
     const vf = verizonFuelDollarsForDate(d);
@@ -8902,17 +9002,18 @@ function pnlBoardHTML(dateISO){
   const mtdSub = ((typeof shortDateLabel==='function')?shortDateLabel(m.monthStart):m.monthStart)
     + ' → today';
   const openNote = (m.shown===m.todayISO && state.adpPay && state.adpPay.dateMin && !(state.adpPay.endOfDay))
-    ? ' Today is still open — driver wages on this day are hours × loaded $/hr (EST) until you re-drop after close.'
+    ? ' Today is still open — driver wages on this day are hours × loaded $/hr times the ADP blend (OT & meals vs estimate) until you re-drop after close.'
     : '';
   let h = '<div class="card pnl-board" id="pnlBoard">'
     + '<div class="pnl-head"><div class="pnl-title">P&amp;L</div></div>'
     + '<p class="pnl-lede">Actual profit and loss for the day in view, plus week and month through today. '
-    + 'Closed days use ADP field-driver dollars. Fuel uses Verizon fleet miles when we have them, otherwise the lane estimate. '
+    + 'Closed days use ADP field-driver dollars 1:1 (file drop now; a live ADP API later uses the same actuals path — not the 1.21 blend). When a day has no ADP, driver wages are the hours × loaded $/hr estimate times the Settings <b>ADP blend</b> (OT &amp; meals vs estimate, default 1.21) so the month number is usable without dropping a pay file. '
+    + 'Fuel uses Verizon fleet miles when we have them, otherwise the lane estimate. '
     + '<b>Ops net</b> is revenue minus driver wages, fuel, and fixed — that is the number to look at for the month. '
     + '<b>After wear</b> still subtracts wear and any sub-haul. Wear stays on the board so nothing is hidden. '
     + 'Wear is last-year shop actuals (313.2+313.3+313.4+313.9 tarps ≈ $448k/yr). There is no $35 other plug — that was not in QBO. '
     + 'Bonuses are not in this board (base pay / ADP daily wages only). 2025 lawsuit legal stays out. '
-    + 'Office payroll is listed underneath — it is not inside load variable.'
+    + 'Office payroll is listed underneath — it is not inside load variable. Queue suggestions are not changed by the blend.'
     + openNote+'</p>'
     + '<div class="pnl-cols">'
     + pnlColHTML('Day in view', dayLbl+todayMark, m.day)
@@ -9267,6 +9368,12 @@ function sheetFootHTML(d){
       + '<td colspan="'+(NC-1)+'">Driver wages in the TOTAL are ADP field-driver actuals ('
       + money(T.driverCost)+' / '+num(T.hours,1)+' hr). Load rows still show the hours × $/hr estimate. '
       + 'Office ADP is not in this number.</td></tr>';
+  } else if(T.loads>0){
+    h += '<tr class="sheet-sub"><td class="c-time">EST</td>'
+      + '<td colspan="'+(NC-1)+'">Driver wages in the TOTAL are hours × loaded $/hr × ADP blend '
+      + num((typeof estDriverWageBlendFactor==='function')?estDriverWageBlendFactor():1.21,2)
+      + ' (OT &amp; meals vs estimate). Load rows still show the unblended estimate. '
+      + 'Drop ADP to replace closed days 1:1.</td></tr>';
   }
   /* v1.5 — the variance line. Measured against the estimate for THE SAME rows,
      never against the whole day, so unmatched loads cannot masquerade as a
@@ -9366,11 +9473,11 @@ function adpPillHTML(dateISO){
   }
   if(loaded){
     return '<span class="chip y" title="'+esc('ADP is loaded for '+meta.dateMin+' → '+meta.dateMax
-      + ', but this day has no field-driver pay rows. Driver wages stay on the hours × loaded $/hr estimate.')
+      + ', but this day has no field-driver pay rows. Driver wages on the P&L are hours × loaded $/hr × ADP blend (OT & meals vs estimate).')
       + '" style="cursor:help">EST driver $</span>';
   }
-  return '<span class="chip y" title="Driver wages are hours × loaded $/hr. Drop the ADP Employee Daily Totals report to replace them with real field-driver pay on closed days."'
-    + ' style="cursor:help">EST driver $</span>';
+  return '<span class="chip y" title="'+esc('Driver wages on the P&L are hours × loaded $/hr × ADP blend (OT & meals vs estimate, default 1.21). Drop the ADP Employee Daily Totals report to replace them 1:1 with real field-driver pay on closed days.')
+    + '" style="cursor:help">EST driver $</span>';
 }
 
 /* The day rollup renders into the LANDING page, not the Calculator tab.
@@ -13766,9 +13873,28 @@ function renderSet(){
       + (adpLoaded ? '<button class="act ghost" id="sAdpClear">Clear ADP</button>' : '')
       + '</div>'
       + '<input type="file" id="sAdpFile" accept=".xlsx,.xlsm,.xls,.csv" style="display:none">'
-      + '<div class="legend">Closed days use ADP; today stays estimated unless you re-drop after close ('+ADP_TODAY_CLOSE_HOUR+':00). '
+      + '<div class="legend">Closed days use ADP; today stays estimated (hours × loaded $/hr × ADP blend) unless you re-drop after close ('+ADP_TODAY_CLOSE_HOUR+':00). '
       + 'Re-importing the same month replaces that date range and leaves the dispatch log alone. '
       + 'Diesel, Queue scoring, missing-rates, and Worker settings are not touched.</div></div>';
+
+    const blend = (typeof estDriverWageBlendFactor==='function') ? estDriverWageBlendFactor() : (Number(s.estDriverWageBlend)||1.21);
+    const basis = (typeof EST_DRIVER_WAGE_BLEND_BASIS!=='undefined') ? EST_DRIVER_WAGE_BLEND_BASIS : { estDollars:88195.38, adpDollars:107054.54, from:'2026-08-01', through:'2026-08-23' };
+    h += '<div class="card" id="adpBlendCard"><h2>ADP blend — OT &amp; meals vs estimate '
+      + '<span style="font-size:10px;color:var(--green);text-transform:none;letter-spacing:0">v2.1.40</span></h2>'
+      + '<div class="hint" style="margin-bottom:12px">James will not log into ADP on the phone. Without a pay-file drop, the P&amp;L uses hours × loaded $/hr, which is light versus real ADP — mostly overtime and meals. '
+      + 'This number lifts <b>estimated</b> driver wages on the P&amp;L / day-rollup so the month number is usable. '
+      + 'Any day that already has ADP field dollars (file import now, ADP API later) stays 1-for-1 — this does <b>not</b> stack on actuals. When the API exists, use those real dollars, not this blend. '
+      + 'Queue suggestions are not changed.</div>'
+      + '<div class="fld">'+nf('sAdpBlend','ADP blend', blend,'0.01',
+          'Aug 1–23 2026 Employee Daily Totals, field drivers: EST '+money2(basis.estDollars)
+          + ' → ADP '+money2(basis.adpDollars)+' (about 1.21). 1.00 = no lift. Default 1.21.')+'</div>'
+      + '<div class="row"><div class="row-l"><div class="row-t">Basis</div>'
+      + '<div class="row-s">Aug 1–23 2026 Employee Daily Totals · field drivers · EST '+money2(basis.estDollars)
+      + ' → ADP '+money2(basis.adpDollars)+'</div></div>'
+      + '<div class="row-v">×'+num(blend,2)+'</div></div>'
+      + '<div class="legend">Applies only to EST driver wages on the P&amp;L board, day totals, and MTD/WTD. '
+      + 'A future ADP API must use the same adpPayRows path as a file drop so actuals replace EST 1:1. '
+      + 'Does not change diesel, MPG, wear, other ($0), WC, lease, office, the ADP parser, or Queue ranking.</div></div>';
   }
 
   /* --- Day rollup (v1.3) --- */
@@ -13854,7 +13980,7 @@ function renderSet(){
     + nf('sMiles','Annual fleet miles', s.annualMiles,'10000','Editable — drives fuel/wear per mile. Default 1.2M.')
     + nf('sLoad','Driver loading factor', s.driverLoadingFactor,'0.01','QBO payroll taxes $715,939 / wages $1,882,434 = 1.31.')
     + '</div><div class="fld">'
-    + nf('sDrvDef','Default driver $/hr (loaded)', s.defaultDriverRate,'0.5','Median $22 base × '+((s.driverLoadingFactor||1).toFixed(2))+' loading = '+money2(s.defaultDriverRate)+'.')
+    + nf('sDrvDef','Default driver $/hr (loaded)', s.defaultDriverRate,'0.5','Median $22 base × '+((s.driverLoadingFactor||1).toFixed(2))+' loading = '+money2(s.defaultDriverRate)+'. P&amp;L EST wages also get the ADP blend (OT &amp; meals vs estimate) — see that card. Queue does not.')
     + '</div><div class="legend">Wear, loading factor and driver rates are derived from the QBO T12M pull '+esc(state.qbo.pulledAt||'')+'. '
     + 'Wear and the driver rate both feed the per-load variable cost in <b>Unit economics</b> above — changing either moves '+money(variableCostPerLoad())+'/load and the '+breakevenLoadsPerDay().toFixed(1)+'-load breakeven. '
     + '<b>Fuel is no longer one of them</b> — v1.1 used a flat $0.60/mi off the T12M average, which lags the pump by up to a year. It now tracks '+fuelBasisText()+' live. Driver base rates are per-person below.</div></div>';
@@ -14205,6 +14331,23 @@ function renderSet(){
     }); };
   bindOps('sPreHrs','preloadHrsPerLoad'); bindOps('sPmHrs','afternoonHrsPerDriver');
   bindOps('sHos','defaultDriverHosHrs');  bindOps('sDet60','detentionThresholdMin');
+  /* v2.1.40: EST-only P&L blend. Re-renders Today so the board moves; Queue
+     ranking does not read this number, so we do not re-score suggestions. */
+  {
+    const el = document.getElementById('sAdpBlend');
+    if(el) el.addEventListener('change', ()=>{
+      const v = parseFloat(el.value);
+      if(isNaN(v) || v <= 0){
+        toast('ADP blend has to be more than 0. 1.00 = no lift, 1.21 = August OT & meals.');
+        renderSet();
+        return;
+      }
+      s.estDriverWageBlend = v;
+      save();
+      renderSet();
+      renderDash();
+    });
+  }
 
   /* --- v1.8 rate refresh ---
      Explains rather than pretends. QBO's MCP connector is not reachable from a
@@ -15030,6 +15173,12 @@ SHADOW_TIMELINE_TEXT['2026-07-28'] = "**PARTIAL DAY — Phase 2 diff loop stoppe
 
 /* ---- v2.0 DATA: Changelog (in-app version history) ---- */
 const SHADOW_CHANGELOG = [
+  { ver:'v2.1.40-adp-blend', date:'2026-08-25', changes:[
+    'James will not log into ADP on the phone. EST driver wages on the P&L / day-rollup now get a visible Settings calibration — ADP blend (OT & meals vs estimate), default 1.21 — so the month number is usable without a pay-file import',
+    'Basis: Aug 1–23 2026 Employee Daily Totals, field drivers. Live P&L EST MTD was $88,195.38; same board after ADP import was $107,054.54 (closed days ADP $101,194.90 / 4,037.3 hr through 8/23; today 8/24 stayed EST $5,191.24). Ratio ≈ 1.214. Gap is mostly OT + meals, plus hours a bit light. ADP blended field $/hr through 8/23 was $25.07 vs defaultDriverRate $22.28',
+    'When a day already has ADP field dollars, those actuals stay 1:1 — the factor is EST-only and does not stack. James: when an ADP API exists, use the real dollars, not 1.21. File import now and API later share adpFieldActualsForDate / adpPayRows (actuals replace EST). No API in this PR',
+    'Queue scoring / dispatch ranking is unchanged (the factor is not in computeDayRow). Diesel, MPG, wearPerMile, otherVariablePerLoad ($0), WC $92,922, lease $470k, office exclusion, and the ADP parser are unchanged. Pay files still never go in git'
+  ]},
   { ver:'v2.1.39-tarps-lease', date:'2026-08-24', changes:[
     'James 313.8/313.9: do not treat lease as $171k. True 2025 313.8 ≈ $469,251 = parent $171,128.13 + Equity Lease (LTO) $295,676.85 + Replacement Rental $2,446.47 — matches truckLease $470k. Amount unchanged',
     '313.9 tarps 2025 $17,874.15 (parts $16,272.96 + repairs $1,601.19) stay in wear with 313.2+3+4: $448,365 ÷ 900,000 mi = $0.498/mi. Not in other ($0). 313.10 std logistics $11,174 stays out — it was not in the v2.1.36 wear comment',
