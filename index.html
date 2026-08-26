@@ -11,7 +11,7 @@
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<meta name="app-version" content="2026-08-26-fct-calc-v2.1.44-plan-line">
+<meta name="app-version" content="2026-08-26-fct-calc-v2.1.45-driver-fb">
 <title data-id="th-modified">FCT Load Profitability — French Camp Transport</title>
 <link rel="manifest" href='data:application/manifest+json,{"name":"FCT Load Profitability","short_name":"FCT Calc","start_url":".","display":"standalone","background_color":"%2312100e","theme_color":"%2312100e","icons":[{"src":"data:image/svg%2Bxml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 192 192%27%3E%3Crect width=%27192%27 height=%27192%27 fill=%27%2312100e%27/%3E%3Ctext x=%2796%27 y=%27124%27 font-size=%2772%27 font-family=%27sans-serif%27 font-weight=%27700%27 fill=%27%238fb590%27 text-anchor=%27middle%27%3EFCT%3C/text%3E%3C/svg%3E","sizes":"192x192","type":"image/svg+xml"}]}'>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -1420,7 +1420,7 @@
    still exposes the Import JSON box for future refreshes.
    ============================================================= */
 
-const APP_VERSION = '2026-08-26-fct-calc-v2.1.44-plan-line';
+const APP_VERSION = '2026-08-26-fct-calc-v2.1.45-driver-fb';
 const STORAGE_KEY = 'fct-calc:state';
 const IDB_NAME = 'fct-calc-db';
 const IDB_STORE = 'kv';
@@ -8225,27 +8225,26 @@ function rowHasFreightBill(r){
   return cellIsFilled(r && r.fb);
 }
 
-/* v2.1.42 / v2.1.43 / v2.1.44: a load books revenue only when it has run.
-   James 2026-08-26 on live v2.1.40: dispatched = driver name AND freight
-   bill. Layered on completed (DELIVERED, or after-close assigned).
-   books = dispatched (driver+FB) AND completed.
-   FCGE "-" "-" rows (POs 183-18…185-2) were never dispatched — they stay
-   in the planned/active projection line, never in day-final / Today's REV.
-   Same if only one of driver/FB is present.
-   Status: unassigned / preload / PUSH / cancelled never book; DELIVERED
-   can once driver+FB are on the row; assigned / DISPATCHED book after
-   the calendar day closes (POC grain puts the trailer pair in Status).
-   asOfISO is injectable for tests; production uses local today. */
+/* v2.1.45: a load books when it has a driver name AND a freight bill.
+   James 2026-08-26 ~1pm PT on live v2.1.44: "Driver plus bill is the way."
+   The extra DELIVERED / after-close assigned gate was too strict — JOEL/FABIAN,
+   JOSE/RAMON, MARCOS, etc. already had FBs on the worker board while Today's
+   REV stayed at 3 DELIVERED (~$1,155). ~45 today rows had both driver and FB
+   and sat in PLAN.
+   books = driver+FB (Excel FB # / worker field `fb`) during the open day.
+   PLAN / projection (not in Today's REV): missing driver, missing FB, or both.
+   Blank FCGE Ardent-style unassigned POs stay plan.
+   Never book: PUSH, cancelled/rejected/return, truly unassigned (no driver).
+   PRELOADED with driver AND FB DOES book (PREL chip stays as a UI lock only).
+   asOfISO is kept for call-site/test compatibility; the calendar-day close
+   gate is gone. */
 function dayRowBooksRevenue(r, asOfISO){
   if(!dayRowActive(r)) return false;
   if(!rowHasDriverName(r) || !rowHasFreightBill(r)) return false;
   const kind = dispatchStatusKind(r);
-  if(kind==='push' || kind==='cancelled' || kind==='unassigned' || kind==='preload')
+  if(kind==='push' || kind==='cancelled' || kind==='unassigned')
     return false;
-  if(kind==='delivered') return true;
-  const asOf = asOfISO || (typeof isoLocal==='function' ? isoLocal(new Date()) : '');
-  const rowDate = String((r && r.date) || '');
-  return !!(rowDate && asOf && rowDate < asOf);
+  return true;
 }
 /* END COMPLETED_REVENUE */
 /* v1.3: a day row is priced off the T12M model, not the rate card.
@@ -8384,7 +8383,7 @@ function computeDay(){
   const s = state.settings, d = state.dayRollup;
   const rows = d.currentRows.map(computeDayRow);
   const act  = rows.filter(r=>r.active);
-  /* v2.1.42: dollars follow completed loads only. Active (assigned /
+  /* v2.1.45: dollars follow driver+FB (books). Active (assigned /
      dispatched / preload / unassigned-with-data) still drives the board
      count, Queue, trailers, and cutoff. */
   const booked = rows.filter(r=>r.booked);
@@ -8393,9 +8392,9 @@ function computeDay(){
               planLoads:plan.length, planRevenue:0, planVar:0, planCm:0,
               revenue:0, varCost:0, cm:0, hours:0, cardRevenue:0, driverCost:0, otherPlug:0 };
   booked.forEach(r=>{ T.revenue+=r.revenue; T.varCost+=r.varCost; T.cm+=r.cm; T.hours+=r.hours; T.cardRevenue+=r.cardRevenue; T.driverCost+=(Number(r.driverCost)||0); T.otherPlug+=(Number(r.otherPlug)||0); });
-  /* v2.1.44: planned/active rows (no driver+FB, or not yet completed) keep
-     a projection total so the board still shows the day's plan. That $ is
-     NOT in T.revenue / Today's REV / contribution books. */
+  /* v2.1.45: planned/active rows (no driver or no FB) keep a projection
+     total so the board still shows the day's plan. That $ is NOT in
+     T.revenue / Today's REV / contribution books. */
   plan.forEach(r=>{ T.planRevenue+=r.revenue; T.planVar+=r.varCost; T.planCm+=r.cm; });
   /* v2.1.33: when ADP field-driver actuals cover a CLOSED date, swap the
      modelled driver-wage component for that day's ADP dollars. Fuel,
@@ -8513,19 +8512,19 @@ function computeDay(){
     vNote='Import the dispatch log and pick a date to get a verdict on the day.';
   } else if(!booked.length){
     verdict='IN PROGRESS'; vClass='reneg';
-    vNote=act.length+' load'+(act.length===1?'':'s')+' planned on the board, <b>none in the books yet</b> — revenue is $0 until a load has a driver name AND a freight bill and is completed. '
+    vNote=act.length+' load'+(act.length===1?'':'s')+' planned on the board, <b>none in the books yet</b> — revenue is $0 until a load has a driver name AND a freight bill. '
       + 'Blank driver/FB rows (never dispatched) stay on the projection line, not in Today\'s REV.';
   } else if(net > band && mixHealthy){
     verdict='GREEN — GOOD DAY'; vClass='accept';
-    vNote=booked.length+' completed load'+(booked.length===1?'':'s')+' clear the '+money(fixedTotal)+' daily fixed cost by <b>'+money(net)+'</b>. Breakeven is '
+    vNote=booked.length+' booked load'+(booked.length===1?'':'s')+' clear the '+money(fixedTotal)+' daily fixed cost by <b>'+money(net)+'</b>. Breakeven is '
       + be.toFixed(1)+' loads/day, so today ran '+(booked.length-be).toFixed(1)+' to the good, and the mix is healthy — '
       + 'Diamond baseline present, steady work inside its guard rail'
       + (inSeason?', seasonal capacity not encroached':'')+'.'+mixLine;
   } else if(net < -band || (mixFlags.length>1 && net<0)){
     verdict='RED — LOSS'; vClass='reject';
     vNote=(net < -band
-        ? booked.length+' completed load'+(booked.length===1?'':'s')+' fell short of the '+money(fixedTotal)+' daily fixed cost. The day lost <b>'+money(Math.abs(net))+'</b>. '
-          + 'Breakeven is '+be.toFixed(1)+' loads/day — today needed '+Math.ceil(shortfall)+' more completed load'+(Math.ceil(shortfall)===1?'':'s')+'.'
+        ? booked.length+' booked load'+(booked.length===1?'':'s')+' fell short of the '+money(fixedTotal)+' daily fixed cost. The day lost <b>'+money(Math.abs(net))+'</b>. '
+          + 'Breakeven is '+be.toFixed(1)+' loads/day — today needed '+Math.ceil(shortfall)+' more booked load'+(Math.ceil(shortfall)===1?'':'s')+'.'
         : 'The day is under water (<b>'+money(net)+'</b>) and the mix is bleeding back: ')
       + (mixFlags.length? ' <b style="display:inline">Bleed-back risk:</b> '+mixFlags.join('; ')+'.' : '')
       + mixLine;
@@ -8537,7 +8536,7 @@ function computeDay(){
     verdict='AMBER — NEAR BREAKEVEN'; vClass='reneg';
     vNote='The day landed within '+money(band)+' of breakeven — net '+money(net)+' after the '+money(fixedTotal)
       + ' daily fixed cost. At '+be.toFixed(1)+' loads/day breakeven and '+booked.length
-      + ' completed, this is the knife edge: no cushion for a breakdown or a rejected load.'
+      + ' booked, this is the knife edge: no cushion for a breakdown or a rejected load.'
       + (mixFlags.length? ' Mix note: '+mixFlags.join('; ')+'.' : '')
       + mixLine;
   }
@@ -8561,13 +8560,13 @@ function dayTotalsHTML(d){
     + (T.varSource==='ADP' ? 'ADP hours (actual)' : 'Total hours utilized')+'</div></div>'
     + '<div><div class="kpi sm">'+money2(T.cmPerHour)+'</div><div class="kpi-label">Avg $/hr</div></div>'
     + '</div>'
-    + line('Loads', (T.loads)+' completed · '+(T.activeLoads!=null?T.activeLoads:T.loads)+' planned'
+    + line('Loads', (T.loads)+' booked · '+(T.activeLoads!=null?T.activeLoads:T.loads)+' planned'
         + ((T.planLoads||0)>0 ? ' · plan '+money(T.planRevenue)+' not in books' : ''),
         String(T.loads))
     + line('Load mix', LOAD_BUCKETS.map(b=>'<span style="color:'+b.color+'">■</span> '+(d.mix[b.k]||0)+' '+b.label.toLowerCase()).join(' · ')
         + (d.inSeason ? ' — inside the Jun–Nov seasonal window' : ''),
         (d.mixHealthy?'<span class="chip g">healthy</span>':'<span class="chip y">skewing</span>'))
-    + line('Total revenue', T.loads+' completed load'+(T.loads===1?'':'s')+' at bucket rates (unfinished not included)', money2(T.revenue))
+    + line('Total revenue', T.loads+' booked load'+(T.loads===1?'':'s')+' at bucket rates (driver + freight bill; no driver/FB stays plan)', money2(T.revenue))
     + line('Total variable cost', T.varSource==='ADP'
         ? '<span class="chip g">ADP</span> field-driver '+money(T.driverCost)+' + modelled fuel/wear/sub'
           + (T.estDriverCost!=null ? ' · was '+money(T.estDriverCost)+' estimated driver' : '')
@@ -9085,8 +9084,8 @@ function pnlColHTML(title, sub, x, extraClass){
   const opsNet = (x.opsNet!=null && isFinite(Number(x.opsNet))) ? Number(x.opsNet) : ((Number(x.net)||0) + (Number(x.wearOther)||0));
   const afterWear = Number(x.net)||0;
   const loadLine = (x.activeLoads!=null)
-    ? (x.loads+' completed · '+x.activeLoads+' planned')
-    : (x.loads+' completed');
+    ? (x.loads+' booked · '+x.activeLoads+' planned')
+    : (x.loads+' booked');
   return '<div class="pnl-col'+(extraClass?(' '+extraClass):'')+'">'
     + '<div class="pnl-col-h">'+esc(title)+'<b>'+esc(sub)+'</b></div>'
     + '<div class="pnl-row"><span class="pnl-lab">Loads</span><span class="pnl-amt"><span>'+esc(loadLine)+'</span></span></div>'
@@ -9119,8 +9118,8 @@ function pnlBoardHTML(dateISO){
   let h = '<div class="card pnl-board" id="pnlBoard">'
     + '<div class="pnl-head"><div class="pnl-title">P&amp;L</div></div>'
     + '<p class="pnl-lede">Actual profit and loss for the day in view, plus week and month through today. '
-    + '<b>Revenue is completed dispatched loads only</b> — a driver name AND a freight bill (James 2026-08-26 on live v2.1.40), then DELIVERED (or a past day\'s assigned haul: POC grain puts the trailer pair in Status and rarely types DELIVERED). '
-    + 'No driver / no FB was never dispatched — those rows stay on the <b>Projection</b> line, not in day-final revenue, contribution, or Today\'s REV. Same if only one of driver/FB is present. '
+    + '<b>Revenue is dispatched loads only</b> — a driver name AND a freight bill (James 2026-08-26: "Driver plus bill is the way."). '
+    + 'No driver / no FB was never dispatched — those rows stay on the <b>Projection</b> line, not in day-final revenue, contribution, or Today\'s REV. Same if only one of driver/FB is present. PRELOADED with both still books (the PREL chip is a UI lock, not a books gate). '
     + 'Closed days use ADP field-driver dollars 1:1 (file drop now; a live ADP API later uses the same actuals path — not the 1.21 blend). When a day has no ADP, driver wages are the hours × loaded $/hr estimate times the Settings <b>ADP blend</b> (OT &amp; meals vs estimate, default 1.21) so the month number is usable without dropping a pay file. '
     + 'Fuel uses Verizon fleet miles when we have them, otherwise the lane estimate. '
     + '<b>Ops net</b> is revenue minus driver wages, fuel, and fixed — that is the number to look at for the month. '
@@ -9468,7 +9467,7 @@ function sheetFootHTML(d){
   const pad = NC - 12;                    // extra trailing cells when actuals show
   let h = '<tr class="sheet-tot">'
     + '<td class="c-time">TOTAL</td>'
-    + '<td colspan="7">'+T.loads+' completed · '+(T.activeLoads!=null?T.activeLoads:T.loads)+' planned'
+    + '<td colspan="7">'+T.loads+' booked · '+(T.activeLoads!=null?T.activeLoads:T.loads)+' planned'
     + ((T.planLoads||0)>0 ? ' · plan '+money(T.planRevenue)+' not in books' : '')+'</td>'
     + '<td></td>'
     + '<td class="money">'+money(T.revenue)+'</td>'
@@ -9481,7 +9480,7 @@ function sheetFootHTML(d){
   if((T.planLoads||0)>0){
     h += '<tr class="sheet-sub" id="sheetPlanRow">'
       + '<td class="c-time">PLAN</td>'
-      + '<td colspan="7">'+T.planLoads+' planned (need driver + freight bill, then completed) — not in TOTAL / Today\'s REV</td>'
+      + '<td colspan="7">'+T.planLoads+' planned (need driver + freight bill) — not in TOTAL / Today\'s REV</td>'
       + '<td></td>'
       + '<td class="money">'+money(T.planRevenue)+'</td>'
       + '<td class="money" style="color:var(--red)">−'+money(T.planVar)+'</td>'
@@ -9668,10 +9667,10 @@ function alertsStripHTML(dateISO){
    Settings tabs and was never surfaced on the primary view.
 
    All five tiles compute at render time from state:
-     - Revenue + Contribution     ← computeDay().totals (completed loads only;
-                                     v2.1.42 dayRowBooksRevenue(). Active count
-                                     is separate — assigned/dispatched/preload
-                                     stay on the board, not in the $)
+     - Revenue + Contribution     ← computeDay().totals (driver+FB books;
+                                     v2.1.45 dayRowBooksRevenue(). Active count
+                                     is separate — missing driver or FB stay
+                                     on the PLAN line, not in the $)
      - Fuel actual                ← state.verizonMilesToday.fleetMiles × fuelPerMile()
        + estimated                  sum(laneMilesFor / fallback avg) × fuelPerMile()
      - Calibration                ← state.laneCalibration.fleetFactor
@@ -9688,14 +9687,14 @@ function landingStripHTML(){
   const lc = state.laneCalibration || {};
   const fpm = fuelPerMile();
 
-  // ---- Tile 1: Today's revenue (completed loads only) ----
+  // ---- Tile 1: Today's revenue (driver + freight bill) ----
   const rev = dToday ? dToday.totals.revenue : 0;
   const revLoads = dToday ? dToday.totals.loads : 0;
   const activeLoads = dToday ? (dToday.totals.activeLoads!=null ? dToday.totals.activeLoads : (dToday.activeLoads||revLoads)) : 0;
   const planLoads = dToday ? (dToday.totals.planLoads||0) : 0;
   const planRev = dToday ? (dToday.totals.planRevenue||0) : 0;
   const revSub = activeLoads
-    ? (revLoads + ' completed · ' + activeLoads + ' planned'
+    ? (revLoads + ' booked · ' + activeLoads + ' planned'
        + (planLoads ? ' · plan ' + money(planRev) + ' not in books' : ''))
     : 'no planned loads';
 
@@ -9811,14 +9810,14 @@ function landingStripHTML(){
       : 'Waiting for the first /miles-real response.';
 
   // ---- Tile 5: Today's contribution ----
-  // Contribution = revenue − variable cost, summed over COMPLETED rows
-  // (v2.1.42). Active board count is shown next to it; unfinished loads
-  // do not hit the dollars. computeDay().totals.cm is authoritative.
+  // Contribution = revenue − variable cost, summed over booked rows
+  // (v2.1.45 driver+FB). Active board count is shown next to it; missing
+  // driver or FB do not hit the dollars. computeDay().totals.cm is authoritative.
   const cm = dToday ? dToday.totals.cm : 0;
   const cmColor = cm > 0 ? 'g' : cm < 0 ? 'r' : '';
   const cmAdp = dToday && dToday.totals.varSource==='ADP';
   const cmSub = activeLoads
-    ? revLoads + ' completed · ' + activeLoads + ' planned · ' + money(dToday.totals.varCost) + ' var'
+    ? revLoads + ' booked · ' + activeLoads + ' planned · ' + money(dToday.totals.varCost) + ' var'
       + (cmAdp ? ' · ADP' : ' · EST')
     : 'no planned loads';
   const cmLab = cmAdp ? "CONTRIBUTION · ADP" : "CONTRIBUTION · EST";
@@ -9851,10 +9850,10 @@ function landingStripHTML(){
     + '<div class="land-strip-row">'
     + tile(moneyResponsive(rev), "TODAY'S REVENUE", revSub,
            { drill: 'revenue', id: 'lsRevenue',
-             title: dToday ? ('Books (completed dispatched loads only): '+money(rev)+' across '+revLoads
-             + ' completed load'+(revLoads===1?'':'s')+' with driver + freight bill. '
+             title: dToday ? ('Books (driver name AND freight bill): '+money(rev)+' across '+revLoads
+             + ' booked load'+(revLoads===1?'':'s')+'. '
              + activeLoads+' planned on the board'
-             + (planLoads ? ' · projection '+money(planRev)+' is NOT in this number (never-dispatched / unfinished).' : '.')
+             + (planLoads ? ' · projection '+money(planRev)+' is NOT in this number (no driver or no FB).' : '.')
              + ' Matches the P&L board.') : '' })
     + tile(fuelHasActual ? moneyResponsive(fuelActual) : moneyResponsive(fuelEst),
            fuelLabel, fuelSub,
@@ -9867,8 +9866,8 @@ function landingStripHTML(){
     + tile(moneyResponsive(cm), cmLab, cmSub,
            { drill: 'contribution', id: 'lsCM', numClass: cmColor,
            title: dToday ? ('Revenue − variable cost across today\'s '
-             + revLoads + ' completed load'+(revLoads===1?'':'s')
-             + ' ('+activeLoads+' planned; unfinished not in this $)'
+             + revLoads + ' booked load'+(revLoads===1?'':'s')
+             + ' ('+activeLoads+' planned; no driver or no FB not in this $)'
              + (dToday.totals.varSource==='ADP'
                 ? ('. Driver wages from ADP '+money(dToday.totals.driverCost)+' / '+num(dToday.totals.hours,1)+' hr (field drivers). Modelled driver was '+money(dToday.totals.estDriverCost)+'.')
                 : dToday.totals.adpHeld
@@ -9968,7 +9967,7 @@ function drillRevenueBody(){
   }
   if(!doneN){
     return '<p style="color:var(--text-muted)">'+activeN+' planned load'+(activeN===1?'':'s')+' on the board, <b>none in the books</b>. '
-      + 'Today\'s REV is $0 until a load has a driver name AND a freight bill and is completed. '
+      + 'Today\'s REV is $0 until a load has a driver name AND a freight bill. '
       + ((dToday.totals.planLoads||0) ? 'Projection '+money(dToday.totals.planRevenue)+' is the plan, not books.' : '')+'</p>';
   }
   const groups = revenueByBucketToday();
@@ -10147,7 +10146,7 @@ function drillContributionBody(){
     return '<p style="color:var(--text-muted)">No active loads today yet.</p>';
   }
   if(!dToday.totals.loads){
-    return '<p style="color:var(--text-muted)">'+activeN+' planned on the board, none in the books — contribution is $0 until a load has a driver + freight bill and is completed.'
+    return '<p style="color:var(--text-muted)">'+activeN+' planned on the board, none in the books — contribution is $0 until a load has a driver + freight bill.'
       + ((dToday.totals.planLoads||0) ? ' Plan '+money(dToday.totals.planRevenue)+' is projection only.' : '')+'</p>';
   }
   const rows = state.dayRollup.currentRows.map(computeDayRow).filter(r => r.booked);
@@ -10518,8 +10517,8 @@ function renderDayRollup(){
     const dToday = (typeof computeDay === 'function') ? computeDay() : null;
     const daySrc = dToday && dToday.totals && dToday.totals.varSource;
     const dayTile = dToday ? '<span style="white-space:nowrap" title="'
-      + esc('Day: '+dToday.totals.loads+' completed / '+(dToday.totals.activeLoads!=null?dToday.totals.activeLoads:dToday.totals.loads)+' planned'
-        + ', '+money(dToday.totals.revenue)+' books (completed dispatched only)'
+      + esc('Day: '+dToday.totals.loads+' booked / '+(dToday.totals.activeLoads!=null?dToday.totals.activeLoads:dToday.totals.loads)+' planned'
+        + ', '+money(dToday.totals.revenue)+' books (driver + freight bill)'
         + ((dToday.totals.planLoads||0) ? ', plan '+money(dToday.totals.planRevenue)+' not in books' : '')
         + ', '+money(dToday.totals.varCost)+' variable, '
         + money(dToday.totals.cm)+' contribution, '+money(dToday.fixedTotal)+' fixed → '
@@ -12556,9 +12555,9 @@ function refreshDay(){
       if(!el) return; el.textContent=txt; el.style.color = col||'';
     };
     // A placeholder rate must never look like a confirmed one.
-    // v2.1.44: unbooked (no driver+FB / not completed) still show the
-    // planned $ so the row stays on the board, marked "plan" — that $
-    // is not in Today's REV.
+    // v2.1.45: unbooked (no driver or no FB) still show the planned $
+    // so the row stays on the board, marked "plan" — that $ is not in
+    // Today's REV.
     const revTxt = r.active
       ? (money(r.revenue)+(r.booked?'':' plan')+(r.rateEst?' ~':''))
       : '—';
@@ -12568,7 +12567,7 @@ function refreshDay(){
     set('dr-rev', revTxt, revCol);
     const rv = document.querySelector(DAY_HOST+' .dr-rev[data-i="'+i+'"]');
     if(rv) rv.title = r.active
-      ? ((r.booked ? '' : 'Plan — not in Today\'s REV until a driver name AND freight bill are attached, then completed. ')
+      ? ((r.booked ? '' : 'Plan — not in Today\'s REV until a driver name AND freight bill are attached. ')
          + (r.rateBasis||''))
       : '';
     set('dr-var', r.active? '−'+money(r.varCost) : '—', r.active? 'var(--red)' : '');
@@ -15339,6 +15338,10 @@ SHADOW_TIMELINE_TEXT['2026-07-28'] = "**PARTIAL DAY — Phase 2 diff loop stoppe
 
 /* ---- v2.0 DATA: Changelog (in-app version history) ---- */
 const SHADOW_CHANGELOG = [
+  { ver:'v2.1.45-driver-fb', date:'2026-08-26', changes:[
+    'James on live v2.1.44 ~1pm PT: "Driver plus bill is the way." Today\'s REV / books / contribution / sheet TOTAL follow driver name AND freight bill during the open day — not DELIVERED. JOEL/FABIAN, JOSE/RAMON, MARCOS, etc. already had FBs on the worker board while Today stayed at 3 DELIVERED (~$1,155); ~45 today rows with both sat in PLAN',
+    'PRELOADED with driver AND FB now books (e.g. JOEL/FABIAN FB 200810). The PREL chip stays as a UI lock. PUSH, cancelled/rejected/return, and truly unassigned (no driver) still never book. Missing driver, missing FB, or both stay on the PLAN / Projection line — including blank FCGE Ardent-style unassigned POs. Diesel unchanged'
+  ]},
   { ver:'v2.1.44-plan-line', date:'2026-08-26', changes:[
     'James on live v2.1.40 Today list: a load cannot count as revenue unless it has a driver name AND a freight bill — those are the dispatched loads. Layered on completed (DELIVERED / after-close assigned). Books = dispatched AND completed',
     'FCGE “-” “-” rows (POs 183-18…185-2) were never dispatched. They stay on the Today list and on a PLAN / Projection line (planned count + plan $). They are not in day-final revenue, contribution, or Today\'s REV. Same if only one of driver/FB is present. Diesel unchanged'

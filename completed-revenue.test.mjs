@@ -75,7 +75,31 @@ assert.equal(dayRowBooksRevenue(row({
 }), TODAY), true);
 assert.equal(dayRowBooksRevenue(row({
   status:'DISPATCHED', driver:'GREG', fb:'192564'
-}), TODAY), false, 'today DISPATCHED with driver+FB still does not book');
+}), TODAY), true, 'today DISPATCHED with driver+FB books');
+assert.equal(dayRowBooksRevenue(row({
+  status:'', driver:'MARCOS', fb:'200811'
+}), TODAY), true, 'today assigned (no status) with driver+FB books');
+assert.equal(dayRowBooksRevenue(row({
+  status:'55/56', driver:'JOSE', fb:'200812'
+}), TODAY), true, 'today POC trailer-in-status with driver+FB books');
+assert.equal(dayRowBooksRevenue(row({
+  status:'PRELOADED', driver:'JOEL', fb:'200810'
+}), TODAY), true, 'today PRELOADED with driver+FB books');
+assert.equal(dayRowBooksRevenue(row({
+  status:'PRE LOADED', driver:'FABIAN', fb:'200810'
+}), TODAY), true, 'PRE LOADED with driver+FB books');
+assert.equal(dayRowBooksRevenue(row({
+  status:'PRELOADED', driver:'JOEL', fb:''
+}), TODAY), false, 'PRELOADED without FB does not book');
+assert.equal(dayRowBooksRevenue(row({
+  status:'DISPATCHED', driver:'', fb:'192564'
+}), TODAY), false, 'today DISPATCHED without driver does not book');
+assert.equal(dayRowBooksRevenue(row({
+  status:'PUSH', driver:'GREG', fb:'192564'
+}), TODAY), false, 'PUSH does not book');
+assert.equal(dayRowBooksRevenue(row({
+  status:'REJECTED', driver:'GREG', fb:'192564'
+}), TODAY), false, 'cancelled/rejected does not book');
 
 /* Money loops still filter on booked. */
 const computeDayFn = html.slice(html.indexOf('function computeDay(){'), html.indexOf('function dayTotalsHTML('));
@@ -145,7 +169,10 @@ assert.ok(/fleetAvgMPG:\s*6\.0/.test(html), 'MPG unchanged');
 assert.ok(/estDriverWageBlend:\s*1\.21/.test(html), 'ADP blend default unchanged');
 assert.ok(/sheetPlanRow/.test(html) && /not in TOTAL/.test(html),
   'sheet footer has a PLAN row that is not in books');
-assert.ok(/2026-08-26-fct-calc-v2\.1\.44-plan-line/.test(html), 'APP_VERSION is v2.1.44');
-assert.ok(/v2\.1\.44-plan-line/.test(html), 'changelog has v2.1.44');
+assert.ok(/need driver \+ freight bill\) — not in TOTAL/.test(html),
+  'PLAN footer says driver + freight bill, not then-completed');
+assert.ok(/Driver plus bill is the way/.test(html), 'P&L copy cites James driver+bill rule');
+assert.ok(/2026-08-26-fct-calc-v2\.1\.45-driver-fb/.test(html), 'APP_VERSION is v2.1.45');
+assert.ok(/v2\.1\.45-driver-fb/.test(html), 'changelog has v2.1.45');
 
 console.log('completed-revenue.test.mjs: ok');
