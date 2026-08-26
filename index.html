@@ -11,7 +11,7 @@
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<meta name="app-version" content="2026-08-26-fct-calc-v2.1.45-driver-fb">
+<meta name="app-version" content="2026-08-26-fct-calc-v2.1.46-device-diesel">
 <title data-id="th-modified">FCT Load Profitability — French Camp Transport</title>
 <link rel="manifest" href='data:application/manifest+json,{"name":"FCT Load Profitability","short_name":"FCT Calc","start_url":".","display":"standalone","background_color":"%2312100e","theme_color":"%2312100e","icons":[{"src":"data:image/svg%2Bxml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 192 192%27%3E%3Crect width=%27192%27 height=%27192%27 fill=%27%2312100e%27/%3E%3Ctext x=%2796%27 y=%27124%27 font-size=%2772%27 font-family=%27sans-serif%27 font-weight=%27700%27 fill=%27%238fb590%27 text-anchor=%27middle%27%3EFCT%3C/text%3E%3C/svg%3E","sizes":"192x192","type":"image/svg+xml"}]}'>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -1420,7 +1420,7 @@
    still exposes the Import JSON box for future refreshes.
    ============================================================= */
 
-const APP_VERSION = '2026-08-26-fct-calc-v2.1.45-driver-fb';
+const APP_VERSION = '2026-08-26-fct-calc-v2.1.46-device-diesel';
 const STORAGE_KEY = 'fct-calc:state';
 const IDB_NAME = 'fct-calc-db';
 const IDB_STORE = 'kv';
@@ -1485,6 +1485,11 @@ function compactStateForStorage(s){
   if(s.adpPay && typeof s.adpPay === 'object'){
     out.adpPay = Object.assign({}, defaultAdpPay(), s.adpPay, { rows:null, _rowsInIDB:true });
   }
+  /* v2.1.46: calibration + today's miles are runtime fetches. Persisting a
+     1.15x snapshot then painting "unavailable" a second later is what made
+     EST DAY/WTD/MTD jump thousands on a quiet open. */
+  out.laneCalibration = { ok:false, lanes:{}, fleetFactor:1.0, windowDays:0, computedAt:null, error:null };
+  out.verizonMilesToday = { fleetMiles:0, ok:false, error:null, fetchedAt:null, date:null };
   return out;
 }
 
@@ -3828,6 +3833,10 @@ function loadState(){
     if(p && typeof p==='object'){
       state = Object.assign(defaultState(), p);
       state.settings = Object.assign(defaultSettings(), p.settings||{});
+      /* v2.1.46: never restore a saved calibration / miles-today blob.
+         Those are live fetches. A stale 1.15x would paint EST then drop. */
+      state.laneCalibration = { ok:false, lanes:{}, fleetFactor:1.0, windowDays:0, computedAt:null, error:null };
+      state.verizonMilesToday = { fleetMiles:0, ok:false, error:null, fetchedAt:null, date:null };
       state.history = Array.isArray(p.history)?p.history:[];
       // v1.2 slots — always normalized, always merged over the shipped defaults.
       /* v1.8: the merge alone is not enough for rates. mergeCustomerRates()
@@ -9105,6 +9114,12 @@ function pnlColHTML(title, sub, x, extraClass){
 }
 
 function pnlBoardHTML(dateISO){
+  if(typeof estPaintPending==='function' && estPaintPending()){
+    return '<div class="card pnl-board" id="pnlBoard">'
+      + '<div class="pnl-head"><div class="pnl-title">P&amp;L</div></div>'
+      + '<p class="pnl-lede">Estimates settling — waiting for calibration / ADP / Verizon miles so EST DAY / WTD / MTD do not jump. Revenue (driver + freight bill) is already on Today\'s REV above.</p>'
+      + '</div>';
+  }
   const m = buildPnlBoard(dateISO);
   const dayLbl = (typeof dowDateLabel==='function') ? dowDateLabel(m.shown) : m.shown;
   const todayMark = m.shown===m.todayISO ? ' · today' : '';
@@ -9813,13 +9828,21 @@ function landingStripHTML(){
   // Contribution = revenue − variable cost, summed over booked rows
   // (v2.1.45 driver+FB). Active board count is shown next to it; missing
   // driver or FB do not hit the dollars. computeDay().totals.cm is authoritative.
-  const cm = dToday ? dToday.totals.cm : 0;
-  const cmColor = cm > 0 ? 'g' : cm < 0 ? 'r' : '';
+  const cmLive = dToday ? dToday.totals.cm : 0;
+  const estHold = (typeof estChipView==='function')
+    ? estChipView({ cm: cmLive, dayNet: dToday ? dToday.net : null,
+                    daySrc: dToday && dToday.totals && dToday.totals.varSource })
+    : { pending:false, cm: cmLive };
+  const cm = estHold.pending ? 0 : (estHold.cm!=null ? estHold.cm : cmLive);
+  const cmPending = !!estHold.pending;
+  const cmColor = cmPending ? '' : (cm > 0 ? 'g' : cm < 0 ? 'r' : '');
   const cmAdp = dToday && dToday.totals.varSource==='ADP';
-  const cmSub = activeLoads
-    ? revLoads + ' booked · ' + activeLoads + ' planned · ' + money(dToday.totals.varCost) + ' var'
-      + (cmAdp ? ' · ADP' : ' · EST')
-    : 'no planned loads';
+  const cmSub = cmPending
+    ? 'settling estimates…'
+    : activeLoads
+      ? revLoads + ' booked · ' + activeLoads + ' planned · ' + money(dToday.totals.varCost) + ' var'
+        + (cmAdp ? ' · ADP' : ' · EST')
+      : 'no planned loads';
   const cmLab = cmAdp ? "CONTRIBUTION · ADP" : "CONTRIBUTION · EST";
 
   const stampMs = v.fetchedAt ? Date.parse(v.fetchedAt) : 0;
@@ -9863,9 +9886,10 @@ function landingStripHTML(){
              clickable: calValid || !!lc.error })
     + tile(truckBig, 'TRUCKS REPORTING', truckSub,
            { drill: 'trucks', numClass: truckColor, title: truckTitle, id: 'lsTrucks' })
-    + tile(moneyResponsive(cm), cmLab, cmSub,
+    + tile(cmPending ? '…' : moneyResponsive(cm), cmLab, cmSub,
            { drill: 'contribution', id: 'lsCM', numClass: cmColor,
-           title: dToday ? ('Revenue − variable cost across today\'s '
+           title: cmPending ? 'Waiting for calibration / ADP / Verizon miles so EST does not jump.'
+             : dToday ? ('Revenue − variable cost across today\'s '
              + revLoads + ' booked load'+(revLoads===1?'':'s')
              + ' ('+activeLoads+' planned; no driver or no FB not in this $)'
              + (dToday.totals.varSource==='ADP'
@@ -10503,32 +10527,41 @@ function renderDayRollup(){
        and month-start, so the range collapsed to a single day). MTD should
        always cover month-start(today) → today, regardless of which day is
        being inspected below. Same fix applied to WTD — same class of bug. */
-    const rt = runningTotals(todayISO);
-    /* v2.0.3 (2026-08-05, James report): the DAY tile sits alongside WTD/MTD
-       so today's total revenue / net are visible without horizontal-scrolling
-       the sheet table below. Before v2.0.3 the day's total sat at the bottom
-       of the 12-column sheet in a TOTAL row; on a 420px phone the rightmost
-       columns (which hold the money) were past the viewport, and the sheet-wrap
-       horizontal scroll on iOS couldn't drag all the way. The tile answers
-       "what did this day do" without any table interaction.
-       Unlike WTD/MTD (which anchor to TODAY regardless of picker), DAY tracks
-       whatever day is IN the picker — that IS the day the operator is looking
-       at, and computeDay() reads state.dayRollup which is the picker's day. */
-    const dToday = (typeof computeDay === 'function') ? computeDay() : null;
-    const daySrc = dToday && dToday.totals && dToday.totals.varSource;
+    const rtLive = runningTotals(todayISO);
+    const dTodayLive = (typeof computeDay === 'function') ? computeDay() : null;
+    const estHold = (typeof estChipView==='function')
+      ? estChipView({
+          dayNet: dTodayLive ? dTodayLive.net : null,
+          daySrc: dTodayLive && dTodayLive.totals && dTodayLive.totals.varSource,
+          cm: dTodayLive && dTodayLive.totals ? dTodayLive.totals.cm : null,
+          week: rtLive && rtLive.week,
+          month: rtLive && rtLive.month
+        })
+      : { pending:false };
+    const rt = estHold.pending ? { week:null, month:null, weekStart: rtLive && rtLive.weekStart, monthStart: rtLive && rtLive.monthStart }
+             : { week: estHold.week || (rtLive && rtLive.week), month: estHold.month || (rtLive && rtLive.month),
+                 weekStart: rtLive && rtLive.weekStart, monthStart: rtLive && rtLive.monthStart };
+    const dToday = dTodayLive;
+    const daySrc = estHold.pending ? 'EST'
+                 : (estHold.daySrc || (dToday && dToday.totals && dToday.totals.varSource));
+    const dayNet = estHold.pending ? null
+                 : (estHold.dayNet!=null ? estHold.dayNet : (dToday && dToday.net));
     const dayTile = dToday ? '<span style="white-space:nowrap" title="'
-      + esc('Day: '+dToday.totals.loads+' booked / '+(dToday.totals.activeLoads!=null?dToday.totals.activeLoads:dToday.totals.loads)+' planned'
+      + esc(estHold.pending
+          ? 'Waiting for calibration / ADP / Verizon miles so EST does not jump on open.'
+          : ('Day: '+dToday.totals.loads+' booked / '+(dToday.totals.activeLoads!=null?dToday.totals.activeLoads:dToday.totals.loads)+' planned'
         + ', '+money(dToday.totals.revenue)+' books (driver + freight bill)'
         + ((dToday.totals.planLoads||0) ? ', plan '+money(dToday.totals.planRevenue)+' not in books' : '')
         + ', '+money(dToday.totals.varCost)+' variable, '
         + money(dToday.totals.cm)+' contribution, '+money(dToday.fixedTotal)+' fixed → '
         + money(dToday.net)+' net'
         + (daySrc==='ADP' ? ('. Driver wages from ADP '+money(dToday.totals.driverCost)+' / '+num(dToday.totals.hours,1)+' hr.')
-                          : '. Driver wages estimated (hours × loaded $/hr).'))+'">'
-      + (daySrc==='ADP' ? '<span class="chip g">ADP</span> ' : '<span class="chip y">EST</span> ')
+                          : '. Driver wages estimated (hours × loaded $/hr).')))+'">'
+      + (estHold.pending ? '<span class="chip y">EST</span> DAY <b class="num">…</b>'
+        : ((daySrc==='ADP' ? '<span class="chip g">ADP</span> ' : '<span class="chip y">EST</span> ')
       + 'DAY <b class="num" style="color:'
-      + (dToday.net>=0?'var(--green)':'var(--red)')+'">'
-      + (dToday.net>=0?'+':'')+money(dToday.net)+'</b></span>' : '';
+      + (dayNet>=0?'var(--green)':'var(--red)')+'">'
+      + (dayNet>=0?'+':'')+money(dayNet)+'</b>'))+'</span>' : '';
     /* v2.1.24 (2026-08-21): tooltip on the WTD/MTD tiles makes it explicit
        that these tiles are LOCKED to today and do not follow the picker.
        Prior behavior was already anchored (v2.0.1), but users scrolling
@@ -10541,6 +10574,10 @@ function renderDayRollup(){
       }catch(_){ return todayISO; }
     })();
     const mini = (t,x,fullName)=>{
+      if(estHold && estHold.pending){
+        return '<span style="white-space:nowrap" title="Waiting for calibration / ADP / Verizon miles so EST does not jump on open.">'
+          + '<span class="chip y">EST</span> '+t+' <b class="num">…</b></span>';
+      }
       if(!x) return '';
       const mark = x.varSource==='ADP' ? '<span class="chip g">ADP</span> '
                  : x.varSource==='MIX' ? '<span class="chip a">ADP+EST</span> '
@@ -11946,19 +11983,77 @@ function refreshVerizonMilesToday(){
     try { if(typeof renderDayRollup === 'function' && document.querySelector(DAY_HOST)) renderDayRollup(); } catch(_){}
     try { if(typeof renderInfo === 'function') renderInfo(); } catch(_){}
     try { if(typeof renderSet  === 'function') renderSet();  } catch(_){}
+    try { markBootSettle('miles'); } catch(_){}
     return res;
   }).catch(err => {
     state.verizonMilesToday = { fleetMiles:0, ok:false,
                                 error:String(err && err.message || err),
                                 fetchedAt:new Date().toISOString(), date:dateStr };
+    try { markBootSettle('miles'); } catch(_){}
   });
 }
+
+/* BEGIN DEVICE_DIESEL_EST */
+/* v2.1.46: James — diesel is only what he types in Settings. Canonical
+   $4.50 must not win, nag, or overwrite the phone's stored price (~$6).
+   EST DAY/WTD/MTD must not jump thousands while /calibration and ADP
+   settle: hold the last stable EST (or "…" on first paint) until those
+   inputs finish. Do not invent dollars. */
+var __bootSettle = { cal:false, miles:false, adp:false };
+var __calInFlight = false;
+var __stableEstPaint = null;
+function markBootSettle(k){
+  if(!k) return;
+  const was = __bootSettle.cal && __bootSettle.miles && __bootSettle.adp;
+  __bootSettle[k] = true;
+  const now = __bootSettle.cal && __bootSettle.miles && __bootSettle.adp;
+  if(now && !was){
+    try { if(typeof renderDayRollup === 'function' && document.querySelector(DAY_HOST)) renderDayRollup(); } catch(_){}
+  }
+}
+function estPaintPending(){
+  return !(__bootSettle.cal && __bootSettle.miles && __bootSettle.adp) && !__stableEstPaint;
+}
+function estPaintUseFrozen(){
+  return !!(__calInFlight && __stableEstPaint);
+}
+function estChipView(live){
+  live = live || {};
+  if(estPaintPending()) return { pending:true };
+  if(estPaintUseFrozen() && __stableEstPaint)
+    return Object.assign({ pending:false }, __stableEstPaint);
+  const next = Object.assign({}, __stableEstPaint || {});
+  Object.keys(live).forEach(k=>{ if(live[k] != null) next[k] = live[k]; });
+  __stableEstPaint = next;
+  return Object.assign({ pending:false }, next);
+}
+function keepLastGoodCalibration(prev){
+  if(!prev || !prev.ok) return null;
+  return {
+    ok: true,
+    lanes: prev.lanes || {},
+    fleetFactor: Number(prev.fleetFactor) || 1.0,
+    windowDays: prev.windowDays || 0,
+    computedAt: prev.computedAt || null,
+    flagged: prev.flagged || [],
+    coverage: prev.coverage || null,
+    note: prev.note || null,
+    error: null
+  };
+}
+/* END DEVICE_DIESEL_EST */
 
 /* v2.1.21 (2026-08-21): fetch the worker's rolling per-lane calibration and
    land it into state.laneCalibration for computeDayRow to consume. Silent
    failure — an unavailable calibration just means everyone uses factor=1.0,
-   which is exactly what shipped in v2.1.20. */
+   which is exactly what shipped in v2.1.20.
+   v2.1.46: NEVER drop a last-good snapshot. POST /dispatch-log invalidates
+   the worker cache; a GET in the same second used to return empty, flip
+   the tile to "unavailable", and restate modelled wages so EST jumped. */
 async function refreshLaneCalibration(){
+  const prevGood = (typeof keepLastGoodCalibration==='function')
+    ? keepLastGoodCalibration(state.laneCalibration) : null;
+  __calInFlight = true;
   try {
     const ctrl = new AbortController();
     const to = setTimeout(()=>ctrl.abort(), 10000);
@@ -11967,25 +12062,57 @@ async function refreshLaneCalibration(){
     clearTimeout(to);
     if(!r.ok) throw new Error('HTTP '+r.status);
     const j = await r.json();
-    state.laneCalibration = {
-      ok: !!(j && j.lanes),
-      lanes: (j && j.lanes) || {},
-      fleetFactor: Number((j && j.fleetFactor) || 1.0),
-      windowDays: Number((j && j.windowDays) || 0),
-      computedAt: (j && j.computedAt) || null,
-      flagged: (j && j.flagged) || [],
-      coverage: (j && j.coverage) || null,
-      note: (j && j.note) || null,
-      error: null,
-    };
-    // Re-paint the day so per-load numbers pick up new factors.
+    const lanes = (j && j.lanes && typeof j.lanes === 'object') ? j.lanes : {};
+    const ff = Number((j && j.fleetFactor) || 0);
+    const hasLanes = Object.keys(lanes).length > 0;
+    /* A cache-bust empty payload is often {lanes:{}, fleetFactor:1}. That is
+       NOT a new compute — if we already have 1.15x, keep it. */
+    const looksLive = hasLanes || (isFinite(ff) && ff > 0 && Math.abs(ff - 1) > 0.001 && !(j && j.error));
+    if(looksLive && isFinite(ff) && ff > 0){
+      state.laneCalibration = {
+        ok: true,
+        lanes: lanes,
+        fleetFactor: ff,
+        windowDays: Number((j && j.windowDays) || 0),
+        computedAt: (j && j.computedAt) || null,
+        flagged: (j && j.flagged) || [],
+        coverage: (j && j.coverage) || null,
+        note: (j && j.note) || null,
+        error: null,
+      };
+    } else if(prevGood){
+      state.laneCalibration = Object.assign({}, prevGood, {
+        stale: true,
+        error: (j && j.error) || null
+      });
+    } else {
+      state.laneCalibration = {
+        ok: false,
+        lanes: {},
+        fleetFactor: 1.0,
+        windowDays: Number((j && j.windowDays) || 0),
+        computedAt: (j && j.computedAt) || null,
+        flagged: (j && j.flagged) || [],
+        coverage: (j && j.coverage) || null,
+        note: (j && j.note) || null,
+        error: (j && j.error) || 'empty',
+      };
+    }
     try { if(typeof refreshDay === 'function') refreshDay(); } catch(_){}
-    // v2.1.22: re-paint the landing strip so the calibration tile refreshes.
-    try { if(typeof renderDayRollup === 'function' && document.querySelector(DAY_HOST)) renderDayRollup(); } catch(_){}
   } catch(err){
-    state.laneCalibration = state.laneCalibration || { lanes:{}, fleetFactor:1.0 };
-    state.laneCalibration.ok = false;
-    state.laneCalibration.error = String(err && err.message || err);
+    if(prevGood){
+      state.laneCalibration = Object.assign({}, prevGood, {
+        error: String(err && err.message || err)
+      });
+    } else {
+      state.laneCalibration = state.laneCalibration || { lanes:{}, fleetFactor:1.0 };
+      state.laneCalibration.ok = false;
+      state.laneCalibration.error = String(err && err.message || err);
+    }
+  } finally {
+    __calInFlight = false;
+    try { markBootSettle('cal'); } catch(_){}
+    try { if(typeof renderDayRollup === 'function' && document.querySelector(DAY_HOST)) renderDayRollup(); } catch(_){}
   }
 }
 
@@ -12072,7 +12199,11 @@ async function pushDispatchLog(opts){
     });
     clearTimeout(to);
     if(!r.ok) throw new Error('HTTP '+r.status);
-    // POST invalidates the worker's calibration cache — refetch immediately.
+    // POST invalidates the worker's calibration cache. Do NOT GET in the
+    // same second — that used to return empty, flip the tile to
+    // "unavailable", and drop EST by thousands. Wait, then refetch.
+    // keepLastGoodCalibration covers a still-empty response.
+    await new Promise(function(res){ setTimeout(res, 2500); });
     await refreshLaneCalibration();
   } catch(err){
     // Non-fatal — calc still works with whatever calibration was cached.
@@ -13936,7 +14067,7 @@ function renderSet(){
       + '<div class="fld"><label for="sDiesel">Diesel price $/gallon</label>'
       + '<input id="sDiesel" type="number" inputmode="decimal" step="0.01" value="'+s.currentDieselPricePerGal+'" '
       + 'style="font-family:var(--mono);font-size:22px;font-weight:700;padding:14px 12px">'
-      + '<div class="hint">What FCT is actually paying at the pump / on the rack right now. This is the single biggest lever on cost per mile — a 50¢ move is '
+      + '<div class="hint">What FCT is actually paying at the pump / on the rack right now. This device only — canonical $4.50 cannot overwrite it. This is the single biggest lever on cost per mile — a 50¢ move is '
       + money2(0.50/(Number(s.fleetAvgMPG)||FUEL_FALLBACK_MPG))+'/mi.</div></div>'
       + '<div class="fld fld2">'
       + nf('sMPG','Fleet average MPG', s.fleetAvgMPG,'0.1','Grain trucks running heavy. Drop it if the fleet is running loaded more than assumed.')
@@ -14910,11 +15041,12 @@ window.addEventListener('resize',closeSugPop);
     }
   });
   hydrateAdpPay().then(function(hydrated){
+    try { markBootSettle('adp'); } catch(_){}
     if(hydrated){
       try { renderDash(); } catch(_){}
       try { renderSet(); } catch(_){}
     }
-  });
+  }).catch(function(){ try { markBootSettle('adp'); } catch(_){} });
 
   /* v1.6 — the whole point of the release: the day arrives on its own.
      Fired after the first paint so a slow or dead worker never holds the app
@@ -15038,14 +15170,19 @@ window.addEventListener('resize',closeSugPop);
   setTimeout(__checkForNewVersion, 5000);
   setInterval(__checkForNewVersion, 10 * 60 * 1000);
 
-  /* v2.1.24 (2026-08-21): DEVICE-DRIFT WARNING.
-     Fetches /canonical-settings, compares load-bearing numbers (fuel, MPG,
-     driver rate). If they differ, show a banner — tap to pull, or dismiss.
-     v2.1.25 silent auto-apply is REVERTED in v2.1.27: it overwrote the
-     operator's $4.50/gal (QBO-aligned) with EIA CA retail $6.919 and
-     crushed MTD profit. Canonical is a share target for HIS Settings
-     edits (pushCanonicalSettings), not a license to clobber local diesel.
-     Auto-apply does NOT run. Banner + tap-to-pull only. */
+  /* v2.1.24 / v2.1.46: DEVICE-DRIFT WARNING for MPG and driver rate only.
+     fuelPrice is device-owned — James: "No diesel is not 4.50! Get rid of
+     that and only have diesel that I set." Never compare, nag, auto-pull,
+     or overwrite currentDieselPricePerGal from canonical $4.50.
+     v2.1.25 silent auto-apply is still REVERTED. Banner + tap-to-pull for
+     MPG / defaultDriverRate only. */
+  setTimeout(function(){
+    try {
+      if(!__bootSettle.cal) markBootSettle('cal');
+      if(!__bootSettle.miles) markBootSettle('miles');
+      if(!__bootSettle.adp) markBootSettle('adp');
+    } catch(_){}
+  }, 8000);
   setTimeout(__checkDeviceDrift, 3500);
   async function __checkDeviceDrift(){
     try{
@@ -15057,18 +15194,14 @@ window.addEventListener('resize',closeSugPop);
       const s = (state && state.settings) || {};
       const diffs = [];
       const f2 = n => (Math.round(Number(n)*1000)/1000);
-      // Compare each field. Rounding to 3 decimals avoids float noise.
+      // v2.1.46: fuelPricePerGal is NOT in this list. Diesel is Settings
+      // on this device only. Canonical $4.50 must not produce a red bar.
       const fields = [
-        ['fuelPricePerGal',   s.currentDieselPricePerGal, 'fuelPrice',   '$'],
         ['fleetAvgMPG',       s.fleetAvgMPG,              'fleetAvgMPG', ''],
         ['defaultDriverRate', s.defaultDriverRate,        'driverRate',  '$'],
       ];
       fields.forEach(([canonKey, localVal, label, unit])=>{
         if(canon[canonKey] == null || localVal == null) return;
-        // EIA CA retail was shipped as a *drift-check baseline*, not live
-        // FCT pump price ("Do not tune live pricing here."). Never treat
-        // $6.919 (or its paired 6.3 MPG) as something to pull into Settings.
-        if(canonKey === 'fuelPricePerGal' && f2(canon[canonKey]) === f2(EIA_CA_RETAIL_PPG)) return;
         if(canonKey === 'fleetAvgMPG' && f2(canon.fuelPricePerGal) === f2(EIA_CA_RETAIL_PPG) && f2(canon[canonKey]) === 6.3) return;
         if(f2(canon[canonKey]) !== f2(localVal)){
           diffs.push({label, unit, local: localVal, canonical: canon[canonKey], settingsKey: canonKey});
@@ -15114,12 +15247,11 @@ window.addEventListener('resize',closeSugPop);
     b.addEventListener('click', function(){
       try{
         diffs.forEach(d=>{
-          // Map canonical keys → local settings keys
-          if(d.settingsKey === 'fuelPricePerGal'){
-            state.settings.currentDieselPricePerGal = Number(d.canonical);
-            state.settings.fuelPriceConfirmed = true;
-            state.settings.lastFuelPriceUpdate = (canon.computedAt||'').slice(0,10) || isoLocal(new Date());
-          } else if(d.settingsKey === 'fleetAvgMPG'){
+          // Map canonical keys → local settings keys.
+          // v2.1.46: never write fuelPrice / currentDieselPricePerGal from
+          // canonical. Diesel is device-owned.
+          if(d.settingsKey === 'fuelPricePerGal') return;
+          if(d.settingsKey === 'fleetAvgMPG'){
             state.settings.fleetAvgMPG = Number(d.canonical);
           } else if(d.settingsKey === 'defaultDriverRate'){
             state.settings.defaultDriverRate = Number(d.canonical);
@@ -15338,6 +15470,10 @@ SHADOW_TIMELINE_TEXT['2026-07-28'] = "**PARTIAL DAY — Phase 2 diff loop stoppe
 
 /* ---- v2.0 DATA: Changelog (in-app version history) ---- */
 const SHADOW_CHANGELOG = [
+  { ver:'v2.1.46-device-diesel', date:'2026-08-26', changes:[
+    'James: "No diesel is not 4.50! Get rid of that and only have diesel that I set." fuelPrice is device-owned. The red bar "Device out of sync: fuelPrice differs ($6.000 local vs $4.500 canonical)" is gone. Canonical $4.50 never overwrites Settings diesel, never auto-pulls on load, never nags. Other settings (MPG / driver rate) can still sync. Leave the stored local price alone',
+    'EST DAY / WTD / MTD no longer jump thousands on a quiet open. Cause: /calibration painted 1.15x then a POST-invalidated refetch returned empty ("unavailable") and restated modelled wages. Last-good calibration sticks; EST chips hold at "…" or the last stable number until calibration / ADP / Verizon miles settle. Today\'s REV (driver+FB books) is unchanged. Twilio / SMS / PR #11 not touched'
+  ]},
   { ver:'v2.1.45-driver-fb', date:'2026-08-26', changes:[
     'James on live v2.1.44 ~1pm PT: "Driver plus bill is the way." Today\'s REV / books / contribution / sheet TOTAL follow driver name AND freight bill during the open day — not DELIVERED. JOEL/FABIAN, JOSE/RAMON, MARCOS, etc. already had FBs on the worker board while Today stayed at 3 DELIVERED (~$1,155); ~45 today rows with both sat in PLAN',
     'PRELOADED with driver AND FB now books (e.g. JOEL/FABIAN FB 200810). The PREL chip stays as a UI lock. PUSH, cancelled/rejected/return, and truly unassigned (no driver) still never book. Missing driver, missing FB, or both stay on the PLAN / Projection line — including blank FCGE Ardent-style unassigned POs. Diesel unchanged'
