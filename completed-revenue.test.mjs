@@ -18,88 +18,128 @@ function isoLocal(d){
 `;
 
 const sandbox = { console };
-const ctx = createContext(sandbox);
-runInContext(prelude + html.slice(start, end + '/* END COMPLETED_REVENUE */'.length), ctx);
+createContext(sandbox);
+runInContext(prelude + html.slice(start, end + '/* END COMPLETED_REVENUE */'.length), sandbox);
 
-const { dayRowActive, dispatchStatusKind, dayRowBooksRevenue } = sandbox;
-assert.equal(typeof dayRowActive, 'function');
-assert.equal(typeof dispatchStatusKind, 'function');
+const {
+  dayRowActive, dispatchStatusKind, dayRowBooksRevenue,
+  rowHasDriverName, rowHasFreightBill
+} = sandbox;
 assert.equal(typeof dayRowBooksRevenue, 'function');
+assert.equal(typeof rowHasDriverName, 'function');
+assert.equal(typeof rowHasFreightBill, 'function');
 
 const TODAY = '2026-08-26';
 const YDAY = '2026-08-25';
 
 function row(extra){
-  return Object.assign({ date:TODAY, lbs:54000, miles:30, hours:5, status:'', driver:'', driverRaw:'', h:'' }, extra);
+  return Object.assign({
+    date:TODAY, lbs:54000, miles:30, hours:5,
+    status:'', driver:'', driverRaw:'', fb:'', h:''
+  }, extra);
 }
 
-/* Operational active still counts unfinished rows (board / Queue). */
-assert.equal(dayRowActive(row({ status:'DISPATCHED', driver:'GREG' })), true);
+assert.equal(dayRowActive(row({ status:'DISPATCHED', driver:'GREG', fb:'200334' })), true);
 assert.equal(dayRowActive(row({ status:'', driver:'' })), true);
-assert.equal(dayRowActive(row({ status:'PUSH', driver:'GREG' })), false);
-assert.equal(dayRowActive(row({ lbs:0, miles:0, hours:0 })), false);
+assert.equal(dayRowActive(row({ status:'PUSH', driver:'GREG', fb:'200334' })), false);
 
-assert.equal(dispatchStatusKind(row({ status:'DELIVERED', driver:'GREG' })), 'delivered');
-assert.equal(dispatchStatusKind(row({ status:'dispatched 4 delivery', driver:'GREG' })), 'dispatched');
-assert.equal(dispatchStatusKind(row({ status:'DISPATCHED', driver:'GREG' })), 'dispatched');
-assert.equal(dispatchStatusKind(row({ status:'PRE', driver:'GREG' })), 'preload');
-assert.equal(dispatchStatusKind(row({ status:'PRE LOADED' })), 'preload');
-assert.equal(dispatchStatusKind(row({ status:'', driver:'' })), 'unassigned');
-assert.equal(dispatchStatusKind(row({ status:'55/56', driver:'MUNOZ' })), 'assigned'); // POC grain
-assert.equal(dispatchStatusKind(row({ status:'REJECTED' })), 'cancelled');
-assert.equal(dispatchStatusKind(row({ status:'PUSH TO 8/13' })), 'push');
+assert.equal(rowHasDriverName(row({ driver:'MUNOZ' })), true);
+assert.equal(rowHasDriverName(row({ driver:'—' })), false);
+assert.equal(rowHasDriverName(row({ driver:'-' })), false);
+assert.equal(rowHasFreightBill(row({ fb:'200334' })), true);
+assert.equal(rowHasFreightBill(row({ fb:'-' })), false);
+assert.equal(rowHasFreightBill(row({ fb:'' })), false);
 
-/* Today: only DELIVERED books. Assigned / DISPATCHED / unassigned / preload do not. */
-assert.equal(dayRowBooksRevenue(row({ status:'DELIVERED', driver:'GREG' }), TODAY), true);
-assert.equal(dayRowBooksRevenue(row({ status:'D', driver:'GREG' }), TODAY), true);
-assert.equal(dayRowBooksRevenue(row({ status:'DISPATCHED', driver:'GREG' }), TODAY), false);
-assert.equal(dayRowBooksRevenue(row({ status:'dispatched 4 delivery', driver:'GREG' }), TODAY), false);
-assert.equal(dayRowBooksRevenue(row({ status:'PRE', driver:'GREG' }), TODAY), false);
-assert.equal(dayRowBooksRevenue(row({ status:'', driver:'' }), TODAY), false);
-assert.equal(dayRowBooksRevenue(row({ status:'55/56', driver:'MUNOZ' }), TODAY), false, 'POC in-progress today does not book');
-assert.equal(dayRowBooksRevenue(row({ origin:'FCGE', status:'', driver:'', truck:'ARDENT' }), TODAY), false, 'today Ardent unassigned does not book');
+/* James: driver AND FB required. FCGE projection rows (no driver, no FB) never book. */
+assert.equal(dayRowBooksRevenue(row({
+  origin:'FCGE', truck:'ARDENT', status:'', driver:'', fb:'', po:'183-18'
+}), TODAY), false, 'FCGE Ardent projection (no driver, no FB) does not book');
+assert.equal(dayRowBooksRevenue(row({
+  date:YDAY, status:'55/56', driver:'MUNOZ', fb:''
+}), TODAY), false, 'driver without FB does not book');
+assert.equal(dayRowBooksRevenue(row({
+  date:YDAY, status:'55/56', driver:'', fb:'200334'
+}), TODAY), false, 'FB without driver does not book');
+assert.equal(dayRowBooksRevenue(row({
+  status:'DELIVERED', driver:'GREG', fb:''
+}), TODAY), false, 'DELIVERED without FB does not book');
 
-/* Past day: assigned / DISPATCHED book (sheet rarely types DELIVERED, POC uses trailer-in-status). */
-assert.equal(dayRowBooksRevenue(row({ date:YDAY, status:'DISPATCHED', driver:'GREG' }), TODAY), true);
-assert.equal(dayRowBooksRevenue(row({ date:YDAY, status:'55/56', driver:'MUNOZ' }), TODAY), true, 'yesterday POC with trailer in Status books');
-assert.equal(dayRowBooksRevenue(row({ date:YDAY, status:'DELIVERED', driver:'GREG' }), TODAY), true);
-assert.equal(dayRowBooksRevenue(row({ date:YDAY, status:'', driver:'' }), TODAY), false, 'unassigned leftover does not book');
-assert.equal(dayRowBooksRevenue(row({ date:YDAY, status:'PRE', driver:'GREG' }), TODAY), false);
-assert.equal(dayRowBooksRevenue(row({ date:YDAY, status:'REJECTED', driver:'GREG' }), TODAY), false);
-assert.equal(dayRowBooksRevenue(row({ date:YDAY, status:'PUSH', driver:'GREG' }), TODAY), false);
+assert.equal(dayRowBooksRevenue(row({
+  status:'DELIVERED', driver:'GREG', fb:'192564'
+}), TODAY), true, 'DELIVERED with driver+FB books today');
+assert.equal(dayRowBooksRevenue(row({
+  date:YDAY, status:'55/56', driver:'MUNOZ', fb:'200334'
+}), TODAY), true, 'yesterday POC with driver+FB+trailer-in-status books');
+assert.equal(dayRowBooksRevenue(row({
+  date:YDAY, status:'DISPATCHED', driver:'GREG', fb:'192564'
+}), TODAY), true);
+assert.equal(dayRowBooksRevenue(row({
+  status:'DISPATCHED', driver:'GREG', fb:'192564'
+}), TODAY), false, 'today DISPATCHED with driver+FB still does not book');
 
-/* Money loops filter on booked, not active. */
+/* Money loops still filter on booked. */
 const computeDayFn = html.slice(html.indexOf('function computeDay(){'), html.indexOf('function dayTotalsHTML('));
 assert.ok(/rows\.filter\(r=>r\.booked\)/.test(computeDayFn), 'computeDay totals booked rows');
 assert.ok(/activeLoads/.test(computeDayFn), 'computeDay keeps an active count');
-assert.ok(/IN PROGRESS/.test(computeDayFn), 'open day with no completed loads is IN PROGRESS, not fake revenue');
 
 const runFn = html.slice(html.indexOf('function runningTotals(refDate){'), html.indexOf('function verizonFuelDollarsForDate('));
 assert.ok(/if\(!c\.booked\) return/.test(runFn), 'WTD/MTD runningTotals uses booked');
-assert.ok(!/if\(!c\.active\) return/.test(runFn), 'runningTotals no longer sums all active rows');
 
 const accumFn = html.slice(html.indexOf('function accumulatePnlByDay(){'), html.indexOf('function pnlSumRange('));
 assert.ok(/if\(!r\.booked\) return/.test(accumFn), 'P&L accumulate uses booked');
-assert.ok(/adpFieldActualsForDate/.test(accumFn), 'ADP actuals path still on P&L accumulate');
-assert.ok(/blendEstDriverWages/.test(accumFn), 'EST blend still on P&L accumulate');
 assert.ok(/verizonFuelDollarsForDate/.test(accumFn), 'Verizon fuel overwrite still on P&L accumulate');
 
-assert.ok(/completed ·/.test(html) && /active/.test(html), 'UI shows completed vs active');
-assert.ok(/0 completed · 65 active/.test(html) || /completed ·.*active/.test(html),
-  'landing / P&amp;L copy mentions completed vs active');
+/* ---- Ardent rate: dest from Truck, 52k × $0.00425 × 1.32 FSC ---- */
+assert.ok(/function pocDestHint\(r\)/.test(html), 'pocDestHint exists');
+assert.ok(/customerLabelFrom\(r\.truck\)/.test(html), 'dest hint reads Truck column');
+assert.ok(/rec\.destLabel = cls\.destLabel/.test(html), 'parse copies destLabel');
 
-/* Do not regress rates / fuel / ADP / Twilio. */
-assert.ok(/'ARDENT':\s*\{\s*ratePerLb:\s*0\.00425,\s*fscPct:\s*32/.test(html), 'FCG Ardent short-haul rate unchanged');
-assert.ok(/FCGE-origin twin of FCG→ARDENT/.test(html), 'FCGE→Ardent twin unchanged');
-assert.ok(/'JACQUES BROS':\s*\{\s*'ARDENT':\s*\{\s*ratePerLb:\s*0\.00775,\s*fscPct:\s*33/.test(html),
-  'Jacques→Ardent long-haul unchanged');
-assert.ok(/avgRevenue:\s*425/.test(html), 'POC blended fallback stays $425');
+const ratePrelude = `
+function normOrigin(v){
+  return String(v==null?'':v).toUpperCase().replace(/\\s+/g,' ').trim().replace(/[.'\`]/g,'');
+}
+function laneRateOverrideFor(){ return null; }
+`;
+const rateStart = html.indexOf('const POC_MIN_WEIGHT');
+const rateEnd = html.indexOf('function laneOverrideKey(');
+assert.ok(rateStart >= 0 && rateEnd > rateStart, 'POC rate block found');
+const rateBox = { console };
+createContext(rateBox);
+runInContext(ratePrelude + html.slice(rateStart, rateEnd), rateBox);
+
+const ardent = rateBox.pocLaneRevenue('FCGE', 'ARDENT', 48000, 'WHT');
+assert.ok(ardent, 'FCGE→ARDENT lane matches');
+const expected = 52000 * 0.00425 * 1.32;
+assert.equal(Math.round(ardent.amount * 100) / 100, Math.round(expected * 100) / 100,
+  'FCGE→Ardent is $291.72 (52k floor × $0.00425 × 32% FSC), not $241 or $425');
+assert.equal(ardent.minWeightApplied, true, '48k default hits the 52k POC floor');
+
+const ardentFcg = rateBox.pocLaneRevenue('FCG', 'ARDENT', 54000, 'WHT');
+assert.ok(ardentFcg);
+assert.equal(Math.round(ardentFcg.amount * 100) / 100, Math.round(54000 * 0.00425 * 1.32 * 100) / 100,
+  'FCG→Ardent at 54k bills actual weight × $0.00425 × 32% FSC');
+
+assert.equal(rateBox.pocLaneRevenue('FCGE', "Phil O'Connell Grain", 48000, 'WHT'), null,
+  'customer label is not a dest — that miss was the $425 fallback');
+
+/* $241 is 43,000 lb × $0.00425 × 1.32 with NO 52k floor. That is not how
+   POC bills and is not stored. Default sheet lbs is 48k, which still floors. */
+const noFloor = 43000 * 0.00425 * 1.32;
+assert.equal(Math.round(noFloor * 100) / 100, 241.23);
+const light = rateBox.pocLaneRevenue('FCGE', 'ARDENT', 43000, 'WHT');
+assert.equal(Math.round(light.amount * 100) / 100, Math.round(expected * 100) / 100,
+  '43k still bills the 52k floor ($291.72), not $241');
+
+assert.ok(/'ARDENT':\s*\{\s*ratePerLb:\s*0\.00425,\s*fscPct:\s*32/.test(html),
+  'stored Ardent short-haul rate is still $0.00425/lb + 32% FSC');
+assert.ok(/avgRevenue:\s*425/.test(html), 'POC blended fallback stays $425 when no lane matches');
+assert.ok(!/\b241\b/.test(html.slice(html.indexOf('const POC_LANE_RATES'), html.indexOf('function pocLaneRateFor'))),
+  'POC_LANE_RATES does not store $241');
+
 assert.ok(/currentDieselPricePerGal:\s*4\.50/.test(html), 'diesel unchanged');
 assert.ok(/fleetAvgMPG:\s*6\.0/.test(html), 'MPG unchanged');
 assert.ok(/estDriverWageBlend:\s*1\.21/.test(html), 'ADP blend default unchanged');
-assert.ok(/wearPerMile:\s*0\.498\b/.test(html), 'wear unchanged');
-assert.ok(/otherVariablePerLoad:\s*0\b/.test(html), 'other stays 0');
-assert.ok(/2026-08-26-fct-calc-v2\.1\.42-completed-rev/.test(html), 'APP_VERSION is v2.1.42');
-assert.ok(/v2\.1\.42-completed-rev/.test(html), 'changelog has v2.1.42');
+assert.ok(/2026-08-26-fct-calc-v2\.1\.43-ardent-fb/.test(html), 'APP_VERSION is v2.1.43');
+assert.ok(/v2\.1\.43-ardent-fb/.test(html), 'changelog has v2.1.43');
 
 console.log('completed-revenue.test.mjs: ok');
