@@ -81,6 +81,10 @@ assert.equal(dayRowBooksRevenue(row({
 const computeDayFn = html.slice(html.indexOf('function computeDay(){'), html.indexOf('function dayTotalsHTML('));
 assert.ok(/rows\.filter\(r=>r\.booked\)/.test(computeDayFn), 'computeDay totals booked rows');
 assert.ok(/activeLoads/.test(computeDayFn), 'computeDay keeps an active count');
+assert.ok(/planLoads/.test(computeDayFn) && /planRevenue/.test(computeDayFn),
+  'computeDay keeps a projection total for unbooked planned rows');
+assert.ok(/act\.filter\(r=>!r\.booked\)/.test(computeDayFn),
+  'projection is active rows that do not book');
 
 const runFn = html.slice(html.indexOf('function runningTotals(refDate){'), html.indexOf('function verizonFuelDollarsForDate('));
 assert.ok(/if\(!c\.booked\) return/.test(runFn), 'WTD/MTD runningTotals uses booked');
@@ -139,7 +143,9 @@ assert.ok(!/\b241\b/.test(html.slice(html.indexOf('const POC_LANE_RATES'), html.
 assert.ok(/currentDieselPricePerGal:\s*4\.50/.test(html), 'diesel unchanged');
 assert.ok(/fleetAvgMPG:\s*6\.0/.test(html), 'MPG unchanged');
 assert.ok(/estDriverWageBlend:\s*1\.21/.test(html), 'ADP blend default unchanged');
-assert.ok(/2026-08-26-fct-calc-v2\.1\.43-ardent-fb/.test(html), 'APP_VERSION is v2.1.43');
-assert.ok(/v2\.1\.43-ardent-fb/.test(html), 'changelog has v2.1.43');
+assert.ok(/sheetPlanRow/.test(html) && /not in TOTAL/.test(html),
+  'sheet footer has a PLAN row that is not in books');
+assert.ok(/2026-08-26-fct-calc-v2\.1\.44-plan-line/.test(html), 'APP_VERSION is v2.1.44');
+assert.ok(/v2\.1\.44-plan-line/.test(html), 'changelog has v2.1.44');
 
 console.log('completed-revenue.test.mjs: ok');
