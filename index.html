@@ -11,7 +11,7 @@
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<meta name="app-version" content="2026-08-25-fct-calc-v2.1.40-adp-blend">
+<meta name="app-version" content="2026-08-26-fct-calc-v2.1.42-completed-rev">
 <title data-id="th-modified">FCT Load Profitability — French Camp Transport</title>
 <link rel="manifest" href='data:application/manifest+json,{"name":"FCT Load Profitability","short_name":"FCT Calc","start_url":".","display":"standalone","background_color":"%2312100e","theme_color":"%2312100e","icons":[{"src":"data:image/svg%2Bxml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 192 192%27%3E%3Crect width=%27192%27 height=%27192%27 fill=%27%2312100e%27/%3E%3Ctext x=%2796%27 y=%27124%27 font-size=%2772%27 font-family=%27sans-serif%27 font-weight=%27700%27 fill=%27%238fb590%27 text-anchor=%27middle%27%3EFCT%3C/text%3E%3C/svg%3E","sizes":"192x192","type":"image/svg+xml"}]}'>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -1420,7 +1420,7 @@
    still exposes the Import JSON box for future refreshes.
    ============================================================= */
 
-const APP_VERSION = '2026-08-25-fct-calc-v2.1.40-adp-blend';
+const APP_VERSION = '2026-08-26-fct-calc-v2.1.42-completed-rev';
 const STORAGE_KEY = 'fct-calc:state';
 const IDB_NAME = 'fct-calc-db';
 const IDB_STORE = 'kv';
@@ -8161,6 +8161,7 @@ async function hydrateLastImportRows(){
   }
 }
 
+/* BEGIN COMPLETED_REVENUE */
 function dayRowActive(r){
   if(!r) return false;
   /* v2.0.9: PUSH loads were deferred and did NOT run — must be excluded from
@@ -8169,11 +8170,59 @@ function dayRowActive(r){
      r.status (Column A of the raw sheet — see H4/Q13 in the memory dump),
      but the dispatch parser has historically also carried the raw Column H
      value on r.h for legacy rows, so we check both. Match is substring +
-     upper-cased so "PUSH", " PUSH", "PUSH-2", "push" all trip it. */
+     upper-cased so "PUSH", " PUSH", "PUSH-2", "push" all trip it.
+     v2.1.42: dayRowActive is the OPERATIONAL filter (board count, Queue,
+     trailers, cutoff, fuel-est miles). Money no longer follows it — see
+     dayRowBooksRevenue(). */
   const flags = (String(r.status||'') + ' ' + String(r.h||'')).toUpperCase();
   if(flags.includes('PUSH')) return false;
   return (Number(r.lbs)||0)>0 || (Number(r.miles)||0)>0 || (Number(r.hours)||0)>0;
 }
+
+/* v2.1.42: what the Status cell actually means on the FCT log.
+   Diamond rows write DISPATCHED / DELIVERED / PRE in column H.
+   POC grain (Ardent, Purina, Farmers, …) puts the DESTINATION in column G
+   (Truck) and the trailer pair in column H (Status) — they almost never
+   type DELIVERED. "dispatched 4 delivery" is still in-progress, not done. */
+function dispatchStatusKind(r){
+  const st = String((r && r.status) || '').trim().toUpperCase();
+  const flags = (st + ' ' + String((r && r.h) || '')).toUpperCase();
+  if(flags.includes('PUSH')) return 'push';
+  if(/REJECT|RETURN|NO PRODUCT|DIDN'?T DELIVER|DIDNT DELIVER|DIDN'?T LOAD|LOAD MISSED|\bHOLD\b/.test(st))
+    return 'cancelled';
+  if(/DISPATCH/.test(st) || /DIPATCH|DISAPTCH|DFISPATCH/.test(st)) return 'dispatched';
+  if(st==='D' || st==='COMPLETE' || st==='COMPLETED' || st==='DELIVERY'
+     || /^DELIVER/.test(st) || /\bDELIVERED\b/.test(st))
+    return 'delivered';
+  if(/PRE/.test(st)) return 'preload';
+  const hasDriver = !!(String((r && r.driverRaw) || '').trim() || String((r && r.driver) || '').trim());
+  if(!hasDriver && (st==='' || st==='P')) return 'unassigned';
+  if(!hasDriver) return 'unassigned';
+  return 'assigned';
+}
+
+/* v2.1.42: a load books revenue only when it has actually been completed.
+   James 2026-08-26: if a load is not completed it cannot be counted as
+   revenue; costs for unfinished loads are not treated as if the load paid.
+   - DELIVERED / D / COMPLETE always books (any date).
+   - Unassigned, preload, PUSH, cancelled never book.
+   - Assigned / DISPATCHED book only after the calendar day closes.
+     Today's still-rolling Diamond DISPATCHED rows and POC hauls (trailer
+     pair in Status, driver set) stay on the active count, not in the $.
+     Once the date is in the past, those rows are the hauls that ran —
+     the sheet often never flips them to DELIVERED, especially POC grain.
+   asOfISO is injectable for tests; production uses local today. */
+function dayRowBooksRevenue(r, asOfISO){
+  if(!dayRowActive(r)) return false;
+  const kind = dispatchStatusKind(r);
+  if(kind==='push' || kind==='cancelled' || kind==='unassigned' || kind==='preload')
+    return false;
+  if(kind==='delivered') return true;
+  const asOf = asOfISO || (typeof isoLocal==='function' ? isoLocal(new Date()) : '');
+  const rowDate = String((r && r.date) || '');
+  return !!(rowDate && asOf && rowDate < asOf);
+}
+/* END COMPLETED_REVENUE */
 /* v1.3: a day row is priced off the T12M model, not the rate card.
    Precedence for both sides is the same — per-row override wins, then the
    per-customer figure, then the global default. The rate-card linehaul + FSC
@@ -8293,7 +8342,7 @@ function computeDayRow(r){
     };
   }
 
-  return { active:dayRowActive(r), customer:r.customer, driver:r.driver, lbs:lbs, miles:miles, hours:hours,
+  return { active:dayRowActive(r), booked:dayRowBooksRevenue(r), customer:r.customer, driver:r.driver, lbs:lbs, miles:miles, hours:hours,
            actual:actual,
            bucket:r.bucket||'diamond', custLabel:r.custLabel||'', bucketWhy:r.bucketWhy||'',
            tier: tierV? tierV.k : '',
@@ -8310,8 +8359,12 @@ function computeDay(){
   const s = state.settings, d = state.dayRollup;
   const rows = d.currentRows.map(computeDayRow);
   const act  = rows.filter(r=>r.active);
-  const T = { loads:act.length, revenue:0, varCost:0, cm:0, hours:0, cardRevenue:0, driverCost:0, otherPlug:0 };
-  act.forEach(r=>{ T.revenue+=r.revenue; T.varCost+=r.varCost; T.cm+=r.cm; T.hours+=r.hours; T.cardRevenue+=r.cardRevenue; T.driverCost+=(Number(r.driverCost)||0); T.otherPlug+=(Number(r.otherPlug)||0); });
+  /* v2.1.42: dollars follow completed loads only. Active (assigned /
+     dispatched / preload / unassigned-with-data) still drives the board
+     count, Queue, trailers, and cutoff. */
+  const booked = rows.filter(r=>r.booked);
+  const T = { loads:booked.length, activeLoads:act.length, revenue:0, varCost:0, cm:0, hours:0, cardRevenue:0, driverCost:0, otherPlug:0 };
+  booked.forEach(r=>{ T.revenue+=r.revenue; T.varCost+=r.varCost; T.cm+=r.cm; T.hours+=r.hours; T.cardRevenue+=r.cardRevenue; T.driverCost+=(Number(r.driverCost)||0); T.otherPlug+=(Number(r.otherPlug)||0); });
   /* v2.1.33: when ADP field-driver actuals cover a CLOSED date, swap the
      modelled driver-wage component for that day's ADP dollars. Fuel,
      wear, and sub-haul stay. A leftover other plug still drops.
@@ -8325,7 +8378,7 @@ function computeDay(){
      is carried alongside, so the variance compares like with like. Mixing 18
      measured loads against a 21-load estimate would read as a saving that is
      really just three loads nobody measured. */
-  const matchedRows = act.filter(r=>r.actual);
+  const matchedRows = booked.filter(r=>r.actual);
   let A = null;
   if(matchedRows.length){
     A = { loads:matchedRows.length, miles:0, hours:0, varCost:0, cm:0, revenue:0,
@@ -8342,7 +8395,7 @@ function computeDay(){
     A.milesPct = A.estMiles>0 ? ((A.miles/A.estMiles)-1)*100   : 0;
     A.hoursPct = A.estHours>0 ? ((A.hours/A.estHours)-1)*100   : 0;
     A.cmDelta  = A.cm - A.estCm;
-    A.unmatched = act.length - matchedRows.length;
+    A.unmatched = booked.length - matchedRows.length;
   }
 
   /* v1.3: the FULL daily fixed nut. v1.2 scaled this by trucks running,
@@ -8352,7 +8405,7 @@ function computeDay(){
   const fixedTotal = fixedCostPerDay();
   const trucks = Number(d.trucksRunning)>0 ? Number(d.trucksRunning) : trucksRunningPerDay();
 
-  /* v1.4 dispatch counts over the same active rows the money is built on. */
+  /* v1.4 / v2.1.42: dispatch counts stay on active rows. Money is booked. */
   const lockedLoads = d.currentRows.filter(r=>dayRowActive(r) && isPreloadLocked(r)).length;
   /* v1.7 — Section 2 is counted here so the P&L can disclose it, and ONLY so
      it can disclose it. Not one of these rows touches T.revenue, T.varCost or
@@ -8371,15 +8424,16 @@ function computeDay(){
   // the fixed nut off modelled load hours (estHours) so the row split still
   // matches the loads.
   const allocHrs = (T.estHours!=null) ? T.estHours : T.hours;
-  act.forEach(r=>{
+  rows.forEach(r=>{ r.fixedAlloc = 0; r.net = r.cm; });
+  booked.forEach(r=>{
     r.fixedAlloc = allocHrs>0 ? fixedTotal*(r.hours/allocHrs)
-                 : (act.length? fixedTotal/act.length : 0);
+                 : (booked.length? fixedTotal/booked.length : 0);
     r.net = r.cm - r.fixedAlloc;
   });
   const net  = T.cm - fixedTotal;
   const band = Number(s.dayVerdictBandUsd)>0 ? Number(s.dayVerdictBandUsd) : 500;
   const be   = breakevenLoadsPerDay();
-  const shortfall = be - act.length;
+  const shortfall = be - booked.length;
 
   /* ---- Load mix (v1.3) ----
      The day is not just a P&L question. Capacity is deliberately reserved for
@@ -8387,13 +8441,13 @@ function computeDay(){
      standing non-Diamond commitments is a worse day than the number suggests:
      that freight will still be there in harvest season. */
   const mix = {diamond:0, steady:0, seasonal:0, spot:0};
-  act.forEach(r=>{ mix[r.bucket] = (mix[r.bucket]||0)+1; });
-  const n = act.length || 1;
+  booked.forEach(r=>{ mix[r.bucket] = (mix[r.bucket]||0)+1; });
+  const n = booked.length || 1;
   const share = k => (mix[k]/n)*100;
   const inSeason = inSeasonWindow(d.date);
   const dangerPct = Number(s.steadyDangerPct)||20;
   const mixFlags = [];
-  if(act.length){
+  if(booked.length){
     if(!mix.diamond) mixFlags.push('no Diamond baseline on the day at all');
     else if(share('diamond') < 50) mixFlags.push('Diamond is only '+share('diamond').toFixed(0)+'% of the day');
     if(share('steady') > dangerPct)
@@ -8419,23 +8473,27 @@ function computeDay(){
   const mixHealthy = mixFlags.length===0;
 
   let verdict, vClass, vNote;
-  const mixLine = act.length
+  const mixLine = booked.length
     ? ' Mix: '+LOAD_BUCKETS.filter(b=>mix[b.k]).map(b=>mix[b.k]+' '+b.label.toLowerCase()).join(' · ')+'.'
     : '';
   if(!act.length){
     verdict='NO LOADS YET'; vClass='reneg';
     vNote='Import the dispatch log and pick a date to get a verdict on the day.';
+  } else if(!booked.length){
+    verdict='IN PROGRESS'; vClass='reneg';
+    vNote=act.length+' load'+(act.length===1?'':'s')+' on the board, <b>none completed yet</b> — revenue is $0 until a load is delivered. '
+      + 'Assigned, dispatched, preload, and unassigned rows stay in the active count, not the dollars.';
   } else if(net > band && mixHealthy){
     verdict='GREEN — GOOD DAY'; vClass='accept';
-    vNote=act.length+' loads clear the '+money(fixedTotal)+' daily fixed cost by <b>'+money(net)+'</b>. Breakeven is '
-      + be.toFixed(1)+' loads/day, so today ran '+(act.length-be).toFixed(1)+' to the good, and the mix is healthy — '
+    vNote=booked.length+' completed load'+(booked.length===1?'':'s')+' clear the '+money(fixedTotal)+' daily fixed cost by <b>'+money(net)+'</b>. Breakeven is '
+      + be.toFixed(1)+' loads/day, so today ran '+(booked.length-be).toFixed(1)+' to the good, and the mix is healthy — '
       + 'Diamond baseline present, steady work inside its guard rail'
       + (inSeason?', seasonal capacity not encroached':'')+'.'+mixLine;
   } else if(net < -band || (mixFlags.length>1 && net<0)){
     verdict='RED — LOSS'; vClass='reject';
     vNote=(net < -band
-        ? act.length+' loads fell short of the '+money(fixedTotal)+' daily fixed cost. The day lost <b>'+money(Math.abs(net))+'</b>. '
-          + 'Breakeven is '+be.toFixed(1)+' loads/day — today needed '+Math.ceil(shortfall)+' more load'+(Math.ceil(shortfall)===1?'':'s')+'.'
+        ? booked.length+' completed load'+(booked.length===1?'':'s')+' fell short of the '+money(fixedTotal)+' daily fixed cost. The day lost <b>'+money(Math.abs(net))+'</b>. '
+          + 'Breakeven is '+be.toFixed(1)+' loads/day — today needed '+Math.ceil(shortfall)+' more completed load'+(Math.ceil(shortfall)===1?'':'s')+'.'
         : 'The day is under water (<b>'+money(net)+'</b>) and the mix is bleeding back: ')
       + (mixFlags.length? ' <b style="display:inline">Bleed-back risk:</b> '+mixFlags.join('; ')+'.' : '')
       + mixLine;
@@ -8446,8 +8504,8 @@ function computeDay(){
   } else {
     verdict='AMBER — NEAR BREAKEVEN'; vClass='reneg';
     vNote='The day landed within '+money(band)+' of breakeven — net '+money(net)+' after the '+money(fixedTotal)
-      + ' daily fixed cost. At '+be.toFixed(1)+' loads/day breakeven and '+act.length
-      + ' loads run, this is the knife edge: no cushion for a breakdown or a rejected load.'
+      + ' daily fixed cost. At '+be.toFixed(1)+' loads/day breakeven and '+booked.length
+      + ' completed, this is the knife edge: no cushion for a breakdown or a rejected load.'
       + (mixFlags.length? ' Mix note: '+mixFlags.join('; ')+'.' : '')
       + mixLine;
   }
@@ -8455,7 +8513,7 @@ function computeDay(){
            fixedTotal:fixedTotal, net:net, band:band, breakeven:be,
            mix:mix, mixFlags:mixFlags, mixHealthy:mixHealthy, inSeason:inSeason,
            lockedLoads:lockedLoads, pastCutoff:pastCutoff, nearCutoff:nearCutoff,
-           unassigned:unassigned, actuals:A,
+           unassigned:unassigned, actuals:A, activeLoads:(T.activeLoads||act.length),
            preRows:preRows, dayHrs:dayHrs, tomorrow:nextDayISO(d.date),
            verdict:verdict, vClass:vClass, vNote:vNote };
 }
@@ -8471,11 +8529,12 @@ function dayTotalsHTML(d){
     + (T.varSource==='ADP' ? 'ADP hours (actual)' : 'Total hours utilized')+'</div></div>'
     + '<div><div class="kpi sm">'+money2(T.cmPerHour)+'</div><div class="kpi-label">Avg $/hr</div></div>'
     + '</div>'
-    + line('Loads', T.loads+' row'+(T.loads===1?'':'s')+' with data', String(T.loads))
+    + line('Loads', (T.loads)+' completed · '+(T.activeLoads!=null?T.activeLoads:T.loads)+' active on the board',
+        String(T.loads))
     + line('Load mix', LOAD_BUCKETS.map(b=>'<span style="color:'+b.color+'">■</span> '+(d.mix[b.k]||0)+' '+b.label.toLowerCase()).join(' · ')
         + (d.inSeason ? ' — inside the Jun–Nov seasonal window' : ''),
         (d.mixHealthy?'<span class="chip g">healthy</span>':'<span class="chip y">skewing</span>'))
-    + line('Total revenue', T.loads+' load'+(T.loads===1?'':'s')+' at bucket rates', money2(T.revenue))
+    + line('Total revenue', T.loads+' completed load'+(T.loads===1?'':'s')+' at bucket rates (unfinished not included)', money2(T.revenue))
     + line('Total variable cost', T.varSource==='ADP'
         ? '<span class="chip g">ADP</span> field-driver '+money(T.driverCost)+' + modelled fuel/wear/sub'
           + (T.estDriverCost!=null ? ' · was '+money(T.estDriverCost)+' estimated driver' : '')
@@ -8712,7 +8771,7 @@ function runningTotals(refDate){
     li.rows.forEach(r=>{
       if(!r.date || r.date<from || r.date>to) return;
       const c = computeDayRow(r);
-      if(!c.active) return;
+      if(!c.booked) return;
       const d = perDay[r.date] || (perDay[r.date] = {loads:0, rev:0, varc:0, driver:0, otherPlug:0});
       d.loads++; d.rev+=c.revenue; d.varc+=c.varCost; d.driver+=(Number(c.driverCost)||0);
       d.otherPlug += (Number(c.otherPlug)||0);
@@ -8796,7 +8855,7 @@ function accumulatePnlByDay(){
   rows.forEach(raw=>{
     if(!raw || !raw.date) return;
     const r = computeDayRow(raw);
-    if(!r.active) return;
+    if(!r.booked) return;
     const b = byDay[raw.date] || (byDay[raw.date] = emptyPnlDay());
     b.rev += Number(r.revenue)||0;
     if(r.billed) b.billed += Number(r.revenue)||0;
@@ -8941,6 +9000,10 @@ function buildPnlBoard(dateISO){
     });
   }
   const dayBucket = byDay[shown] || seedPnlDayFromAdp(shown);
+  const day = pnlWrapDay(dayBucket);
+  const liRows = (state.dayRollup && state.dayRollup.lastImport && Array.isArray(state.dayRollup.lastImport.rows))
+    ? state.dayRollup.lastImport.rows : [];
+  day.activeLoads = liRows.filter(r => r && r.date===shown && (typeof dayRowActive==='function' ? dayRowActive(r) : true)).length;
   const officeMtd = (typeof adpOfficeInRange==='function')
     ? adpOfficeInRange(monthStart, todayISO) : { dollars:0, names:[] };
   const officeWtd = (typeof adpOfficeInRange==='function')
@@ -8949,7 +9012,7 @@ function buildPnlBoard(dateISO){
     ? adpOfficeDollarsForDate(shown) : 0;
   return {
     shown:shown, todayISO:todayISO, weekStart:weekStart, monthStart:monthStart,
-    day: pnlWrapDay(dayBucket),
+    day: day,
     wtd: pnlSumRange(byDay, weekStart, todayISO),
     mtd: pnlSumRange(byDay, monthStart, todayISO),
     officeDay:officeDay, officeWtd:officeWtd, officeMtd:officeMtd,
@@ -8980,8 +9043,12 @@ function pnlColHTML(title, sub, x, extraClass){
   const fixC = { label:'Pro-rata', cls:'b' };
   const opsNet = (x.opsNet!=null && isFinite(Number(x.opsNet))) ? Number(x.opsNet) : ((Number(x.net)||0) + (Number(x.wearOther)||0));
   const afterWear = Number(x.net)||0;
+  const loadLine = (x.activeLoads!=null)
+    ? (x.loads+' completed · '+x.activeLoads+' active')
+    : (x.loads+' completed');
   return '<div class="pnl-col'+(extraClass?(' '+extraClass):'')+'">'
     + '<div class="pnl-col-h">'+esc(title)+'<b>'+esc(sub)+'</b></div>'
+    + '<div class="pnl-row"><span class="pnl-lab">Loads</span><span class="pnl-amt"><span>'+esc(loadLine)+'</span></span></div>'
     + '<div class="pnl-row"><span class="pnl-lab">Revenue</span>'+pnlAmtHTML(x.rev, revC)+'</div>'
     + '<div class="pnl-row"><span class="pnl-lab">Driver wages</span>'+pnlAmtHTML(x.driver, drvC)+'</div>'
     + '<div class="pnl-row"><span class="pnl-lab">Fuel</span>'+pnlAmtHTML(x.fuel, fuelC)+'</div>'
@@ -9007,6 +9074,8 @@ function pnlBoardHTML(dateISO){
   let h = '<div class="card pnl-board" id="pnlBoard">'
     + '<div class="pnl-head"><div class="pnl-title">P&amp;L</div></div>'
     + '<p class="pnl-lede">Actual profit and loss for the day in view, plus week and month through today. '
+    + '<b>Revenue is completed loads only</b> — DELIVERED (or a past day\'s assigned haul: POC grain puts the trailer pair in Status and rarely types DELIVERED). '
+    + 'Today\'s still-open, dispatched, preload, and unassigned rows stay in the active count, not the dollars. '
     + 'Closed days use ADP field-driver dollars 1:1 (file drop now; a live ADP API later uses the same actuals path — not the 1.21 blend). When a day has no ADP, driver wages are the hours × loaded $/hr estimate times the Settings <b>ADP blend</b> (OT &amp; meals vs estimate, default 1.21) so the month number is usable without dropping a pay file. '
     + 'Fuel uses Verizon fleet miles when we have them, otherwise the lane estimate. '
     + '<b>Ops net</b> is revenue minus driver wages, fuel, and fixed — that is the number to look at for the month. '
@@ -9354,7 +9423,7 @@ function sheetFootHTML(d){
   const pad = NC - 12;                    // extra trailing cells when actuals show
   let h = '<tr class="sheet-tot">'
     + '<td class="c-time">TOTAL</td>'
-    + '<td colspan="7">'+T.loads+' load'+(T.loads===1?'':'s')+' on the day</td>'
+    + '<td colspan="7">'+T.loads+' completed · '+(T.activeLoads!=null?T.activeLoads:T.loads)+' active on the board</td>'
     + '<td></td>'
     + '<td class="money">'+money(T.revenue)+'</td>'
     + '<td class="money" style="color:var(--red)">−'+money(T.varCost)+'</td>'
@@ -9542,8 +9611,10 @@ function alertsStripHTML(dateISO){
    Settings tabs and was never surfaced on the primary view.
 
    All five tiles compute at render time from state:
-     - Revenue + Contribution     ← computeDay().totals (today's active rows,
-                                     PUSH-filtered by dayRowActive())
+     - Revenue + Contribution     ← computeDay().totals (completed loads only;
+                                     v2.1.42 dayRowBooksRevenue(). Active count
+                                     is separate — assigned/dispatched/preload
+                                     stay on the board, not in the $)
      - Fuel actual                ← state.verizonMilesToday.fleetMiles × fuelPerMile()
        + estimated                  sum(laneMilesFor / fallback avg) × fuelPerMile()
      - Calibration                ← state.laneCalibration.fleetFactor
@@ -9560,9 +9631,13 @@ function landingStripHTML(){
   const lc = state.laneCalibration || {};
   const fpm = fuelPerMile();
 
-  // ---- Tile 1: Today's revenue ----
+  // ---- Tile 1: Today's revenue (completed loads only) ----
   const rev = dToday ? dToday.totals.revenue : 0;
   const revLoads = dToday ? dToday.totals.loads : 0;
+  const activeLoads = dToday ? (dToday.totals.activeLoads!=null ? dToday.totals.activeLoads : (dToday.activeLoads||revLoads)) : 0;
+  const revSub = activeLoads
+    ? (revLoads + ' completed · ' + activeLoads + ' active')
+    : 'no active loads';
 
   // ---- Tile 2: Fuel actual vs estimate ----
   // Estimate = sum of laneMilesFor(origin, destination) over today's active
@@ -9603,8 +9678,8 @@ function landingStripHTML(){
     ? 'Verizon '+(v.source==='real'?'real odo':'GPS estimate')+' — '
       + num(v.fleetMiles) + ' fleet mi × ' + money2(fpm) + '/mi ('
       + fuelBasisText() + '). Estimate from LANE_MILES × today\'s '
-      + (dToday ? dToday.totals.loads : 0) + ' active load'
-      + ((dToday && dToday.totals.loads===1)?'':'s') + '.'
+      + activeLoads + ' active load'
+      + (activeLoads===1?'':'s') + '.'
     : 'Estimated fuel from LANE_MILES × today\'s active loads × '
       + money2(fpm) + '/mi. Actual Verizon miles will replace this once /miles-real returns non-zero.';
 
@@ -9676,14 +9751,14 @@ function landingStripHTML(){
       : 'Waiting for the first /miles-real response.';
 
   // ---- Tile 5: Today's contribution ----
-  // Contribution = revenue − variable cost, summed over dayRowActive rows
-  // (already excludes PUSH and non-today preloads). computeDay().totals.cm
-  // is the authoritative number the day-tile at the top of the sheet also uses.
+  // Contribution = revenue − variable cost, summed over COMPLETED rows
+  // (v2.1.42). Active board count is shown next to it; unfinished loads
+  // do not hit the dollars. computeDay().totals.cm is authoritative.
   const cm = dToday ? dToday.totals.cm : 0;
   const cmColor = cm > 0 ? 'g' : cm < 0 ? 'r' : '';
   const cmAdp = dToday && dToday.totals.varSource==='ADP';
-  const cmSub = revLoads
-    ? revLoads + ' load' + (revLoads===1?'':'s') + ' · ' + money(dToday.totals.varCost) + ' var'
+  const cmSub = activeLoads
+    ? revLoads + ' completed · ' + activeLoads + ' active · ' + money(dToday.totals.varCost) + ' var'
       + (cmAdp ? ' · ADP' : ' · EST')
     : 'no active loads';
   const cmLab = cmAdp ? "CONTRIBUTION · ADP" : "CONTRIBUTION · EST";
@@ -9714,10 +9789,10 @@ function landingStripHTML(){
 
   return '<div class="land-strip" id="landStrip">'
     + '<div class="land-strip-row">'
-    + tile(moneyResponsive(rev), "TODAY'S REVENUE", revLoads ? revLoads + ' active loads' : 'no active loads',
+    + tile(moneyResponsive(rev), "TODAY'S REVENUE", revSub,
            { drill: 'revenue', id: 'lsRevenue',
-             title: dToday ? ('Sum of billed revenue across today\'s '
-             + dToday.totals.loads + ' active loads (PUSH-filtered). Matches the DAY tile below.') : '' })
+             title: dToday ? ('Completed revenue only: '+money(rev)+' across '+revLoads
+             + ' completed load'+(revLoads===1?'':'s')+'. '+activeLoads+' active on the board (assigned / dispatched / preload / unassigned stay out of the $). Matches the P&L board.') : '' })
     + tile(fuelHasActual ? moneyResponsive(fuelActual) : moneyResponsive(fuelEst),
            fuelLabel, fuelSub,
            { drill: 'fuel', id: 'lsFuel', numClass: fuelColor, subClass: fuelColor, title: fuelTitle })
@@ -9729,7 +9804,8 @@ function landingStripHTML(){
     + tile(moneyResponsive(cm), cmLab, cmSub,
            { drill: 'contribution', id: 'lsCM', numClass: cmColor,
            title: dToday ? ('Revenue − variable cost across today\'s '
-             + dToday.totals.loads + ' active loads'
+             + revLoads + ' completed load'+(revLoads===1?'':'s')
+             + ' ('+activeLoads+' active on the board)'
              + (dToday.totals.varSource==='ADP'
                 ? ('. Driver wages from ADP '+money(dToday.totals.driverCost)+' / '+num(dToday.totals.hours,1)+' hr (field drivers). Modelled driver was '+money(dToday.totals.estDriverCost)+'.')
                 : dToday.totals.adpHeld
@@ -9805,7 +9881,7 @@ function closeLsModal(){
 function revenueByBucketToday(){
   const d = state.dayRollup;
   if(!d || !d.currentRows) return [];
-  const rows = d.currentRows.map(computeDayRow).filter(r => r.active);
+  const rows = d.currentRows.map(computeDayRow).filter(r => r.booked);
   const groups = {};
   rows.forEach(r => {
     const key = r.bucket === 'diamond'
@@ -9822,8 +9898,14 @@ function revenueByBucketToday(){
 
 function drillRevenueBody(){
   const dToday = computeDay();
-  if(!dToday || !dToday.totals.loads){
+  const activeN = dToday ? (dToday.totals.activeLoads!=null ? dToday.totals.activeLoads : (dToday.activeLoads||0)) : 0;
+  const doneN = dToday ? dToday.totals.loads : 0;
+  if(!dToday || !activeN){
     return '<p style="color:var(--text-muted)">No active loads today yet.</p>';
+  }
+  if(!doneN){
+    return '<p style="color:var(--text-muted)">'+activeN+' active load'+(activeN===1?'':'s')+' on the board, <b>none completed</b>. '
+      + 'Revenue is $0 until a load is delivered. Assigned / dispatched / preload / unassigned stay out of the dollars.</p>';
   }
   const groups = revenueByBucketToday();
   const total = dToday.totals.revenue;
@@ -9838,7 +9920,7 @@ function drillRevenueBody(){
   h += '<div class="row" style="font-weight:700;border-top:1px solid var(--border-strong);margin-top:6px">'
      + '<div class="k" style="color:var(--text)">Total</div>'
      + '<div class="v">' + dToday.totals.loads + '&nbsp;·&nbsp;' + money(total) + '</div></div>';
-  h += '<div class="sub">Contribution across the day: ' + money(dToday.totals.cm)
+  h += '<div class="sub">Completed loads only ('+doneN+' of '+activeN+' active). Contribution: ' + money(dToday.totals.cm)
      + ' · Variable cost: ' + money(dToday.totals.varCost)
      + '. Fixed nut ' + money(dToday.fixedTotal) + ' at day-close → net ' + money(dToday.net) + '.</div>';
   return h;
@@ -9996,10 +10078,14 @@ function drillTrucksBody(){
 
 function drillContributionBody(){
   const dToday = computeDay();
-  if(!dToday || !dToday.totals.loads){
+  const activeN = dToday ? (dToday.totals.activeLoads!=null ? dToday.totals.activeLoads : 0) : 0;
+  if(!dToday || !activeN){
     return '<p style="color:var(--text-muted)">No active loads today yet.</p>';
   }
-  const rows = state.dayRollup.currentRows.map(computeDayRow).filter(r => r.active);
+  if(!dToday.totals.loads){
+    return '<p style="color:var(--text-muted)">'+activeN+' active on the board, none completed — contribution is $0 until a load is delivered.</p>';
+  }
+  const rows = state.dayRollup.currentRows.map(computeDayRow).filter(r => r.booked);
   const ranked = rows.slice().sort((a,b) => b.cm - a.cm);
   const top = ranked.slice(0,5);
   const bot = ranked.slice().reverse().slice(0,5);
@@ -10366,8 +10452,8 @@ function renderDayRollup(){
     const dToday = (typeof computeDay === 'function') ? computeDay() : null;
     const daySrc = dToday && dToday.totals && dToday.totals.varSource;
     const dayTile = dToday ? '<span style="white-space:nowrap" title="'
-      + esc('Day: '+dToday.totals.loads+' load'+(dToday.totals.loads===1?'':'s')
-        + ', '+money(dToday.totals.revenue)+' revenue, '+money(dToday.totals.varCost)+' variable, '
+      + esc('Day: '+dToday.totals.loads+' completed / '+(dToday.totals.activeLoads!=null?dToday.totals.activeLoads:dToday.totals.loads)+' active'
+        + ', '+money(dToday.totals.revenue)+' revenue (completed only), '+money(dToday.totals.varCost)+' variable, '
         + money(dToday.totals.cm)+' contribution, '+money(dToday.fixedTotal)+' fixed → '
         + money(dToday.net)+' net'
         + (daySrc==='ADP' ? ('. Driver wages from ADP '+money(dToday.totals.driverCost)+' / '+num(dToday.totals.hours,1)+' hr.')
@@ -15173,6 +15259,12 @@ SHADOW_TIMELINE_TEXT['2026-07-28'] = "**PARTIAL DAY — Phase 2 diff loop stoppe
 
 /* ---- v2.0 DATA: Changelog (in-app version history) ---- */
 const SHADOW_CHANGELOG = [
+  { ver:'v2.1.42-completed-rev', date:'2026-08-26', changes:[
+    'Today / MTD / WTD revenue is completed loads only. James 2026-08-26 morning: EST $29,659.56 on "65 active loads" was the whole board — unassigned, dispatched, and preload all priced as if they had already paid. A load that is not completed cannot be counted as revenue, and unfinished costs are not treated as if the load paid',
+    'DELIVERED / D / COMPLETE always books. Unassigned, preload, PUSH, rejected/return never book. Assigned / DISPATCHED book only after the calendar day closes — the sheet often never flips them to DELIVERED, especially POC grain (Ardent / Purina / Farmers), which puts the destination in Truck and the trailer pair in Status',
+    'Landing tile and P&L board now show completed $ vs active count (e.g. 0 completed · 65 active). Queue, trailer wall, cutoff, and Verizon fuel estimate still use the active board. ADP blend is unchanged (EST-only on booked modelled wages; actuals still 1:1). Diesel / Twilio / SMS not touched',
+    'Ardent rate checked, not changed: FCG/FCGE → Ardent Mills Stockton is $0.00425/lb + 32% FSC (~$292 at the 52,000 lb floor, 30 mi RT) from QBO Aug 13 invoices — cheapest short-haul POC lane, sibling of FCG→Purina/Farmers at $0.00525/lb. Jacques→Ardent long-haul stays $0.00775/lb + 33%. $425 is the POC blended fallback only when no lane matches. Today\'s 8 FCGE→ARDENT WHT rows are unassigned copies of yesterday\'s open POs and do not book'
+  ]},
   { ver:'v2.1.40-adp-blend', date:'2026-08-25', changes:[
     'James will not log into ADP on the phone. EST driver wages on the P&L / day-rollup now get a visible Settings calibration — ADP blend (OT & meals vs estimate), default 1.21 — so the month number is usable without a pay-file import',
     'Basis: Aug 1–23 2026 Employee Daily Totals, field drivers. Live P&L EST MTD was $88,195.38; same board after ADP import was $107,054.54 (closed days ADP $101,194.90 / 4,037.3 hr through 8/23; today 8/24 stayed EST $5,191.24). Ratio ≈ 1.214. Gap is mostly OT + meals, plus hours a bit light. ADP blended field $/hr through 8/23 was $25.07 vs defaultDriverRate $22.28',
