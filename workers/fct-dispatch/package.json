@@ -1,0 +1,12 @@
+{
+  "name": "fct-dispatch",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node src/ingest.test.mjs",
+    "deploy": "wrangler deploy"
+  },
+  "dependencies": {
+    "xlsx": "0.18.5"
+  }
+}

@@ -1,0 +1,13 @@
+name = "fct-dispatch"
+main = "src/index.js"
+compatibility_date = "2026-08-26"
+workers_dev = true
+compatibility_flags = ["nodejs_compat"]
+
+# Existing DISPATCH KV namespace (already bound on the live worker).
+[[kv_namespaces]]
+binding = "DISPATCH"
+id = "511e045236dc4b41b89538334f54414c"
+
+# Secrets (Cloudflare dashboard only — never commit values):
+#   INGEST_KEY — shared secret Power Automate / Office Script send as X-FCT-Key
