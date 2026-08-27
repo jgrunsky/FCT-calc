@@ -6,9 +6,13 @@ import { dirname, join } from 'node:path';
 
 const root = dirname(fileURLToPath(import.meta.url));
 const html = readFileSync(join(root, 'index.html'), 'utf8');
+const changelogStart = html.indexOf('const SHADOW_CHANGELOG');
+assert.ok(changelogStart >= 0, 'SHADOW_CHANGELOG present');
+const ui = html.slice(0, changelogStart);
 
-assert.ok(/2026-08-26-fct-calc-v2\.1\.46-device-diesel/.test(html), 'APP_VERSION is v2.1.46');
-assert.ok(/v2\.1\.46-device-diesel/.test(html), 'changelog has v2.1.46');
+assert.ok(/2026-08-27-fct-calc-v2\.1\.47-no-fuel-bar/.test(html), 'APP_VERSION is v2.1.47');
+assert.ok(/v2\.1\.47-no-fuel-bar/.test(html), 'changelog has v2.1.47');
+assert.ok(/v2\.1\.46-device-diesel/.test(html), 'prior diesel changelog kept');
 assert.ok(/v2\.1\.45-driver-fb/.test(html), 'driver+bill changelog kept');
 
 /* Books gate is still driver + freight bill — do not revert PR #13. */
@@ -19,26 +23,38 @@ assert.ok(!/rowDate < asOf/.test(books), 'calendar-close gate stays gone');
 
 /* Shipped default may still be $4.50 — it must not nag or overwrite the device. */
 assert.ok(/currentDieselPricePerGal:\s*4\.50/.test(html), 'source default can stay $4.50');
-assert.ok(/This device only — canonical \$4\.50 cannot overwrite it/.test(html),
-  'Settings diesel copy says this device owns the price');
 
-/* Drift banner never compares fuelPrice. */
-const drift = html.slice(html.indexOf('async function __checkDeviceDrift'), html.indexOf('function __showDriftBanner'));
-assert.ok(!/\['fuelPricePerGal'/.test(drift), 'drift fields omit fuelPricePerGal');
-assert.ok(/\['fleetAvgMPG'/.test(drift) && /\['defaultDriverRate'/.test(drift),
-  'MPG and driver rate can still drift-check');
-assert.ok(!/s\.currentDieselPricePerGal/.test(drift), 'drift compare does not read local diesel');
-
-const apply = html.slice(html.indexOf('diffs.forEach(d=>{'), html.indexOf("toast('Pulled canonical settings"));
-assert.ok(/d\.settingsKey === 'fuelPricePerGal'/.test(apply)
-  && /return;/.test(apply.slice(apply.indexOf("d.settingsKey === 'fuelPricePerGal'"),
-    apply.indexOf("d.settingsKey === 'fuelPricePerGal'") + 120)),
-  'tap-to-pull returns without writing diesel');
+/* v2.1.47: Device-out-of-sync red bar is gone for good. Changelog history may
+   still mention the old bar. */
+assert.ok(!/Device out of sync/.test(ui), 'no Device-out-of-sync UI outside changelog');
+assert.ok(!/__driftBanner/.test(ui), 'no __driftBanner');
+assert.ok(!/__showDriftBanner/.test(ui), 'no __showDriftBanner');
+assert.ok(!/__checkDeviceDrift/.test(ui), 'no __checkDeviceDrift');
+assert.ok(!/Tap to pull latest/.test(html), 'no tap-to-pull overlay');
+assert.ok(!/Pulled canonical settings/.test(html), 'no tap-to-pull toast');
 assert.ok(!/currentDieselPricePerGal = Number\(d\.canonical\)/.test(html),
-  'tap-to-pull never assigns canonical diesel onto the device');
+  'never assigns canonical diesel onto the device');
 
-assert.ok(/Device out of sync/.test(html), 'non-fuel drift banner still exists for MPG/rate');
-assert.ok(!/fuelPrice differs/.test(drift), 'drift function does not format fuelPrice differs');
+/* Canonical-settings is POST-only from Settings. No GET overwrite of diesel. */
+const pushFn = html.slice(html.indexOf('function pushCanonicalSettings'), html.indexOf('async function pushDispatchLog'));
+assert.ok(/method: 'POST'/.test(pushFn), 'Settings still POSTs canonical settings');
+assert.ok(!/method:\s*'GET'/.test(pushFn), 'push is not a GET');
+assert.ok(!/currentDieselPricePerGal\s*=/.test(pushFn), 'POST path does not write local diesel from canonical');
+assert.equal((html.match(/VERIZON_CANONICAL_SETTINGS_URL/g) || []).length, 2,
+  'canonical URL is declared once and fetched once (POST)');
+
+/* Diesel-default nags deleted. */
+assert.ok(!/Diesel price never confirmed/.test(html), 'no never-confirmed nag');
+assert.ok(!/Diesel price is a default/.test(html), 'no default-diesel nag');
+assert.ok(!/shipped default of/.test(html), 'no shipped-default $4.50 lecture');
+assert.ok(!/canonical \$4\.50 cannot overwrite/.test(html), 'no Settings $4.50 lecture');
+assert.ok(!/⚑ shipped default/.test(html), 'no ⚑ shipped default chip');
+assert.ok(!/\?'DEFAULT'/.test(html), 'fuelStaleTag never paints DEFAULT');
+assert.ok(!/fuelPriceUnconfirmed\(\)\?'DEFAULT'/.test(html), 'unconfirmed does not drive DEFAULT chip');
+assert.ok(!/if\(fuelPriceUnconfirmed\(\)\) return true/.test(html),
+  'fuelPriceStale does not treat unconfirmed as stale');
+assert.ok(/id="dieselCard"/.test(html) && /Diesel price \$\/gallon/.test(html),
+  'Settings still has a plain diesel price field');
 
 /* Calibration sticky + EST hold helpers. */
 const start = html.indexOf('/* BEGIN DEVICE_DIESEL_EST */');

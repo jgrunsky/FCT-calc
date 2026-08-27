@@ -7,11 +7,12 @@
 <meta name="apple-mobile-web-app-capable" content="yes" >
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" >
 <meta name="apple-mobile-web-app-title" content="FCT Calc" >
-<!-- Cache-busting so iOS Home Screen / PWA pulls the latest build on next open. -->
+<!-- Cache-busting so iOS Home Screen / PWA pulls the latest build on next open.
+     Token: 2026-08-27-fct-calc-v2.1.47-no-fuel-bar — bump with APP_VERSION. -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<meta name="app-version" content="2026-08-26-fct-calc-v2.1.46-device-diesel">
+<meta name="app-version" content="2026-08-27-fct-calc-v2.1.47-no-fuel-bar">
 <title data-id="th-modified">FCT Load Profitability — French Camp Transport</title>
 <link rel="manifest" href='data:application/manifest+json,{"name":"FCT Load Profitability","short_name":"FCT Calc","start_url":".","display":"standalone","background_color":"%2312100e","theme_color":"%2312100e","icons":[{"src":"data:image/svg%2Bxml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 192 192%27%3E%3Crect width=%27192%27 height=%27192%27 fill=%27%2312100e%27/%3E%3Ctext x=%2796%27 y=%27124%27 font-size=%2772%27 font-family=%27sans-serif%27 font-weight=%27700%27 fill=%27%238fb590%27 text-anchor=%27middle%27%3EFCT%3C/text%3E%3C/svg%3E","sizes":"192x192","type":"image/svg+xml"}]}'>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -1420,7 +1421,7 @@
    still exposes the Import JSON box for future refreshes.
    ============================================================= */
 
-const APP_VERSION = '2026-08-26-fct-calc-v2.1.46-device-diesel';
+const APP_VERSION = '2026-08-27-fct-calc-v2.1.47-no-fuel-bar';
 const STORAGE_KEY = 'fct-calc:state';
 const IDB_NAME = 'fct-calc-db';
 const IDB_STORE = 'kv';
@@ -2507,26 +2508,23 @@ function fuelPriceAgeDays(){
   if(isNaN(t.getTime())) return null;
   return Math.floor((Date.now()-t.getTime())/86400000);
 }
-/* Two ways the price needs attention: never confirmed by the operator (it is
-   still the shipped $4.50 guess), or confirmed but gone stale. */
+/* v2.1.47: staleness is last-updated age only. fuelPriceConfirmed / shipped
+   $4.50 must not paint DEFAULT chips, "never confirmed", or $4.50 lectures —
+   diesel is the number on this device. */
 function fuelPriceUnconfirmed(){ return !state.settings.fuelPriceConfirmed; }
 function fuelPriceStale(){
-  if(fuelPriceUnconfirmed()) return true;
   const a = fuelPriceAgeDays();
-  return a==null || a>FUEL_STALE_DAYS;
+  return a!=null && a>FUEL_STALE_DAYS;
 }
 function fuelPriceWhy(){
-  if(fuelPriceUnconfirmed())
-    return 'This is the shipped default of '+money2(FUEL_FALLBACK_PPG)+'/gal, not a confirmed FCT number. Check a Ramos Oil bill and enter the real price.';
   const a = fuelPriceAgeDays();
-  return a==null ? 'Diesel price has never been dated.' : 'Diesel price was last set '+a+' days ago.';
+  return a==null ? 'Diesel price has no last-updated date.' : 'Diesel price was last set '+a+' days ago.';
 }
-/* Small inline nudge used next to fuel figures. */
+/* Small inline nudge used next to fuel figures. Dated-stale only — never DEFAULT. */
 function fuelStaleTag(){
   if(!fuelPriceStale()) return '';
   return '<span class="est" style="color:var(--amber);background:var(--amber-bg);border-color:color-mix(in oklab,var(--amber) 35%,transparent)" '
-       + 'title="'+esc(fuelPriceWhy()+' Update it in Settings — fuel is the single biggest variable cost per mile.')+'">🟠 '
-       + (fuelPriceUnconfirmed()?'DEFAULT':'UPDATE')+'</span>';
+       + 'title="'+esc(fuelPriceWhy()+' Update it in Settings — fuel is the single biggest variable cost per mile.')+'">🟠 UPDATE</span>';
 }
 
 /* =============================================================
@@ -3550,7 +3548,7 @@ const VERIZON_MILES_URL      = 'https://fct-verizon.jamesgrunsky.workers.dev/mil
 const VERIZON_MILES_REAL_URL = 'https://fct-verizon.jamesgrunsky.workers.dev/miles-real';   // v2.1.20 (real odo via Verizon Segments API)
 const VERIZON_CALIBRATION_URL = 'https://fct-verizon.jamesgrunsky.workers.dev/calibration'; // v2.1.21 (per-lane rolling actual/predicted)
 const VERIZON_DISPATCH_LOG_URL = 'https://fct-verizon.jamesgrunsky.workers.dev/dispatch-log'; // v2.1.21 (POST — feeds calibration)
-const VERIZON_CANONICAL_SETTINGS_URL = 'https://fct-verizon.jamesgrunsky.workers.dev/canonical-settings'; // v2.1.24 banner-pull · v2.1.26 push · v2.1.27 no silent overwrite
+const VERIZON_CANONICAL_SETTINGS_URL = 'https://fct-verizon.jamesgrunsky.workers.dev/canonical-settings'; // v2.1.26 POST from Settings · v2.1.47 no GET overwrite, no red bar
 /* The order the Office Script writes, which is the workbook's own column order
    A..I. Kept as an explicit list rather than Object.values() so the mapping to
    defaultColumnMap() (time:0 … trailer2:8) is stated, not implied by whatever
@@ -4496,10 +4494,10 @@ function renderDash(){
         + '<div class="row-v" style="color:'+sevCol+'">'+steadyPct.toFixed(0)+'%<div class="row-s">steady vs '+danger+'% rail</div></div></div>';
     }
 
-    /* 5. Fuel staleness nudge */
+    /* 5. Fuel staleness nudge — dated prices only, never a $4.50 default lecture */
     if(fuelPriceStale()){
       h += '<div class="row"><div class="row-l"><div class="row-t" style="color:var(--amber)">'
-        + (fuelPriceUnconfirmed()?'⚑ Diesel price never confirmed':'🟠 Diesel price is stale')+'</div>'
+        + '🟠 Diesel price is stale</div>'
         + '<div class="row-s">'+esc(fuelPriceWhy())+'</div></div>'
         + '<div class="row-v" style="color:var(--amber)">'+money2(fuelPerMile())+'<div class="row-s">/mi</div></div></div>';
     }
@@ -4723,10 +4721,8 @@ function renderDash(){
       + '<div class="row-v" style="color:var(--yellow)">'+money(ct.legalOneTime.value)+'<div class="row-s">'+ct.legalOneTime.pctRev.toFixed(1)+'% rev</div></div></div>'
       + '<div class="row" style="border-top:1px solid var(--border);margin-top:4px;padding-top:12px">'
       + '<div class="row-l"><div class="row-t"'+(fuelPriceStale()?' style="color:var(--amber)"':'')+'>'
-      + (fuelPriceUnconfirmed()?'⚑ Diesel price is a default' : fuelPriceStale()?'🟠 Diesel price stale?' : '⛽ Diesel price')+'</div>'
-      + '<div class="row-s">'+(fuelPriceUnconfirmed()
-          ? 'Update in Settings — never set, still the shipped '+money2(FUEL_FALLBACK_PPG)+'/gal guess. Fuel is the largest per-mile variable cost, so this skews every verdict. Source: a Ramos Oil bill ÷ gallons.'
-          : fuelPriceStale()
+      + (fuelPriceStale()?'🟠 Diesel price stale?' : '⛽ Diesel price')+'</div>'
+      + '<div class="row-s">'+(fuelPriceStale()
           ? 'Update in Settings — last set: '+esc(String(s.lastFuelPriceUpdate||'never'))+'. Fuel is the largest per-mile variable cost, so a stale price skews every verdict.'
           : 'Last set '+esc(String(s.lastFuelPriceUpdate||''))+' · '+fuelBasisText()+' · vendors Ramos Oil / Diesel Master')+'</div></div>'
       + '<div class="row-v"'+(fuelPriceStale()?' style="color:var(--amber)"':'')+'>'+money2(fuelPerMile())+'<div class="row-s">/mi</div></div></div>'
@@ -11994,9 +11990,9 @@ function refreshVerizonMilesToday(){
 }
 
 /* BEGIN DEVICE_DIESEL_EST */
-/* v2.1.46: James — diesel is only what he types in Settings. Canonical
-   $4.50 must not win, nag, or overwrite the phone's stored price (~$6).
-   EST DAY/WTD/MTD must not jump thousands while /calibration and ADP
+/* v2.1.47: James — diesel is only what he types in Settings. No red bar,
+   no canonical GET overwrite of currentDieselPricePerGal, no $4.50 default
+   nags. EST DAY/WTD/MTD must not jump thousands while /calibration and ADP
    settle: hold the last stable EST (or "…" on first paint) until those
    inputs finish. Do not invent dollars. */
 var __bootSettle = { cal:false, miles:false, adp:false };
@@ -12118,10 +12114,10 @@ async function refreshLaneCalibration(){
 
 /* v2.1.26 (2026-08-24): after diesel / MPG / default driver rate is saved
    locally, POST the same numbers to /canonical-settings so HIS edit becomes
-   the company copy. The other device can tap the drift banner to pull.
-   v2.1.27: do NOT silent-auto-apply on boot — that clobbered $4.50 with EIA.
-   Local save already happened — this never blocks Settings. Offline or a
-   dead worker just toasts; the number on THIS device still sticks. */
+   the company copy. v2.1.47: never GET that copy back onto currentDieselPricePerGal
+   and never show a Device-out-of-sync bar. v2.1.27: do NOT silent-auto-apply
+   on boot. Local save already happened — this never blocks Settings. Offline
+   or a dead worker just toasts; the number on THIS device still sticks. */
 function pushCanonicalSettings(){
   try{
     const s = (state && state.settings) || {};
@@ -14046,28 +14042,21 @@ function renderSet(){
   h += '<div class="legend">Pulled from FCT invoice detail on 2026-07-27: <b>Diamond Pet Foods</b>, <b>Phil O\'Connell Grain</b> (POC) and <b>Foster Farms</b> all bill FSC at 30% of linehaul; <b>Penny Newman</b> bills $2/ton; <b>American River Ag</b> does not bill a fuel surcharge. '
     + 'Anything left on "use default" falls back to '+(s.defaultFscPercent||30)+'% of linehaul. Set a method to "No fuel surcharge" for a customer who does not bill it.</div></div>';
 
-  /* --- Diesel price (v1.2) — drives fuel $/mile for every calculation --- */
+  /* --- Diesel price — the number he types. No $4.50 lecture, no ⚑ default. --- */
   {
-    const stale = fuelPriceStale();
     const age = fuelPriceAgeDays();
-    const ageTxt = age==null ? 'never set'
-                 : age<=0 ? 'today'
-                 : age===1 ? 'yesterday'
-                 : age+' days ago';
-    h += '<div class="card'+(stale?' warn':'')+'" id="dieselCard"><h2>Diesel price'
-      + (fuelPriceUnconfirmed()
-          ? ' <span style="font-size:10px;color:var(--amber);text-transform:none;letter-spacing:0">⚑ shipped default — confirm FCT\'s price</span>'
-          : stale
-          ? ' <span style="font-size:10px;color:var(--amber);text-transform:none;letter-spacing:0">🟠 update — last set '+esc(ageTxt)+'</span>'
-          : ' <span style="font-size:10px;color:var(--green);text-transform:none;letter-spacing:0">✓ set '+esc(ageTxt)+'</span>')+'</h2>'
-      + (fuelPriceUnconfirmed()
-          ? '<div class="hint" style="margin-bottom:12px;color:var(--amber)">Nothing has been entered yet, so every load is priced off a '+money2(FUEL_FALLBACK_PPG)
-            + '/gal guess. Divide a Ramos Oil bill (total ÷ gallons) and type the real number below — it flows straight through to every verdict.</div>'
-          : '')
+    const ageTxt = age==null ? ''
+                 : age<=0 ? 'set today'
+                 : age===1 ? 'set yesterday'
+                 : 'set '+age+' days ago';
+    h += '<div class="card" id="dieselCard"><h2>Diesel price'
+      + (ageTxt
+          ? ' <span style="font-size:10px;color:var(--text-muted);text-transform:none;letter-spacing:0">'+esc(ageTxt)+'</span>'
+          : '')+'</h2>'
       + '<div class="fld"><label for="sDiesel">Diesel price $/gallon</label>'
       + '<input id="sDiesel" type="number" inputmode="decimal" step="0.01" value="'+s.currentDieselPricePerGal+'" '
       + 'style="font-family:var(--mono);font-size:22px;font-weight:700;padding:14px 12px">'
-      + '<div class="hint">What FCT is actually paying at the pump / on the rack right now. This device only — canonical $4.50 cannot overwrite it. This is the single biggest lever on cost per mile — a 50¢ move is '
+      + '<div class="hint">What FCT is actually paying at the pump / on the rack right now. This is the single biggest lever on cost per mile — a 50¢ move is '
       + money2(0.50/(Number(s.fleetAvgMPG)||FUEL_FALLBACK_MPG))+'/mi.</div></div>'
       + '<div class="fld fld2">'
       + nf('sMPG','Fleet average MPG', s.fleetAvgMPG,'0.1','Grain trucks running heavy. Drop it if the fleet is running loaded more than assumed.')
@@ -15170,12 +15159,10 @@ window.addEventListener('resize',closeSugPop);
   setTimeout(__checkForNewVersion, 5000);
   setInterval(__checkForNewVersion, 10 * 60 * 1000);
 
-  /* v2.1.24 / v2.1.46: DEVICE-DRIFT WARNING for MPG and driver rate only.
-     fuelPrice is device-owned — James: "No diesel is not 4.50! Get rid of
-     that and only have diesel that I set." Never compare, nag, auto-pull,
-     or overwrite currentDieselPricePerGal from canonical $4.50.
-     v2.1.25 silent auto-apply is still REVERTED. Banner + tap-to-pull for
-     MPG / defaultDriverRate only. */
+  /* v2.1.47: Device-out-of-sync red bar DELETED. James: gone for good.
+     Do not GET canonical-settings to compare or overwrite local diesel.
+     Do not paint a banner for MPG / driver rate either. Settings still
+     POSTs via pushCanonicalSettings; v2.1.25 silent auto-apply stays REVERTED. */
   setTimeout(function(){
     try {
       if(!__bootSettle.cal) markBootSettle('cal');
@@ -15183,91 +15170,6 @@ window.addEventListener('resize',closeSugPop);
       if(!__bootSettle.adp) markBootSettle('adp');
     } catch(_){}
   }, 8000);
-  setTimeout(__checkDeviceDrift, 3500);
-  async function __checkDeviceDrift(){
-    try{
-      const r = await fetch(VERIZON_CANONICAL_SETTINGS_URL + '?bust=' + Date.now(),
-                            {cache:'no-store', headers:{'Accept':'application/json'}});
-      if(!r.ok) return;
-      const canon = await r.json();
-      if(!canon || typeof canon !== 'object') return;
-      const s = (state && state.settings) || {};
-      const diffs = [];
-      const f2 = n => (Math.round(Number(n)*1000)/1000);
-      // v2.1.46: fuelPricePerGal is NOT in this list. Diesel is Settings
-      // on this device only. Canonical $4.50 must not produce a red bar.
-      const fields = [
-        ['fleetAvgMPG',       s.fleetAvgMPG,              'fleetAvgMPG', ''],
-        ['defaultDriverRate', s.defaultDriverRate,        'driverRate',  '$'],
-      ];
-      fields.forEach(([canonKey, localVal, label, unit])=>{
-        if(canon[canonKey] == null || localVal == null) return;
-        if(canonKey === 'fleetAvgMPG' && f2(canon.fuelPricePerGal) === f2(EIA_CA_RETAIL_PPG) && f2(canon[canonKey]) === 6.3) return;
-        if(f2(canon[canonKey]) !== f2(localVal)){
-          diffs.push({label, unit, local: localVal, canonical: canon[canonKey], settingsKey: canonKey});
-        }
-      });
-      if(!diffs.length){
-        // Silent when clean. Also clear a stale banner in case a previous fix
-        // ran but the banner didn't tear down for some reason.
-        const old = document.getElementById('__driftBanner');
-        if(old) old.remove();
-        return;
-      }
-      // v2.1.27: banner only. v2.1.25 auto-apply clobbered live diesel with
-      // the EIA drift-check baseline — never silently overwrite local again.
-      __showDriftBanner(diffs, canon);
-    }catch(_){/* offline or transient — silent skip */}
-  }
-  function __showDriftBanner(diffs, canon){
-    let b = document.getElementById('__driftBanner');
-    if(b) b.remove();
-    b = document.createElement('div');
-    b.id = '__driftBanner';
-    b.setAttribute('role','alert');
-    b.style.cssText = 'position:fixed;top:0;left:0;right:0;'
-      + 'background:#7a1e1e;color:#ffdada;padding:10px 14px;'
-      + 'box-shadow:0 4px 14px rgba(0,0,0,0.55);z-index:100000;'
-      + 'font:600 13px/1.35 var(--display,system-ui);cursor:pointer;'
-      + 'display:flex;align-items:center;gap:10px;flex-wrap:wrap;';
-    const first = diffs[0];
-    const fmt = d => d.unit + Number(d.local).toFixed(d.unit==='$'?3:2)
-                    + ' local vs ' + d.unit + Number(d.canonical).toFixed(d.unit==='$'?3:2) + ' canonical';
-    let summary = first.label + ' differs (' + fmt(first) + ')';
-    if(diffs.length > 1) summary += ' +' + (diffs.length-1) + ' more';
-    b.innerHTML = '<span style="font-size:18px">⚠️</span>'
-      + '<span style="flex:1;min-width:0"><b>Device out of sync:</b> ' + summary
-      + '. <u>Tap to pull latest.</u></span>'
-      + '<button id="__driftDismiss" title="Dismiss without pulling"'
-      + ' style="all:unset;padding:2px 8px;color:#ffdada;opacity:0.75;font-size:16px;cursor:pointer">✕</button>';
-    document.body.appendChild(b);
-    document.getElementById('__driftDismiss').addEventListener('click', function(e){
-      e.stopPropagation(); b.remove();
-    });
-    b.addEventListener('click', function(){
-      try{
-        diffs.forEach(d=>{
-          // Map canonical keys → local settings keys.
-          // v2.1.46: never write fuelPrice / currentDieselPricePerGal from
-          // canonical. Diesel is device-owned.
-          if(d.settingsKey === 'fuelPricePerGal') return;
-          if(d.settingsKey === 'fleetAvgMPG'){
-            state.settings.fleetAvgMPG = Number(d.canonical);
-          } else if(d.settingsKey === 'defaultDriverRate'){
-            state.settings.defaultDriverRate = Number(d.canonical);
-          }
-        });
-        save();
-        try{ renderDash(); }catch(_){}
-        try{ renderCalc(); }catch(_){}
-        try{ renderSet();  }catch(_){}
-        try{ toast('Pulled canonical settings — device now in sync.'); }catch(_){}
-      }catch(err){
-        try{ toast('Sync failed: ' + (err && err.message || err)); }catch(_){}
-      }
-      b.remove();
-    });
-  }
 })();
 </script>
 <script>
@@ -15470,6 +15372,9 @@ SHADOW_TIMELINE_TEXT['2026-07-28'] = "**PARTIAL DAY — Phase 2 diff loop stoppe
 
 /* ---- v2.0 DATA: Changelog (in-app version history) ---- */
 const SHADOW_CHANGELOG = [
+  { ver:'v2.1.47-no-fuel-bar', date:'2026-08-27', changes:[
+    'James on live v2.1.46: "The fuel out of sync red bar is still there, I need it gone for good." Deleted the Device-out-of-sync red bar and tap-to-pull overlay entirely (not just skip fuelPrice). Deleted diesel-default nags (never confirmed, shipped $4.50, DEFAULT chips). Canonical GET never writes currentDieselPricePerGal. Diesel is only the Settings number on this device. Stored local price left alone. Driver+bill books, EST hold, Twilio/SMS, PR #11, Excel ingest, Queue unchanged'
+  ]},
   { ver:'v2.1.46-device-diesel', date:'2026-08-26', changes:[
     'James: "No diesel is not 4.50! Get rid of that and only have diesel that I set." fuelPrice is device-owned. The red bar "Device out of sync: fuelPrice differs ($6.000 local vs $4.500 canonical)" is gone. Canonical $4.50 never overwrites Settings diesel, never auto-pulls on load, never nags. Other settings (MPG / driver rate) can still sync. Leave the stored local price alone',
     'EST DAY / WTD / MTD no longer jump thousands on a quiet open. Cause: /calibration painted 1.15x then a POST-invalidated refetch returned empty ("unavailable") and restated modelled wages. Last-good calibration sticks; EST chips hold at "…" or the last stable number until calibration / ADP / Verizon miles settle. Today\'s REV (driver+FB books) is unchanged. Twilio / SMS / PR #11 not touched'
