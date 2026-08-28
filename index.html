@@ -8,11 +8,11 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" >
 <meta name="apple-mobile-web-app-title" content="FCT Calc" >
 <!-- Cache-busting so iOS Home Screen / PWA pulls the latest build on next open.
-     Token: 2026-08-27-fct-calc-v2.1.47-no-fuel-bar — bump with APP_VERSION. -->
+     Token: 2026-08-28-fct-calc-v2.1.48-stable-mtd — bump with APP_VERSION. -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<meta name="app-version" content="2026-08-27-fct-calc-v2.1.47-no-fuel-bar">
+<meta name="app-version" content="2026-08-28-fct-calc-v2.1.48-stable-mtd">
 <title data-id="th-modified">FCT Load Profitability — French Camp Transport</title>
 <link rel="manifest" href='data:application/manifest+json,{"name":"FCT Load Profitability","short_name":"FCT Calc","start_url":".","display":"standalone","background_color":"%2312100e","theme_color":"%2312100e","icons":[{"src":"data:image/svg%2Bxml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 192 192%27%3E%3Crect width=%27192%27 height=%27192%27 fill=%27%2312100e%27/%3E%3Ctext x=%2796%27 y=%27124%27 font-size=%2772%27 font-family=%27sans-serif%27 font-weight=%27700%27 fill=%27%238fb590%27 text-anchor=%27middle%27%3EFCT%3C/text%3E%3C/svg%3E","sizes":"192x192","type":"image/svg+xml"}]}'>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -1421,7 +1421,7 @@
    still exposes the Import JSON box for future refreshes.
    ============================================================= */
 
-const APP_VERSION = '2026-08-27-fct-calc-v2.1.47-no-fuel-bar';
+const APP_VERSION = '2026-08-28-fct-calc-v2.1.48-stable-mtd';
 const STORAGE_KEY = 'fct-calc:state';
 const IDB_NAME = 'fct-calc-db';
 const IDB_STORE = 'kv';
@@ -9080,17 +9080,24 @@ function pnlAmtHTML(n, chip, opts){
     + (chip ? pnlChipHTML(chip)+' ' : '')
     + '<span>'+sign+money2(n)+'</span></span>';
 }
-function pnlColHTML(title, sub, x, extraClass){
+function pnlColHTML(title, sub, x, extraClass, kind){
   const revC = pnlRevChip(x);
   const drvC = pnlDriverChip(x);
   const fuelC = pnlFuelChip(x);
   const wearC = { label:'EST', cls:'y' };
   const fixC = { label:'Pro-rata', cls:'b' };
-  const opsNet = (x.opsNet!=null && isFinite(Number(x.opsNet))) ? Number(x.opsNet) : ((Number(x.net)||0) + (Number(x.wearOther)||0));
+  const opsNet = (typeof pnlChipOpsNet==='function')
+    ? pnlChipOpsNet(x)
+    : ((x.opsNet!=null && isFinite(Number(x.opsNet))) ? Number(x.opsNet) : ((Number(x.net)||0) + (Number(x.wearOther)||0)));
   const afterWear = Number(x.net)||0;
+  const which = kind==='mtd' ? 'MTD' : kind==='wtd' ? 'WTD' : 'DAY';
   const loadLine = (x.activeLoads!=null)
     ? (x.loads+' booked · '+x.activeLoads+' planned')
-    : (x.loads+' booked');
+    : ((kind==='mtd' || kind==='wtd')
+        ? (x.loads+' booked · driver + freight bill')
+        : (x.loads+' booked'));
+  const opsLab = which+' ops net<span class="pnl-hint">the '+which+' number · booked driver + freight bill · rev − wages − fuel − fixed</span>';
+  const wearLab = 'After wear<span class="pnl-hint">fully loaded · not the '+which+' number</span>';
   return '<div class="pnl-col'+(extraClass?(' '+extraClass):'')+'">'
     + '<div class="pnl-col-h">'+esc(title)+'<b>'+esc(sub)+'</b></div>'
     + '<div class="pnl-row"><span class="pnl-lab">Loads</span><span class="pnl-amt"><span>'+esc(loadLine)+'</span></span></div>'
@@ -9098,51 +9105,54 @@ function pnlColHTML(title, sub, x, extraClass){
         ? '<div class="pnl-row"><span class="pnl-lab">Projection</span><span class="pnl-amt"><span>'
           + x.planLoads+' planned · '+money(x.planRevenue)+' not in books</span></span></div>'
         : '')
-    + '<div class="pnl-row"><span class="pnl-lab">Revenue</span>'+pnlAmtHTML(x.rev, revC)+'</div>'
+    + '<div class="pnl-row"><span class="pnl-lab">Revenue<span class="pnl-hint">booked = driver + freight bill</span></span>'+pnlAmtHTML(x.rev, revC)+'</div>'
     + '<div class="pnl-row"><span class="pnl-lab">Driver wages</span>'+pnlAmtHTML(x.driver, drvC)+'</div>'
     + '<div class="pnl-row"><span class="pnl-lab">Fuel</span>'+pnlAmtHTML(x.fuel, fuelC)+'</div>'
     + '<div class="pnl-row"><span class="pnl-lab">Wear / other<span class="pnl-hint">shown · not in Ops net</span></span>'+pnlAmtHTML(x.wearOther, wearC)+'</div>'
     + '<div class="pnl-row tot"><span class="pnl-lab">Contribution</span>'+pnlAmtHTML(x.cm, null, {color:true, signed:true})+'</div>'
     + '<div class="pnl-row"><span class="pnl-lab">Fixed</span>'+pnlAmtHTML(x.fixed, fixC)+'</div>'
-    + '<div class="pnl-row tot net"><span class="pnl-lab">Ops net<span class="pnl-hint">rev − wages − fuel − fixed</span></span>'+pnlAmtHTML(opsNet, null, {color:true, signed:true})+'</div>'
-    + '<div class="pnl-row net-full"><span class="pnl-lab">After wear</span>'+pnlAmtHTML(afterWear, null, {color:true, signed:true})+'</div>'
+    + '<div class="pnl-row tot net"><span class="pnl-lab">'+opsLab+'</span>'+pnlAmtHTML(opsNet, null, {color:true, signed:true})+'</div>'
+    + '<div class="pnl-row net-full"><span class="pnl-lab">'+wearLab+'</span>'+pnlAmtHTML(afterWear, null, {color:true, signed:true})+'</div>'
     + '</div>';
 }
 
 function pnlBoardHTML(dateISO){
-  if(typeof estPaintPending==='function' && estPaintPending()){
+  const view = (typeof pnlBoardView==='function') ? pnlBoardView(dateISO) : null;
+  if((view && view.pending) || (!view && typeof estPaintPending==='function' && estPaintPending())){
     return '<div class="card pnl-board" id="pnlBoard">'
       + '<div class="pnl-head"><div class="pnl-title">P&amp;L</div></div>'
       + '<p class="pnl-lede">Estimates settling — waiting for calibration / ADP / Verizon miles so EST DAY / WTD / MTD do not jump. Revenue (driver + freight bill) is already on Today\'s REV above.</p>'
       + '</div>';
   }
-  const m = buildPnlBoard(dateISO);
+  const m = (view && view.board) ? view.board : buildPnlBoard(dateISO);
   const dayLbl = (typeof dowDateLabel==='function') ? dowDateLabel(m.shown) : m.shown;
   const todayMark = m.shown===m.todayISO ? ' · today' : '';
   const wtdSub = 'Mon '+((typeof shortDateLabel==='function')?shortDateLabel(m.weekStart):m.weekStart)
-    + ' → today';
+    + ' → today · booked (driver + freight bill)';
   const mtdSub = ((typeof shortDateLabel==='function')?shortDateLabel(m.monthStart):m.monthStart)
-    + ' → today';
+    + ' → today · booked (driver + freight bill)';
   const openNote = (m.shown===m.todayISO && state.adpPay && state.adpPay.dateMin && !(state.adpPay.endOfDay))
     ? ' Today is still open — driver wages on this day are hours × loaded $/hr times the ADP blend (OT & meals vs estimate) until you re-drop after close.'
     : '';
   let h = '<div class="card pnl-board" id="pnlBoard">'
     + '<div class="pnl-head"><div class="pnl-title">P&amp;L</div></div>'
-    + '<p class="pnl-lede">Actual profit and loss for the day in view, plus week and month through today. '
+    + '<p class="pnl-lede"><b>MTD is one number:</b> ops net on booked loads (driver name AND freight bill) from '
+    + esc((typeof shortDateLabel==='function')?shortDateLabel(m.monthStart):m.monthStart)
+    + ' through today. Same figure as the MTD chip. After wear is fully loaded and is not the month number. '
     + '<b>Revenue is dispatched loads only</b> — a driver name AND a freight bill (James 2026-08-26: "Driver plus bill is the way."). '
     + 'No driver / no FB was never dispatched — those rows stay on the <b>Projection</b> line, not in day-final revenue, contribution, or Today\'s REV. Same if only one of driver/FB is present. PRELOADED with both still books (the PREL chip is a UI lock, not a books gate). '
     + 'Closed days use ADP field-driver dollars 1:1 (file drop now; a live ADP API later uses the same actuals path — not the 1.21 blend). When a day has no ADP, driver wages are the hours × loaded $/hr estimate times the Settings <b>ADP blend</b> (OT &amp; meals vs estimate, default 1.21) so the month number is usable without dropping a pay file. '
     + 'Fuel uses Verizon fleet miles when we have them, otherwise the lane estimate. '
-    + '<b>Ops net</b> is revenue minus driver wages, fuel, and fixed — that is the number to look at for the month. '
-    + '<b>After wear</b> still subtracts wear and any sub-haul. Wear stays on the board so nothing is hidden. '
+    + '<b>MTD / DAY / WTD ops net</b> is revenue minus driver wages, fuel, and fixed — that is the number to look at for the month. '
+    + '<b>After wear</b> still subtracts wear and any sub-haul — keep it in view, but do not compare it to the MTD chip. Wear stays on the board so nothing is hidden. '
     + 'Wear is last-year shop actuals (313.2+313.3+313.4+313.9 tarps ≈ $448k/yr). There is no $35 other plug — that was not in QBO. '
     + 'Bonuses are not in this board (base pay / ADP daily wages only). 2025 lawsuit legal stays out. '
     + 'Office payroll is listed underneath — it is not inside load variable. Queue suggestions are not changed by the blend.'
     + openNote+'</p>'
     + '<div class="pnl-cols">'
-    + pnlColHTML('Day in view', dayLbl+todayMark, m.day)
-    + pnlColHTML('Month to date', mtdSub, m.mtd)
-    + pnlColHTML('Week to date', wtdSub, m.wtd, 'pnl-col-wtd')
+    + pnlColHTML('Day in view', dayLbl+todayMark, m.day, '', 'day')
+    + pnlColHTML('Month to date', mtdSub, m.mtd, '', 'mtd')
+    + pnlColHTML('Week to date', wtdSub, m.wtd, 'pnl-col-wtd', 'wtd')
     + '</div>';
 
   if(m.officeDay>0 || (m.officeMtd && m.officeMtd.dollars>0)){
@@ -10522,39 +10532,38 @@ function renderDayRollup(){
        MTD read the same $-355 as the day's P&L (Aug 1 is both week-start
        and month-start, so the range collapsed to a single day). MTD should
        always cover month-start(today) → today, regardless of which day is
-       being inspected below. Same fix applied to WTD — same class of bug. */
-    const rtLive = runningTotals(todayISO);
+       being inspected below. Same fix applied to WTD — same class of bug.
+       v2.1.48: chips read ops net from the P&L board (same number as the
+       MTD/DAY/WTD ops-net line). They used to read runningTotals().net
+       (after wear), which is why MTD looked like $34k on the chip and
+       $51k on the board. */
     const dTodayLive = (typeof computeDay === 'function') ? computeDay() : null;
-    const estHold = (typeof estChipView==='function')
-      ? estChipView({
-          dayNet: dTodayLive ? dTodayLive.net : null,
-          daySrc: dTodayLive && dTodayLive.totals && dTodayLive.totals.varSource,
-          cm: dTodayLive && dTodayLive.totals ? dTodayLive.totals.cm : null,
-          week: rtLive && rtLive.week,
-          month: rtLive && rtLive.month
-        })
-      : { pending:false };
-    const rt = estHold.pending ? { week:null, month:null, weekStart: rtLive && rtLive.weekStart, monthStart: rtLive && rtLive.monthStart }
-             : { week: estHold.week || (rtLive && rtLive.week), month: estHold.month || (rtLive && rtLive.month),
-                 weekStart: rtLive && rtLive.weekStart, monthStart: rtLive && rtLive.monthStart };
+    const pnlView = (typeof pnlBoardView==='function')
+      ? pnlBoardView(shown)
+      : { pending:(typeof estPaintPending==='function' && estPaintPending()),
+          board:(typeof buildPnlBoard==='function' ? buildPnlBoard(shown) : null) };
+    const pending = !!(pnlView && pnlView.pending);
+    const board = (!pending && pnlView && pnlView.board) ? pnlView.board : null;
+    const rt = { week: board && board.wtd, month: board && board.mtd,
+                 weekStart: board && board.weekStart, monthStart: board && board.monthStart };
     const dToday = dTodayLive;
-    const daySrc = estHold.pending ? 'EST'
-                 : (estHold.daySrc || (dToday && dToday.totals && dToday.totals.varSource));
-    const dayNet = estHold.pending ? null
-                 : (estHold.dayNet!=null ? estHold.dayNet : (dToday && dToday.net));
+    const daySrc = pending ? 'EST'
+                 : (board && board.day && board.day.adpDays
+                      ? (board.day.estDriverDays ? 'MIX' : 'ADP')
+                      : (dToday && dToday.totals && dToday.totals.varSource) || 'EST');
+    const dayNet = pending ? null
+                 : (board && board.day ? ((typeof pnlChipOpsNet==='function') ? pnlChipOpsNet(board.day) : Number(board.day.opsNet)) : null);
     const dayTile = dToday ? '<span style="white-space:nowrap" title="'
-      + esc(estHold.pending
+      + esc(pending
           ? 'Waiting for calibration / ADP / Verizon miles so EST does not jump on open.'
-          : ('Day: '+dToday.totals.loads+' booked / '+(dToday.totals.activeLoads!=null?dToday.totals.activeLoads:dToday.totals.loads)+' planned'
+          : ('DAY ops net (same as P&L Day): '+dToday.totals.loads+' booked / '+(dToday.totals.activeLoads!=null?dToday.totals.activeLoads:dToday.totals.loads)+' planned'
         + ', '+money(dToday.totals.revenue)+' books (driver + freight bill)'
         + ((dToday.totals.planLoads||0) ? ', plan '+money(dToday.totals.planRevenue)+' not in books' : '')
-        + ', '+money(dToday.totals.varCost)+' variable, '
-        + money(dToday.totals.cm)+' contribution, '+money(dToday.fixedTotal)+' fixed → '
-        + money(dToday.net)+' net'
-        + (daySrc==='ADP' ? ('. Driver wages from ADP '+money(dToday.totals.driverCost)+' / '+num(dToday.totals.hours,1)+' hr.')
-                          : '. Driver wages estimated (hours × loaded $/hr).')))+'">'
-      + (estHold.pending ? '<span class="chip y">EST</span> DAY <b class="num">…</b>'
-        : ((daySrc==='ADP' ? '<span class="chip g">ADP</span> ' : '<span class="chip y">EST</span> ')
+        + '. After wear is fully loaded and is not this chip.'
+        + (daySrc==='ADP' ? (' Driver wages from ADP '+money(dToday.totals.driverCost)+' / '+num(dToday.totals.hours,1)+' hr.')
+                          : ' Driver wages estimated (hours × loaded $/hr).')))+'">'
+      + (pending ? '<span class="chip y">EST</span> DAY <b class="num">…</b>'
+        : ((daySrc==='ADP' ? '<span class="chip g">ADP</span> ' : daySrc==='MIX' ? '<span class="chip a">ADP+EST</span> ' : '<span class="chip y">EST</span> ')
       + 'DAY <b class="num" style="color:'
       + (dayNet>=0?'var(--green)':'var(--red)')+'">'
       + (dayNet>=0?'+':'')+money(dayNet)+'</b>'))+'</span>' : '';
@@ -10570,23 +10579,27 @@ function renderDayRollup(){
       }catch(_){ return todayISO; }
     })();
     const mini = (t,x,fullName)=>{
-      if(estHold && estHold.pending){
+      if(pending){
         return '<span style="white-space:nowrap" title="Waiting for calibration / ADP / Verizon miles so EST does not jump on open.">'
           + '<span class="chip y">EST</span> '+t+' <b class="num">…</b></span>';
       }
       if(!x) return '';
-      const mark = x.varSource==='ADP' ? '<span class="chip g">ADP</span> '
-                 : x.varSource==='MIX' ? '<span class="chip a">ADP+EST</span> '
+      const ops = (typeof pnlChipOpsNet==='function') ? pnlChipOpsNet(x) : ((x.opsNet!=null)?Number(x.opsNet):Number(x.net)||0);
+      const varSource = x.varSource
+        || ((Number(x.adpDays)||0) && (Number(x.estDriverDays)||0) ? 'MIX'
+            : ((Number(x.adpDays)||0) ? 'ADP' : 'EST'));
+      const mark = varSource==='ADP' ? '<span class="chip g">ADP</span> '
+                 : varSource==='MIX' ? '<span class="chip a">ADP+EST</span> '
                  : '<span class="chip y">EST</span> ';
-      const why = x.varSource==='ADP'
+      const why = varSource==='ADP'
         ? ' Driver wages from ADP actuals on each closed day, then summed.'
-        : x.varSource==='MIX'
-          ? ' '+x.adpDays+' closed day'+(x.adpDays===1?'':'s')+' on ADP; '+x.estDays+' estimated (today stays EST until you re-drop after close).'
+        : varSource==='MIX'
+          ? ' '+(x.adpDays||0)+' closed day'+((x.adpDays||0)===1?'':'s')+' on ADP; '+(x.estDriverDays||x.estDays||0)+' estimated (today stays EST until you re-drop after close).'
           : ' Driver wages still hours × loaded $/hr — drop the ADP Daily Totals file to replace closed days.';
       return '<span style="white-space:nowrap" title="'
-        + esc(fullName+'-to-date through today ('+todayHuman+'). Locked to today regardless of the day picker above.'+why)+'">'
+        + esc(fullName+'-to-date ops net through today ('+todayHuman+'). Booked loads only (driver name AND freight bill). Same number as P&L '+fullName+' to date ops net. After wear is fully loaded and is not this chip. Locked to today regardless of the day picker above.'+why)+'">'
         + mark + t+' <b class="num" style="color:'
-        + (x.net>=0?'var(--green)':'var(--red)')+'">'+(x.net>=0?'+':'')+money(x.net)+'</b></span>';
+        + (ops>=0?'var(--green)':'var(--red)')+'">'+(ops>=0?'+':'')+money(ops)+'</b></span>';
     };
     h += '<div class="card" id="dispDrop" style="padding:10px 14px;margin-bottom:12px">'
       + '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">'
@@ -11994,21 +12007,23 @@ function refreshVerizonMilesToday(){
    no canonical GET overwrite of currentDieselPricePerGal, no $4.50 default
    nags. EST DAY/WTD/MTD must not jump thousands while /calibration and ADP
    settle: hold the last stable EST (or "…" on first paint) until those
-   inputs finish. Do not invent dollars. */
-var __bootSettle = { cal:false, miles:false, adp:false };
+   inputs finish. Do not invent dollars.
+   v2.1.48: also wait for dispatch rows (IDB hydrate) so MTD is not painted
+   from the stripped LS shell, then restated when history lands. */
+var __bootSettle = { cal:false, miles:false, adp:false, rows:false };
 var __calInFlight = false;
 var __stableEstPaint = null;
 function markBootSettle(k){
   if(!k) return;
-  const was = __bootSettle.cal && __bootSettle.miles && __bootSettle.adp;
+  const was = __bootSettle.cal && __bootSettle.miles && __bootSettle.adp && __bootSettle.rows;
   __bootSettle[k] = true;
-  const now = __bootSettle.cal && __bootSettle.miles && __bootSettle.adp;
+  const now = __bootSettle.cal && __bootSettle.miles && __bootSettle.adp && __bootSettle.rows;
   if(now && !was){
     try { if(typeof renderDayRollup === 'function' && document.querySelector(DAY_HOST)) renderDayRollup(); } catch(_){}
   }
 }
 function estPaintPending(){
-  return !(__bootSettle.cal && __bootSettle.miles && __bootSettle.adp) && !__stableEstPaint;
+  return !(__bootSettle.cal && __bootSettle.miles && __bootSettle.adp && __bootSettle.rows) && !__stableEstPaint;
 }
 function estPaintUseFrozen(){
   return !!(__calInFlight && __stableEstPaint);
@@ -12038,6 +12053,77 @@ function keepLastGoodCalibration(prev){
   };
 }
 /* END DEVICE_DIESEL_EST */
+
+/* BEGIN MTD_STABLE */
+/* v2.1.48: one MTD number. Header chips used after-wear net; P&L used ops
+   net. James saw ~$34k and ~$51k for the same month. Lock DAY/WTD/MTD to
+   ops net on booked (driver + freight bill) loads, freeze after first
+   settled paint unless those books / ADP / operator diesel-MPG-blend change. */
+var __stablePnl = null;
+function pnlRoundCents(n){ return Math.round((Number(n)||0)*100); }
+function pnlBooksFingerprint(board, settings, adpPay, adpRowCount){
+  settings = settings || {};
+  adpPay = adpPay || {};
+  const day = (board && board.day) || {};
+  const mtd = (board && board.mtd) || {};
+  const wtd = (board && board.wtd) || {};
+  return [
+    (board && board.todayISO) || '',
+    day.loads||0, pnlRoundCents(day.rev),
+    mtd.loads||0, pnlRoundCents(mtd.rev),
+    wtd.loads||0, pnlRoundCents(wtd.rev),
+    adpPay.importedAt||'', adpPay.dateMin||'', adpPay.dateMax||'',
+    Number(adpRowCount)||0,
+    pnlRoundCents(settings.currentDieselPricePerGal),
+    pnlRoundCents(settings.fleetAvgMPG),
+    pnlRoundCents(settings.estDriverWageBlend),
+    pnlRoundCents(settings.defaultDriverRate)
+  ].join('|');
+}
+function pnlInputFingerprint(board){
+  const s = (typeof state!=='undefined' && state && state.settings) || {};
+  const adp = (typeof state!=='undefined' && state && state.adpPay) || {};
+  const n = (typeof __adpRows!=='undefined' && __adpRows && __adpRows.length) || 0;
+  return pnlBooksFingerprint(board, s, adp, n);
+}
+function pnlChipOpsNet(x){
+  if(!x) return 0;
+  if(x.opsNet!=null && isFinite(Number(x.opsNet))) return Number(x.opsNet);
+  return Number(x.net)||0;
+}
+function pnlReuseFrozen(live){
+  if(!__stablePnl || !__stablePnl.mtd) return live;
+  const out = Object.assign({}, live);
+  out.mtd = __stablePnl.mtd;
+  out.wtd = __stablePnl.wtd;
+  if(live && live.shown === __stablePnl.dayShown) out.day = __stablePnl.day;
+  return out;
+}
+function pnlCommitSnapshot(board){
+  if(!board) return;
+  __stablePnl = {
+    fp: pnlInputFingerprint(board),
+    todayISO: board.todayISO,
+    mtd: board.mtd,
+    wtd: board.wtd,
+    dayShown: board.shown,
+    day: board.day
+  };
+}
+function pnlBoardView(dateISO){
+  if(typeof estPaintPending==='function' && estPaintPending()){
+    return { pending:true, board:null, frozen:false };
+  }
+  const live = (typeof buildPnlBoard==='function') ? buildPnlBoard(dateISO) : null;
+  if(!live) return { pending:false, board:null, frozen:false };
+  const fp = pnlInputFingerprint(live);
+  if(__stablePnl && __stablePnl.fp === fp){
+    return { pending:false, board:pnlReuseFrozen(live), frozen:true };
+  }
+  pnlCommitSnapshot(live);
+  return { pending:false, board:live, frozen:false };
+}
+/* END MTD_STABLE */
 
 /* v2.1.21 (2026-08-21): fetch the worker's rolling per-lane calibration and
    land it into state.laneCalibration for computeDayRow to consume. Silent
@@ -15021,6 +15107,7 @@ window.addEventListener('resize',closeSugPop);
   }
 
   hydrateLastImportRows().then(function(hydrated){
+    try { markBootSettle('rows'); } catch(_){}
     if(hydrated){
       // Repaint the surfaces that read li.rows so WTD/MTD, Section 2, and the
       // day picker all reflect the full dataset instead of the trimmed LS view.
@@ -15028,7 +15115,7 @@ window.addEventListener('resize',closeSugPop);
       try { renderQueue(); } catch(_){}
       try { renderHist(); } catch(_){}
     }
-  });
+  }).catch(function(){ try { markBootSettle('rows'); } catch(_){} });
   hydrateAdpPay().then(function(hydrated){
     try { markBootSettle('adp'); } catch(_){}
     if(hydrated){
@@ -15162,12 +15249,15 @@ window.addEventListener('resize',closeSugPop);
   /* v2.1.47: Device-out-of-sync red bar DELETED. James: gone for good.
      Do not GET canonical-settings to compare or overwrite local diesel.
      Do not paint a banner for MPG / driver rate either. Settings still
-     POSTs via pushCanonicalSettings; v2.1.25 silent auto-apply stays REVERTED. */
+     POSTs via pushCanonicalSettings; v2.1.25 silent auto-apply stays REVERTED.
+     v2.1.48: do not force-settle calibration while a fetch is in flight —
+     that painted factor 1.0 then restated MTD when 1.15× landed. */
   setTimeout(function(){
     try {
-      if(!__bootSettle.cal) markBootSettle('cal');
+      if(!__bootSettle.cal && !__calInFlight) markBootSettle('cal');
       if(!__bootSettle.miles) markBootSettle('miles');
       if(!__bootSettle.adp) markBootSettle('adp');
+      if(!__bootSettle.rows) markBootSettle('rows');
     } catch(_){}
   }, 8000);
 })();
@@ -15372,6 +15462,11 @@ SHADOW_TIMELINE_TEXT['2026-07-28'] = "**PARTIAL DAY — Phase 2 diff loop stoppe
 
 /* ---- v2.0 DATA: Changelog (in-app version history) ---- */
 const SHADOW_CHANGELOG = [
+  { ver:'v2.1.48-stable-mtd', date:'2026-08-28', changes:[
+    'James: live MTD jumped ~$34k ↔ ~$51k on open/refresh so he could not tell where the month was. Two figures were racing: the header MTD chip painted runningTotals().net (after wear / fully loaded) while the P&L Month-to-date headline was Ops net (rev − wages − fuel − fixed). August wear at $0.498/mi is ~$17k, which is that gap. DAY/WTD had the same split',
+    'MTD (and DAY/WTD chips) are now one number: ops net on booked loads — driver name AND freight bill — in the calendar month (Aug 1 → today). Same number as the P&L MTD ops-net line. After wear stays on the board, labeled fully loaded / not the MTD number, so the two nets cannot be mistaken for a flicker',
+    'That number is computed once after rows + ADP + calibration + miles settle, then frozen unless booked loads, ADP actuals, or the diesel/MPG/blend James set change. Calibration refetch, Verizon miles restating, Settings hydrate, and a second-later re-render do not move it. First paint still holds at "…" so we do not invent dollars. Diesel, dispatch texts, Excel ingest, Queue, Twilio/SMS untouched'
+  ]},
   { ver:'v2.1.47-no-fuel-bar', date:'2026-08-27', changes:[
     'James on live v2.1.46: "The fuel out of sync red bar is still there, I need it gone for good." Deleted the Device-out-of-sync red bar and tap-to-pull overlay entirely (not just skip fuelPrice). Deleted diesel-default nags (never confirmed, shipped $4.50, DEFAULT chips). Canonical GET never writes currentDieselPricePerGal. Diesel is only the Settings number on this device. Stored local price left alone. Driver+bill books, EST hold, Twilio/SMS, PR #11, Excel ingest, Queue unchanged'
   ]},
