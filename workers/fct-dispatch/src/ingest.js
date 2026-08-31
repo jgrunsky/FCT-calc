@@ -537,8 +537,22 @@ export function rowsFromRawEnvelopeText(text){
   }
 }
 
-function envelopeFail(envelope){
-  return { kind: 'bad', error: envelope ? 'bad_xlsx' : 'bad_json' };
+export function headHexOf(buf, max){
+  const u8 = buf instanceof Uint8Array ? buf : new Uint8Array(0);
+  const n = Math.min(max == null ? 16 : max, u8.length);
+  let s = '';
+  for(let i = 0; i < n; i++) s += (u8[i] + 256).toString(16).slice(-2);
+  return s;
+}
+
+function bad(buf, error){
+  const u8 = buf instanceof Uint8Array ? buf : new Uint8Array(0);
+  return {
+    kind: 'bad',
+    error: error || 'bad_json',
+    bodyBytes: u8.length,
+    headHex: headHexOf(u8, 16)
+  };
 }
 
 export async function readIngestRequest(request){
@@ -546,14 +560,17 @@ export async function readIngestRequest(request){
   try {
     buf = new Uint8Array(await request.arrayBuffer());
   } catch(_){
-    return { kind: 'bad', error: 'bad_json' };
+    return bad(new Uint8Array(0), 'empty_body');
   }
+  if(!buf.length) return bad(buf, 'empty_body');
   const contentType = request.headers.get('Content-Type') || '';
   const envelope = looksLikeEnvelopeBuf(buf);
   try {
-    return readIngestBody(buf, request, contentType, envelope);
+    const parsed = readIngestBody(buf, request, contentType, envelope);
+    if(parsed && parsed.kind === 'bad') return bad(buf, parsed.error);
+    return parsed;
   } catch(_){
-    return envelopeFail(envelope);
+    return bad(buf, envelope ? 'bad_xlsx' : 'bad_json');
   }
 }
 
@@ -592,7 +609,7 @@ function readIngestBody(buf, request, contentType, envelope){
     text = '';
   }
   if(typeof text !== 'string') text = '';
-  if(!text && !fromBufB64) return envelopeFail(envelope);
+  if(!text && !fromBufB64) return { kind: 'bad', error: envelope ? 'bad_xlsx' : 'bad_json' };
 
   try {
     const fromRaw = rowsFromRawEnvelopeText(text);
@@ -609,7 +626,7 @@ function readIngestBody(buf, request, contentType, envelope){
   const asEnvelope = envelope || !!(fromBufB64 || looksLikePaEnvelopeText(text) || utf16Mode(buf, contentType));
 
   let body;
-  if(typeof text !== 'string') return envelopeFail(asEnvelope);
+  if(typeof text !== 'string') return { kind: 'bad', error: asEnvelope ? 'bad_xlsx' : 'bad_json' };
   try {
     body = JSON.parse(text);
   } catch(_){
@@ -626,7 +643,7 @@ function readIngestBody(buf, request, contentType, envelope){
         if(got && got.kind === 'rows') return got;
       }
     } catch(_){
-      return envelopeFail(asEnvelope);
+      return { kind: 'bad', error: asEnvelope ? 'bad_xlsx' : 'bad_json' };
     }
     return { kind: 'bad', error: 'bad_json' };
   }
@@ -638,7 +655,7 @@ function readIngestBody(buf, request, contentType, envelope){
     }
     return normalized;
   } catch(_){
-    return envelopeFail(asEnvelope);
+    return { kind: 'bad', error: asEnvelope ? 'bad_xlsx' : 'bad_json' };
   }
 }
 

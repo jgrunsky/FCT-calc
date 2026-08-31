@@ -12,7 +12,8 @@ import {
   collapseUtf16Ascii,
   normalizeIngestJson,
   latestPayloadFromRows,
-  rowsFromRawEnvelopeText
+  rowsFromRawEnvelopeText,
+  headHexOf
 } from './ingest.js';
 import { WORKER_FIELDS, DISPATCH_SHEET, aoaToWorkerRows } from './xlsx-rows.js';
 
@@ -115,6 +116,12 @@ function buildXlsxNearBase64Len(targetLen){
   assert.equal(ingestKeyOk({ headers: { get: () => null } }, { INGEST_KEY }), false);
   assert.equal(ingestKeyOk(req, { INGEST_KEY: '' }), false);
   assert.equal(ingestKeyOk({ headers: { get: () => 'nope' } }, { INGEST_KEY }), false);
+}
+
+{
+  assert.equal(headHexOf(new Uint8Array(0), 16), '');
+  assert.equal(headHexOf(new Uint8Array([0x50, 0x4b, 0x03, 0x04]), 16), '504b0304');
+  assert.equal(headHexOf(new TextEncoder().encode('{"$content-type"'), 16), '7b2224636f6e74656e742d7479706522');
 }
 
 {
@@ -265,6 +272,8 @@ function buildXlsxNearBase64Len(targetLen){
   });
   assert.equal(posted.status, 200, posted.text);
   assert.ok(posted.json.rowCount >= 4);
+  assert.equal(Object.prototype.hasOwnProperty.call(posted.json, 'bodyBytes'), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(posted.json, 'headHex'), false);
 }
 
 {
@@ -288,7 +297,31 @@ function buildXlsxNearBase64Len(targetLen){
   });
   assert.equal(bad.status, 400);
   assert.equal(bad.json.error, 'bad_json');
+  assert.equal(bad.json.bodyBytes, '{not json'.length);
+  assert.equal(bad.json.headHex, '7b6e6f74206a736f6e');
+  assert.deepEqual(Object.keys(bad.json).sort(), ['bodyBytes', 'error', 'headHex']);
   assert.equal(JSON.stringify(bad.json).includes(INGEST_KEY), false);
+}
+
+{
+  const env = mockEnv();
+  const empty = await postIngest(env, new Uint8Array(0));
+  assert.equal(empty.status, 400);
+  assert.equal(empty.json.error, 'empty_body');
+  assert.equal(empty.json.bodyBytes, 0);
+  assert.equal(empty.json.headHex, '');
+  assert.deepEqual(Object.keys(empty.json).sort(), ['bodyBytes', 'error', 'headHex']);
+  assert.equal(JSON.stringify(empty.json).includes(INGEST_KEY), false);
+}
+
+{
+  const env = mockEnv();
+  const objStr = await postIngest(env, '[object Object]');
+  assert.equal(objStr.status, 400);
+  assert.equal(objStr.json.error, 'bad_json');
+  assert.equal(objStr.json.bodyBytes, 15);
+  assert.equal(objStr.json.headHex, '5b6f626a656374204f626a6563745d');
+  assert.equal(JSON.stringify(objStr.json).includes(INGEST_KEY), false);
 }
 
 {
@@ -300,6 +333,8 @@ function buildXlsxNearBase64Len(targetLen){
   });
   assert.equal(unauth.status, 401);
   assert.equal(unauth.json.error, 'unauthorized');
+  assert.equal(Object.prototype.hasOwnProperty.call(unauth.json, 'bodyBytes'), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(unauth.json, 'headHex'), false);
 }
 
 {
@@ -333,6 +368,9 @@ function buildXlsxNearBase64Len(targetLen){
   });
   assert.equal(notXlsx.status, 400);
   assert.equal(notXlsx.json.error, 'bad_xlsx');
+  assert.ok(notXlsx.json.bodyBytes > 16);
+  assert.equal(notXlsx.json.headHex.slice(0, 2), '7b');
+  assert.deepEqual(Object.keys(notXlsx.json).sort(), ['bodyBytes', 'error', 'headHex']);
 }
 
 {
@@ -535,6 +573,8 @@ function buildXlsxNearBase64Len(targetLen){
   const posted = await postIngest(env, Buffer.from(paBody, 'utf16le'));
   assert.equal(posted.status, 400, posted.text);
   assert.equal(posted.json.error, 'bad_xlsx');
+  assert.ok(posted.json.bodyBytes > 0);
+  assert.ok(posted.json.headHex);
 }
 
 console.log('ingest.test.mjs ok');
