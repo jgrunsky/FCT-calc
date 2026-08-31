@@ -40,10 +40,12 @@ xlsx is read with SheetJS the same way the calc import path does. Sheet
 `2026` of `2026 FCT Dispatch Log.xlsx` (else the first sheet) becomes the
 row objects above, including date banners and blank spacers.
 
-The PA `$content` envelope is taken from the raw body **before** a full
-`JSON.parse`, so a huge or slightly invalid envelope (unescaped newlines
-in `$content`, UTF-16, latin1 PK bytes in `$content`) still returns 200
-and updates `GET /latest`. JSON row posts and raw xlsx bytes are unchanged.
+The PA `$content` envelope is taken from the **raw POST bytes** (`UEsDBB` /
+`"$content"`) **before** `JSON.parse`. Content-Type may be omitted (Flow 1
+sends only `X-FCT-Key`). A ~785k-char `$content` base64 xlsx still returns
+200 and updates `GET /latest`. JSON row posts and raw xlsx bytes are
+unchanged. Sheet tab `2026` is preferred; `2026 New` (or the first sheet)
+is used if `2026` is missing.
 
 Invalid JSON with no `$content` / xlsx still returns HTTP 400 `{"error":"bad_json"}`.
 

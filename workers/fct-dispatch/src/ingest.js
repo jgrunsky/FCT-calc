@@ -38,10 +38,26 @@ export function decodeBase64(b64){
   let clean = String(b64 || '').replace(/\s+/g, '').replace(/^data:[^;]+;base64,/i, '');
   clean = clean.replace(/-/g, '+').replace(/_/g, '/');
   while(clean.length % 4) clean += '=';
-  const bin = atob(clean);
-  const out = new Uint8Array(bin.length);
-  for(let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-  return out;
+  /* nodejs_compat Buffer handles 785k $content; atob of that size can throw
+     in some Worker isolates. Split atob on a 4-char boundary if needed. */
+  if(typeof Buffer !== 'undefined' && typeof Buffer.from === 'function'){
+    const buf = Buffer.from(clean, 'base64');
+    return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
+  }
+  const CHUNK = 32768;
+  const pieces = [];
+  let total = 0;
+  for(let i = 0; i < clean.length; i += CHUNK){
+    const bin = atob(clean.slice(i, i + CHUNK));
+    const out = new Uint8Array(bin.length);
+    for(let j = 0; j < bin.length; j++) out[j] = bin.charCodeAt(j);
+    pieces.push(out);
+    total += out.length;
+  }
+  const all = new Uint8Array(total);
+  let off = 0;
+  for(const p of pieces){ all.set(p, off); off += p.length; }
+  return all;
 }
 
 function asObj(v){
@@ -49,7 +65,8 @@ function asObj(v){
 }
 
 function longString(v){
-  return (typeof v === 'string' && v.replace(/\s+/g, '').length > 20) ? v : '';
+  /* Do not \s+-strip 785k $content just to test length. */
+  return (typeof v === 'string' && v.trim().length > 20) ? v : '';
 }
 
 function coerceJson(v){
@@ -102,59 +119,167 @@ function bufferDataBytes(v){
   return looksLikeZipXlsx(out) ? out : null;
 }
 
+function isB64CharCode(c){
+  return (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || (c >= 48 && c <= 57)
+    || c === 43 || c === 47 || c === 61 || c === 45 || c === 95;
+}
+
+function asciiFromCharCodes(codes){
+  const CHUNK = 0x8000;
+  const parts = [];
+  for(let i = 0; i < codes.length; i += CHUNK){
+    parts.push(String.fromCharCode.apply(null, codes.slice(i, i + CHUNK)));
+  }
+  return longString(parts.join(''));
+}
+
+function readJsonStringValue(s, quoteAt){
+  /* quoteAt points at the opening `"`. Collect without quadratic +=. */
+  const parts = [];
+  let acc = '';
+  for(let j = quoteAt + 1; j < s.length; j++){
+    const c = s[j];
+    if(c === '\\'){
+      const n = s[j + 1];
+      if(n === 'n' || n === 'r' || n === 't'){ j++; continue; }
+      if(n === 'u' && j + 5 < s.length){
+        const code = parseInt(s.slice(j + 2, j + 6), 16);
+        if(code === 10 || code === 13 || code === 9){ j += 5; continue; }
+        if(Number.isFinite(code)) acc += String.fromCharCode(code);
+        j += 5;
+        continue;
+      }
+      if(n){ acc += n; j++; }
+      continue;
+    }
+    if(c === '"') break;
+    if(c === '\n' || c === '\r') continue;
+    acc += c;
+    if(acc.length >= 8192){ parts.push(acc); acc = ''; }
+  }
+  if(acc) parts.push(acc);
+  return longString(parts.join(''));
+}
+
+/* `"$content"` only — never `"$content-type"` (indexOf of the quoted key). */
+function extractDollarContentQuoted(s){
+  const needle = '"$content"';
+  let from = 0;
+  while(from < s.length){
+    const i = s.indexOf(needle, from);
+    if(i < 0) return '';
+    let k = i + needle.length;
+    while(k < s.length && (s[k] === ' ' || s[k] === '\t' || s[k] === '\n' || s[k] === '\r')) k++;
+    if(s[k] === ':'){
+      k++;
+      while(k < s.length && (s[k] === ' ' || s[k] === '\t' || s[k] === '\n' || s[k] === '\r')) k++;
+      if(s[k] === '"') return readJsonStringValue(s, k);
+      const codes = [];
+      for(; k < s.length; k++){
+        const c = s[k];
+        if(c === ',' || c === '}' || c === '<' || c === '\n' || c === '\r') break;
+        codes.push(c.charCodeAt(0));
+      }
+      return asciiFromCharCodes(codes);
+    }
+    from = i + 1;
+  }
+  return '';
+}
+
 /* Pull base64 xlsx out of broken JSON / XML without JSON.parse. */
 export function extractBase64FromMalformed(text){
   const s = String(text || '');
   const xml = s.match(/<\$content>([\s\S]*?)<\/\$content>/i);
   if(xml) return longString(xml[1]);
-
-  let i = s.search(/"\$content"\s*:/);
-  if(i < 0) i = s.search(/(?:^|[,{\s])\$content\s*:/);
-  if(i < 0) return '';
-  const colon = s.indexOf(':', i);
-  if(colon < 0) return '';
-  let j = colon + 1;
-  while(j < s.length && /\s/.test(s[j])) j++;
-  if(s[j] === '"'){
-    j++;
-    let out2 = '';
-    for(; j < s.length; j++){
-      const c = s[j];
-      if(c === '\\'){
-        const n = s[j + 1];
-        if(n === 'n' || n === 'r' || n === 't'){ j++; continue; }
-        if(n){ out2 += n; j++; }
-        continue;
-      }
-      if(c === '"') break;
-      if(c === '\n' || c === '\r') continue;
-      out2 += c;
+  const quoted = extractDollarContentQuoted(s);
+  if(quoted) return quoted;
+  /* Unquoted $content: — skip $content-type: (next char after $content is '-'). */
+  let from = 0;
+  while(from < s.length){
+    const i = s.indexOf('$content', from);
+    if(i < 0) return '';
+    const prev = i === 0 ? '' : s[i - 1];
+    if(prev && prev !== '{' && prev !== ',' && prev !== ' ' && prev !== '\n' && prev !== '\r' && prev !== '\t' && prev !== '"'){
+      from = i + 1;
+      continue;
     }
-    return longString(out2);
+    let k = i + 8; /* length of $content */
+    if(s[k] === '-'){ from = i + 1; continue; } /* $content-type */
+    while(k < s.length && (s[k] === ' ' || s[k] === '\t')) k++;
+    if(s[k] !== ':'){ from = i + 1; continue; }
+    k++;
+    while(k < s.length && (s[k] === ' ' || s[k] === '\t' || s[k] === '\n' || s[k] === '\r')) k++;
+    if(s[k] === '"') return readJsonStringValue(s, k);
+    const codes = [];
+    for(; k < s.length; k++){
+      const c = s[k];
+      if(c === ',' || c === '}' || c === '<' || c === '\n' || c === '\r') break;
+      codes.push(c.charCodeAt(0));
+    }
+    return asciiFromCharCodes(codes);
   }
-  let out = '';
-  for(; j < s.length; j++){
-    const c = s[j];
-    if(c === ',' || c === '}' || c === '<' || c === '\n' || c === '\r') break;
-    out += c;
+  return '';
+}
+
+function collectB64From(s, i){
+  const codes = [];
+  for(let j = i; j < s.length; j++){
+    const c = s.charCodeAt(j);
+    if(isB64CharCode(c)) codes.push(c);
+    else if(c === 32 || c === 10 || c === 13 || c === 9) continue;
+    else break;
   }
-  return longString(out);
+  return asciiFromCharCodes(codes);
 }
 
 /* PK zip as base64 always starts UEsDBB (PK\x03\x04). Scan even if keys are missing. */
 export function extractBase64ZipFromText(text){
   const s = String(text || '');
-  const needle = 'UEsDBB';
-  const i = s.indexOf(needle);
+  const i = s.indexOf('UEsDBB');
   if(i < 0) return '';
-  let out = '';
-  for(let j = i; j < s.length; j++){
-    const c = s[j];
-    if(/[A-Za-z0-9+/=_-]/.test(c)) out += c;
-    else if(/\s/.test(c)) continue;
-    else break;
+  return collectB64From(s, i);
+}
+
+/* Same scan on raw POST bytes so missing Content-Type / TextDecoder cannot drop UEsDBB. */
+export function extractBase64ZipFromBytes(buf){
+  if(!buf || buf.length < 6) return '';
+  const t0 = 0x55, t1 = 0x45, t2 = 0x73, t3 = 0x44, t4 = 0x42, t5 = 0x42;
+  for(let p = 0; p <= buf.length - 6; p++){
+    if(buf[p] === t0 && buf[p + 1] === t1 && buf[p + 2] === t2
+      && buf[p + 3] === t3 && buf[p + 4] === t4 && buf[p + 5] === t5){
+      const codes = [];
+      for(let j = p; j < buf.length; j++){
+        const c = buf[j];
+        if(isB64CharCode(c)) codes.push(c);
+        else if(c === 32 || c === 10 || c === 13 || c === 9) continue;
+        else break;
+      }
+      return asciiFromCharCodes(codes);
+    }
   }
-  return longString(out);
+  /* UTF-16LE U\0 E\0 s\0 D\0 B\0 B\0 */
+  for(let p = 0; p <= buf.length - 12; p++){
+    if(buf[p] === t0 && buf[p + 1] === 0 && buf[p + 2] === t1 && buf[p + 3] === 0
+      && buf[p + 4] === t2 && buf[p + 5] === 0 && buf[p + 6] === t3 && buf[p + 7] === 0
+      && buf[p + 8] === t4 && buf[p + 9] === 0 && buf[p + 10] === t5 && buf[p + 11] === 0){
+      const codes = [];
+      for(let j = p; j + 1 < buf.length; j += 2){
+        if(buf[j + 1] !== 0) break;
+        const c = buf[j];
+        if(isB64CharCode(c)) codes.push(c);
+        else if(c === 32 || c === 10 || c === 13 || c === 9) continue;
+        else break;
+      }
+      return asciiFromCharCodes(codes);
+    }
+  }
+  return '';
+}
+
+function looksLikePaEnvelopeText(text){
+  const s = String(text || '');
+  return s.includes('$content') || s.includes('UEsDBB') || s.includes('spreadsheetml');
 }
 
 function decodeRequestText(buf){
@@ -263,30 +388,43 @@ function envelopeContentType(body){
   return o['$content-type'] || o.contentType || o.content_type || '';
 }
 
-function base64ToZipBytes(b64){
+function rowsFromBase64Zip(b64){
   if(!b64) return null;
   try {
     const bytes = decodeBase64(b64);
-    return looksLikeZipXlsx(bytes) ? bytes : null;
+    if(!looksLikeZipXlsx(bytes)) return null;
+    return rowsFromXlsxBytes(bytes, DEFAULT_XLSX_NAME);
   } catch(_){
     return null;
   }
 }
 
+function tryXlsxBytes(bytes, fileName){
+  try {
+    return rowsFromXlsxBytes(bytes, fileName || DEFAULT_XLSX_NAME);
+  } catch(_){
+    return { kind: 'bad', error: 'bad_xlsx' };
+  }
+}
+
+function firstXlsxFromCandidates(candidates){
+  for(const b64 of candidates){
+    const got = rowsFromBase64Zip(b64);
+    if(got && got.kind === 'rows') return got;
+  }
+  return null;
+}
+
 /* Raw POST text → xlsx rows for a PA $content / UEsDBB envelope.
- * Only base64→zip here (not latin1 PK): JSON-escaped binary $content must
- * JSON.parse first. Returns null so the caller can parse or fall through. */
+ * Try $content and UEsDBB independently (do not let a MIME-type false
+ * match hide the zip). Returns null so the caller can parse or fall through. */
 export function rowsFromRawEnvelopeText(text){
   const s = String(text || '').trim();
   if(!s) return null;
-  const b64 = extractBase64FromMalformed(s) || extractBase64ZipFromText(s);
-  const bytes = base64ToZipBytes(b64);
-  if(!bytes) return null;
-  try {
-    return rowsFromXlsxBytes(bytes, DEFAULT_XLSX_NAME);
-  } catch(_){
-    return null;
-  }
+  return firstXlsxFromCandidates([
+    extractBase64FromMalformed(s),
+    extractBase64ZipFromText(s)
+  ]);
 }
 
 export function normalizeIngestJson(body, depth){
@@ -309,7 +447,13 @@ export function normalizeIngestJson(body, depth){
   const raw = extractBase64FromEnvelope(body);
   if(raw){
     const bytes = bytesFromContentString(raw);
-    if(bytes) return rowsFromXlsxBytes(bytes, envelopeFileName(body));
+    if(bytes){
+      try {
+        return rowsFromXlsxBytes(bytes, envelopeFileName(body));
+      } catch(_){
+        return { kind: 'bad', error: 'bad_xlsx' };
+      }
+    }
     if(looksLikeSpreadsheetContentType(envelopeContentType(body)) || body.$content != null){
       return { kind: 'bad', error: 'bad_xlsx' };
     }
@@ -332,6 +476,8 @@ export function normalizeIngestJson(body, depth){
 
 export async function readIngestRequest(request){
   const buf = new Uint8Array(await request.arrayBuffer());
+  /* Content-Type is not consulted. PA Flow 1 omits it entirely. */
+
   const zipAt = findZipOffset(buf);
   if(zipAt === 0){
     try {
@@ -346,30 +492,36 @@ export async function readIngestRequest(request){
     }
   }
 
+  /* Scan raw bytes for UEsDBB before TextDecoder / JSON.parse. A 785k
+     $content envelope is ASCII zip-base64; missing Content-Type must not
+     matter. Never JSON.parse first. */
+  const fromBufB64 = extractBase64ZipFromBytes(buf);
+  const fromBytes = rowsFromBase64Zip(fromBufB64);
+  if(fromBytes && fromBytes.kind === 'rows') return fromBytes;
+
   let text;
   try {
     text = decodeRequestText(buf);
   } catch(_){
-    return { kind: 'bad', error: 'bad_json' };
+    text = '';
   }
-  if(!text) return { kind: 'bad', error: 'bad_json' };
+  if(!text && !fromBufB64) return { kind: 'bad', error: 'bad_json' };
 
-  /* Extract $content / UEsDBB before JSON.parse so a huge or slightly
-     invalid PA envelope cannot fail as bad_json. */
   const fromRaw = rowsFromRawEnvelopeText(text);
   if(fromRaw && fromRaw.kind === 'rows') return fromRaw;
 
   if(zipAt > 0){
-    try {
-      return rowsFromXlsxBytes(buf.slice(zipAt), DEFAULT_XLSX_NAME);
-    } catch(_){}
+    const sliced = tryXlsxBytes(buf.slice(zipAt));
+    if(sliced && sliced.kind === 'rows') return sliced;
   }
 
   let body;
   try {
     body = JSON.parse(text);
   } catch(_){
-    if(fromRaw && fromRaw.kind === 'bad') return fromRaw;
+    if(fromBufB64 || looksLikePaEnvelopeText(text)){
+      return { kind: 'bad', error: 'bad_xlsx' };
+    }
     const broken = extractBase64FromMalformed(text) || extractBase64ZipFromText(text);
     if(broken){
       const got = rowsFromXlsxB64(broken, DEFAULT_XLSX_NAME);
