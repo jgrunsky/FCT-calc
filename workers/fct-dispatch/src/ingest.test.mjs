@@ -9,6 +9,7 @@ import {
   extractBase64FromMalformed,
   extractBase64ZipFromText,
   extractBase64ZipFromBytes,
+  collapseUtf16Ascii,
   normalizeIngestJson,
   latestPayloadFromRows,
   rowsFromRawEnvelopeText
@@ -460,6 +461,62 @@ function buildXlsxNearBase64Len(targetLen){
   assert.equal(latest.json.rows[3].po, '75811-49');
   assert.ok(latest.json.ingestedAt);
   assert.equal(Object.prototype.hasOwnProperty.call(latest.json, 'format'), false);
+}
+
+{
+  const env = mockEnv();
+  const xlsx = buildXlsxNearBase64Len(785008);
+  const b64 = xlsx.toString('base64');
+  assert.ok(b64.length >= 785008, 'need ~785k-char $content, got ' + b64.length);
+  assert.equal(b64.slice(0, 6), 'UEsDBB');
+  const paBody = '{"$content-type":"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet","$content":"' + b64 + '"}';
+  const utf16 = Buffer.from(paBody, 'utf16le');
+  assert.equal(utf16[0], 0x7b);
+  assert.equal(utf16[1], 0x00);
+  assert.ok(!utf16.includes(Buffer.from('UEsDBB')));
+  const collapsed = collapseUtf16Ascii(utf16);
+  assert.ok(collapsed.startsWith('{"$content-type"'));
+  assert.ok(collapsed.includes('UEsDBB'));
+  const fromBytes = extractBase64ZipFromBytes(utf16);
+  assert.equal(fromBytes.slice(0, 6), 'UEsDBB');
+  assert.equal(fromBytes.length, b64.length);
+
+  const req = new Request(ORIGIN + '/ingest', {
+    method: 'POST',
+    headers: { 'X-FCT-Key': INGEST_KEY },
+    body: utf16
+  });
+  req.headers.delete('Content-Type');
+  assert.equal(req.headers.get('Content-Type'), null);
+
+  const posted = await postIngest(env, utf16);
+  assert.equal(posted.status, 200, posted.text);
+  assert.equal(posted.json.ok, true);
+  assert.ok(posted.json.rowCount >= 4, 'rowCount ' + posted.json.rowCount);
+
+  const latest = await call(env, '/latest');
+  assert.equal(latest.status, 200);
+  assert.equal(latest.json.rows[3].po, '75811-49');
+}
+
+{
+  const env = mockEnv();
+  const xlsx = buildDispatchXlsx();
+  const paBody = '{"$content-type":"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet","$content":"'
+    + xlsx.toString('base64') + '"}';
+  const utf16 = Buffer.from(paBody, 'utf16le');
+  const posted = await postIngest(env, utf16, { 'Content-Type': 'application/json; charset=utf-16' });
+  assert.equal(posted.status, 200, posted.text);
+  assert.ok(posted.json.rowCount >= 4);
+}
+
+{
+  const env = mockEnv();
+  const paBody = '{"$content-type":"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet","$content":"'
+    + Buffer.from('this is not an xlsx file at all!!').toString('base64') + '"}';
+  const posted = await postIngest(env, Buffer.from(paBody, 'utf16le'));
+  assert.equal(posted.status, 400, posted.text);
+  assert.equal(posted.json.error, 'bad_xlsx');
 }
 
 console.log('ingest.test.mjs ok');

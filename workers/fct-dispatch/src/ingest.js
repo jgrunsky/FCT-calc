@@ -5,8 +5,9 @@
  *   2. Power Automate / OneDrive Get file content envelopes
  *      ($content / fileContent / body base64 xlsx) — including the PA HTTP
  *      body `{"$content-type":"...spreadsheetml.sheet","$content":"UEs..."}`
- *      even when that JSON is malformed (unescaped newlines) or too large
- *      to JSON.parse before extracting $content
+ *      (~785k-char $content, Content-Type header omitted). Scans raw bytes
+ *      for UEsDBB / "$content" before JSON.parse. `"$content-type"` is not
+ *      treated as `"$content"`.
  *   3. Raw xlsx bytes (PK zip magic)
  *
  * Never log or return the ingest key.
@@ -125,12 +126,78 @@ function isB64CharCode(c){
 }
 
 function asciiFromCharCodes(codes){
-  const CHUNK = 0x8000;
-  const parts = [];
-  for(let i = 0; i < codes.length; i += CHUNK){
-    parts.push(String.fromCharCode.apply(null, codes.slice(i, i + CHUNK)));
+  if(!codes || !codes.length) return '';
+  const u8 = codes instanceof Uint8Array ? codes : Uint8Array.from(codes);
+  return longString(new TextDecoder('latin1').decode(u8));
+}
+
+function charsetOf(contentType){
+  const m = String(contentType || '').match(/charset\s*=\s*["']?([^"';\s]+)/i);
+  return m ? m[1].toLowerCase() : '';
+}
+
+function utf16Mode(buf, contentType){
+  const cs = charsetOf(contentType);
+  if(cs === 'utf-16be') return 'be';
+  if(cs === 'utf-16le' || cs === 'utf-16' || cs === 'unicode') return 'le';
+  if(buf.length >= 2 && buf[0] === 0xff && buf[1] === 0xfe) return 'le';
+  if(buf.length >= 2 && buf[0] === 0xfe && buf[1] === 0xff) return 'be';
+  if(buf.length >= 4 && buf[0] === 0x7b && buf[1] === 0x00) return 'le';
+  if(buf.length >= 4 && buf[0] === 0x00 && buf[1] === 0x7b) return 'be';
+  let nuls = 0;
+  const n = Math.min(buf.length, 80);
+  for(let i = 0; i < n; i++) if(buf[i] === 0) nuls++;
+  if(nuls >= n / 4) return buf[0] === 0 ? 'be' : 'le';
+  return '';
+}
+
+/* ASCII JSON with a NUL between every char (UTF-16LE/BE of the PA envelope). */
+export function collapseUtf16Ascii(buf, contentType){
+  const mode = utf16Mode(buf, contentType);
+  if(!mode || !buf || buf.length < 4) return '';
+  const bom = (buf[0] === 0xff && buf[1] === 0xfe) || (buf[0] === 0xfe && buf[1] === 0xff);
+  const start = bom ? 2 : 0;
+  const out = new Uint8Array(Math.ceil((buf.length - start) / 2));
+  let k = 0;
+  if(mode === 'le'){
+    for(let i = start; i + 1 < buf.length; i += 2) out[k++] = buf[i];
+  } else {
+    for(let i = start; i + 1 < buf.length; i += 2) out[k++] = buf[i + 1];
   }
-  return longString(parts.join(''));
+  return new TextDecoder('latin1').decode(out.subarray(0, k)).replace(/^\uFEFF/, '').trim();
+}
+
+function nextNonNul(buf, i){
+  while(i < buf.length && buf[i] === 0) i++;
+  return i;
+}
+
+function findAsciiSkipNuls(buf, ascii){
+  const needle = [];
+  for(let n = 0; n < ascii.length; n++) needle.push(ascii.charCodeAt(n));
+  for(let i = 0; i < buf.length; i++){
+    let p = i;
+    let ok = true;
+    for(let n = 0; n < needle.length; n++){
+      p = nextNonNul(buf, p);
+      if(p >= buf.length || buf[p] !== needle[n]){ ok = false; break; }
+      p++;
+    }
+    if(ok) return nextNonNul(buf, i);
+  }
+  return -1;
+}
+
+function collectB64SkipNuls(buf, start){
+  const codes = [];
+  for(let j = start; j < buf.length; j++){
+    const c = buf[j];
+    if(c === 0) continue;
+    if(isB64CharCode(c)) codes.push(c);
+    else if(c === 32 || c === 10 || c === 13 || c === 9) continue;
+    else break;
+  }
+  return asciiFromCharCodes(codes);
 }
 
 function readJsonStringValue(s, quoteAt){
@@ -189,7 +256,7 @@ function extractDollarContentQuoted(s){
 
 /* Pull base64 xlsx out of broken JSON / XML without JSON.parse. */
 export function extractBase64FromMalformed(text){
-  const s = String(text || '');
+  const s = String(text || '').replace(/\0/g, '');
   const xml = s.match(/<\$content>([\s\S]*?)<\/\$content>/i);
   if(xml) return longString(xml[1]);
   const quoted = extractDollarContentQuoted(s);
@@ -233,15 +300,15 @@ function collectB64From(s, i){
   return asciiFromCharCodes(codes);
 }
 
-/* PK zip as base64 always starts UEsDBB (PK\x03\x04). Scan even if keys are missing. */
+/* PK zip as base64 always starts UEsDBB (PK\x03\x04).
+ * Contiguous ASCII, or the same letters with NULs between them (UTF-16). */
 export function extractBase64ZipFromText(text){
-  const s = String(text || '');
+  const s = String(text || '').replace(/\0/g, '');
   const i = s.indexOf('UEsDBB');
   if(i < 0) return '';
   return collectB64From(s, i);
 }
 
-/* Same scan on raw POST bytes so missing Content-Type / TextDecoder cannot drop UEsDBB. */
 export function extractBase64ZipFromBytes(buf){
   if(!buf || buf.length < 6) return '';
   const t0 = 0x55, t1 = 0x45, t2 = 0x73, t3 = 0x44, t4 = 0x42, t5 = 0x42;
@@ -258,45 +325,50 @@ export function extractBase64ZipFromBytes(buf){
       return asciiFromCharCodes(codes);
     }
   }
-  /* UTF-16LE U\0 E\0 s\0 D\0 B\0 B\0 */
-  for(let p = 0; p <= buf.length - 12; p++){
-    if(buf[p] === t0 && buf[p + 1] === 0 && buf[p + 2] === t1 && buf[p + 3] === 0
-      && buf[p + 4] === t2 && buf[p + 5] === 0 && buf[p + 6] === t3 && buf[p + 7] === 0
-      && buf[p + 8] === t4 && buf[p + 9] === 0 && buf[p + 10] === t5 && buf[p + 11] === 0){
-      const codes = [];
-      for(let j = p; j + 1 < buf.length; j += 2){
-        if(buf[j + 1] !== 0) break;
-        const c = buf[j];
-        if(isB64CharCode(c)) codes.push(c);
-        else if(c === 32 || c === 10 || c === 13 || c === 9) continue;
-        else break;
-      }
-      return asciiFromCharCodes(codes);
-    }
-  }
+  const skipped = findAsciiSkipNuls(buf, 'UEsDBB');
+  if(skipped >= 0) return collectB64SkipNuls(buf, skipped);
   return '';
 }
 
 function looksLikePaEnvelopeText(text){
-  const s = String(text || '');
+  const s = String(text || '').replace(/\0/g, '');
   return s.includes('$content') || s.includes('UEsDBB') || s.includes('spreadsheetml');
 }
 
-function decodeRequestText(buf){
+function decodeRequestText(buf, contentType){
+  const collapsed = collapseUtf16Ascii(buf, contentType);
+  if(collapsed && (collapsed.startsWith('{') || collapsed.includes('UEsDBB') || collapsed.includes('$content'))){
+    return collapsed;
+  }
+  const cs = charsetOf(contentType);
+  if(cs.indexOf('utf-16') >= 0 || cs === 'unicode'){
+    const enc = cs === 'utf-16be' ? 'utf-16be' : 'utf-16le';
+    try {
+      return new TextDecoder(enc).decode(buf).replace(/^\uFEFF/, '').trim();
+    } catch(_){}
+  }
   if(buf.length >= 2 && buf[0] === 0xff && buf[1] === 0xfe){
     try {
       return new TextDecoder('utf-16le').decode(buf).replace(/^\uFEFF/, '').trim();
     } catch(_){}
   }
-  /* `{ \0 " \0 $ \0 c \0 …` — UTF-16LE JSON without BOM. Do this before
-     UTF-8: a UTF-16LE `{` still decodes as `{` plus NULs under UTF-8. */
+  if(buf.length >= 2 && buf[0] === 0xfe && buf[1] === 0xff){
+    try {
+      return new TextDecoder('utf-16be').decode(buf).replace(/^\uFEFF/, '').trim();
+    } catch(_){}
+  }
   if(buf.length >= 4 && buf[0] === 0x7b && buf[1] === 0x00 && buf[3] === 0x00){
     try {
       return new TextDecoder('utf-16le').decode(buf).replace(/^\uFEFF/, '').trim();
     } catch(_){}
   }
+  if(buf.length >= 4 && buf[0] === 0x00 && buf[1] === 0x7b){
+    try {
+      return new TextDecoder('utf-16be').decode(buf).replace(/^\uFEFF/, '').trim();
+    } catch(_){}
+  }
   try {
-    return new TextDecoder().decode(buf).replace(/^\uFEFF/, '').trim();
+    return new TextDecoder().decode(buf).replace(/^\uFEFF/, '').replace(/\0/g, '').trim();
   } catch(_){
     return '';
   }
@@ -476,7 +548,8 @@ export function normalizeIngestJson(body, depth){
 
 export async function readIngestRequest(request){
   const buf = new Uint8Array(await request.arrayBuffer());
-  /* Content-Type is not consulted. PA Flow 1 omits it entirely. */
+  const contentType = request.headers.get('Content-Type') || '';
+  /* Content-Type may be omitted (Flow 1) or charset=utf-16. */
 
   const zipAt = findZipOffset(buf);
   if(zipAt === 0){
@@ -492,16 +565,16 @@ export async function readIngestRequest(request){
     }
   }
 
-  /* Scan raw bytes for UEsDBB before TextDecoder / JSON.parse. A 785k
-     $content envelope is ASCII zip-base64; missing Content-Type must not
-     matter. Never JSON.parse first. */
-  const fromBufB64 = extractBase64ZipFromBytes(buf);
+  let fromBufB64 = '';
+  try {
+    fromBufB64 = extractBase64ZipFromBytes(buf);
+  } catch(_){}
   const fromBytes = rowsFromBase64Zip(fromBufB64);
   if(fromBytes && fromBytes.kind === 'rows') return fromBytes;
 
   let text;
   try {
-    text = decodeRequestText(buf);
+    text = decodeRequestText(buf, contentType);
   } catch(_){
     text = '';
   }
@@ -515,13 +588,13 @@ export async function readIngestRequest(request){
     if(sliced && sliced.kind === 'rows') return sliced;
   }
 
+  const envelope = !!(fromBufB64 || looksLikePaEnvelopeText(text) || utf16Mode(buf, contentType));
+
   let body;
   try {
     body = JSON.parse(text);
   } catch(_){
-    if(fromBufB64 || looksLikePaEnvelopeText(text)){
-      return { kind: 'bad', error: 'bad_xlsx' };
-    }
+    if(envelope) return { kind: 'bad', error: 'bad_xlsx' };
     const broken = extractBase64FromMalformed(text) || extractBase64ZipFromText(text);
     if(broken){
       const got = rowsFromXlsxB64(broken, DEFAULT_XLSX_NAME);

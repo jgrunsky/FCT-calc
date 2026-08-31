@@ -41,11 +41,12 @@ xlsx is read with SheetJS the same way the calc import path does. Sheet
 row objects above, including date banners and blank spacers.
 
 The PA `$content` envelope is taken from the **raw POST bytes** (`UEsDBB` /
-`"$content"`) **before** `JSON.parse`. Content-Type may be omitted (Flow 1
-sends only `X-FCT-Key`). A ~785k-char `$content` base64 xlsx still returns
-200 and updates `GET /latest`. JSON row posts and raw xlsx bytes are
-unchanged. Sheet tab `2026` is preferred; `2026 New` (or the first sheet)
-is used if `2026` is missing.
+`"$content"`) **before** `JSON.parse`, including UTF-16LE/BE (NULs between
+ASCII, with or without BOM) and `charset=utf-16`. Content-Type may be
+omitted. A ~785k-char `$content` base64 xlsx still returns 200. If the zip
+will not parse the error is `bad_xlsx`, not `bad_json`. JSON row posts and
+raw xlsx bytes are unchanged. Sheet tab `2026` is preferred; `2026 New`
+(or the first sheet) is used if `2026` is missing.
 
 Invalid JSON with no `$content` / xlsx still returns HTTP 400 `{"error":"bad_json"}`.
 
