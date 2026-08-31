@@ -40,7 +40,12 @@ xlsx is read with SheetJS the same way the calc import path does. Sheet
 `2026` of `2026 FCT Dispatch Log.xlsx` (else the first sheet) becomes the
 row objects above, including date banners and blank spacers.
 
-Invalid JSON still returns HTTP 400 `{"error":"bad_json"}`.
+The PA `$content` envelope is taken from the raw body **before** a full
+`JSON.parse`, so a huge or slightly invalid envelope (unescaped newlines
+in `$content`, UTF-16, latin1 PK bytes in `$content`) still returns 200
+and updates `GET /latest`. JSON row posts and raw xlsx bytes are unchanged.
+
+Invalid JSON with no `$content` / xlsx still returns HTTP 400 `{"error":"bad_json"}`.
 
 ## Tests
 

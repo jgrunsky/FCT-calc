@@ -6,8 +6,11 @@ import {
   looksLikeZipXlsx,
   decodeBase64,
   extractBase64FromEnvelope,
+  extractBase64FromMalformed,
+  extractBase64ZipFromText,
   normalizeIngestJson,
-  latestPayloadFromRows
+  latestPayloadFromRows,
+  rowsFromRawEnvelopeText
 } from './ingest.js';
 import { WORKER_FIELDS, DISPATCH_SHEET, aoaToWorkerRows } from './xlsx-rows.js';
 
@@ -263,6 +266,91 @@ async function call(env, path, opts){
   });
   assert.equal(notXlsx.status, 400);
   assert.equal(notXlsx.json.error, 'bad_xlsx');
+}
+
+{
+  const xlsx = buildDispatchXlsx();
+  const b64 = xlsx.toString('base64');
+  const paBody = '{"$content-type":"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet","$content":"' + b64 + '"}';
+  assert.equal(JSON.parse(paBody).$content.slice(0, 6), 'UEsDBB');
+  const fromRaw = rowsFromRawEnvelopeText(paBody);
+  assert.equal(fromRaw.kind, 'rows');
+  assert.equal(fromRaw.source, 'xlsx');
+  assert.ok(fromRaw.rows.length >= 4);
+}
+
+{
+  const env = mockEnv();
+  const xlsx = buildDispatchXlsx();
+  const b64 = xlsx.toString('base64');
+  const mid = Math.max(8, Math.floor(b64.length / 2));
+  const broken = '{"$content-type":"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet","$content":"'
+    + b64.slice(0, mid) + '\n' + b64.slice(mid) + '"}';
+  let parseFailed = false;
+  try { JSON.parse(broken); } catch(_){ parseFailed = true; }
+  assert.equal(parseFailed, true, 'fixture must be invalid JSON (unescaped newline in $content)');
+  assert.ok(extractBase64FromMalformed(broken).replace(/\s+/g, '').length > 20);
+  assert.ok(extractBase64ZipFromText(broken).startsWith('UEsDBB'));
+
+  const posted = await call(env, '/ingest', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-FCT-Key': INGEST_KEY },
+    body: broken
+  });
+  assert.equal(posted.status, 200, posted.text);
+  assert.equal(posted.json.ok, true);
+  assert.ok(posted.json.rowCount >= 4);
+
+  const latest = await call(env, '/latest');
+  assert.equal(latest.status, 200);
+  assert.equal(latest.json.rows[3].po, '75811-49');
+  assert.ok(latest.json.ingestedAt);
+  assert.equal(Object.prototype.hasOwnProperty.call(latest.json, 'format'), false);
+}
+
+{
+  const env = mockEnv();
+  const xlsx = buildDispatchXlsx();
+  const envelope = JSON.stringify({
+    '$content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    $content: xlsx.toString('base64')
+  });
+  const posted = await call(env, '/ingest', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json; charset=utf-16', 'X-FCT-Key': INGEST_KEY },
+    body: Buffer.from(envelope, 'utf16le')
+  });
+  assert.equal(posted.status, 200, posted.text);
+  assert.ok(posted.json.rowCount >= 4);
+}
+
+{
+  const env = mockEnv();
+  const xlsx = buildDispatchXlsx();
+  const posted = await call(env, '/ingest', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-FCT-Key': INGEST_KEY },
+    body: JSON.stringify({
+      '$content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      $content: xlsx.toString('latin1')
+    })
+  });
+  assert.equal(posted.status, 200, posted.text);
+  assert.ok(posted.json.rowCount >= 4);
+  const latest = await call(env, '/latest');
+  assert.equal(latest.json.rows[3].driver, 'SAL');
+}
+
+{
+  const env = mockEnv();
+  const xlsx = buildDispatchXlsx();
+  const posted = await call(env, '/ingest', {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain', 'X-FCT-Key': INGEST_KEY },
+    body: xlsx.toString('base64')
+  });
+  assert.equal(posted.status, 200, posted.text);
+  assert.ok(posted.json.rowCount >= 4);
 }
 
 console.log('ingest.test.mjs ok');
