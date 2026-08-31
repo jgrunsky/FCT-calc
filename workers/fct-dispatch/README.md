@@ -40,7 +40,26 @@ xlsx is read with SheetJS the same way the calc import path does. Sheet
 `2026` of `2026 FCT Dispatch Log.xlsx` (else the first sheet) becomes the
 row objects above, including date banners and blank spacers.
 
-Invalid JSON still returns HTTP 400 `{"error":"bad_json"}`.
+The PA `$content` envelope is taken from the **raw POST bytes** (`UEsDBB` /
+`"$content"`) **before** `JSON.parse`. Content-Type may be omitted. Decode
+uses Web APIs only (chunked `atob`, `TextDecoder` utf-8, `Uint8Array`) — no
+`Buffer` / Node encoding, so Git Builds still work if `nodejs_compat` is
+not applied. A ~785k-char `$content` base64 xlsx still returns 200. If
+`$content` or `UEsDBB` is present and the zip will not parse, the error is
+`bad_xlsx`, never `bad_json`. Raw PK zip at offset 0 is accepted (optional
+`Content-Type: spreadsheetml.sheet`). JSON row posts are unchanged. Sheet
+tab `2026` is preferred; `2026 New` (or the first sheet) is used if `2026`
+is missing.
+
+HTTP 400 from `/ingest` is `{ "error", "bodyBytes", "headHex" }`. `headHex`
+is the first 16 request body bytes as lowercase hex (empty vs `{` `7b` vs
+PK `504b`). An empty body is `"empty_body"`, not `"bad_json"`. Invalid JSON
+with no `$content` / xlsx is `"bad_json"`. Never includes the ingest key.
+
+Cloudflare Git Builds for this Worker use this directory as root
+(`wrangler.toml` `main = "src/index.js"`). Deploy bundles `src/ingest.js`
+into the script; live `7d839e0` already contained `envelopeFail` / chunked
+`atob`.
 
 ## Tests
 
@@ -49,4 +68,6 @@ npm test
 ```
 
 No network, no secrets. Covers JSON rows, `$content` base64 xlsx, raw
-bytes, and bad JSON.
+bytes, empty body (`empty_body` + `headHex`), bad JSON (`bodyBytes` /
+`headHex`), and a pure-Workers run (no `Buffer`, utf-8-only `TextDecoder`)
+of the 785k envelope with no Content-Type.

@@ -32,6 +32,9 @@ export function pickDispatchSheet(wb){
   const names = (wb && wb.SheetNames) || [];
   if(!names.length) throw new Error('no_sheets');
   if(names.indexOf(DISPATCH_SHEET) >= 0) return DISPATCH_SHEET;
+  /* File is often "2026 New.xlsx"; the tab may be "2026 New" not "2026". */
+  const prefixed = names.find(n => String(n).replace(/^\s+/, '').startsWith(DISPATCH_SHEET));
+  if(prefixed) return prefixed;
   return names[0];
 }
 
