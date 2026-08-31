@@ -175,6 +175,24 @@ function buildXlsxNearBase64Len(targetLen){
 }
 
 {
+  const xlsx = buildDispatchXlsx();
+  const b64 = xlsx.toString('base64');
+  const orig = globalThis.Buffer;
+  globalThis.Buffer = {
+    from(){ throw new Error('nodejs_compat missing'); },
+    alloc(){ throw new Error('nodejs_compat missing'); },
+    isBuffer(){ return false; }
+  };
+  try {
+    const decoded = decodeBase64(b64);
+    assert.ok(looksLikeZipXlsx(decoded));
+    assert.equal(decoded[0], 0x50);
+  } finally {
+    globalThis.Buffer = orig;
+  }
+}
+
+{
   const env = mockEnv();
   const rows = [
     { time: 'Time', po: 'PO / Rel #', driver: 'Driver', origin: 'Grower / Origin', fb: 'FB #', commodity: 'x', truck: '', status: '', extra: '' },

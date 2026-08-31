@@ -10,6 +10,11 @@
  *      treated as `"$content"`.
  *   3. Raw xlsx bytes (PK zip magic)
  *
+ * Hot path is Web APIs only (chunked atob, TextDecoder utf-8, Uint8Array).
+ * No Buffer / Node encoding. Cloudflare Git Builds may omit nodejs_compat;
+ * a throwing Buffer.from used to look like bad_json in ~0.2s. If the body
+ * contains $content or UEsDBB and zip decode/parse fails → bad_xlsx.
+ *
  * Never log or return the ingest key.
  */
 import { xlsxBytesToRows, DEFAULT_XLSX_NAME } from './xlsx-rows.js';
@@ -35,21 +40,19 @@ export function looksLikeSpreadsheetContentType(ct){
     || /\bxlsx\b/.test(s);
 }
 
+const ATOB_CHUNK = 32768; /* multiple of 4 so each atob slice is valid base64 */
+const FROM_CHAR_CHUNK = 8192;
+
 export function decodeBase64(b64){
   let clean = String(b64 || '').replace(/\s+/g, '').replace(/^data:[^;]+;base64,/i, '');
   clean = clean.replace(/-/g, '+').replace(/_/g, '/');
   while(clean.length % 4) clean += '=';
-  /* nodejs_compat Buffer handles 785k $content; atob of that size can throw
-     in some Worker isolates. Split atob on a 4-char boundary if needed. */
-  if(typeof Buffer !== 'undefined' && typeof Buffer.from === 'function'){
-    const buf = Buffer.from(clean, 'base64');
-    return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
-  }
-  const CHUNK = 32768;
+  /* Never Buffer.from — Git Builds may omit nodejs_compat; a stub Buffer.from
+     throws and used to surface as bad_json before the zip existed. */
   const pieces = [];
   let total = 0;
-  for(let i = 0; i < clean.length; i += CHUNK){
-    const bin = atob(clean.slice(i, i + CHUNK));
+  for(let i = 0; i < clean.length; i += ATOB_CHUNK){
+    const bin = atob(clean.slice(i, i + ATOB_CHUNK));
     const out = new Uint8Array(bin.length);
     for(let j = 0; j < bin.length; j++) out[j] = bin.charCodeAt(j);
     pieces.push(out);
@@ -97,7 +100,7 @@ export function bytesFromContentString(s){
     let bytes = decodeBase64(s);
     if(!looksLikeZipXlsx(bytes)){
       try {
-        const inner = new TextDecoder().decode(bytes).replace(/\s+/g, '');
+        const inner = new TextDecoder('utf-8').decode(bytes).replace(/\s+/g, '');
         if(inner.length > 20){
           const twice = decodeBase64(inner);
           if(looksLikeZipXlsx(twice)) bytes = twice;
@@ -127,8 +130,27 @@ function isB64CharCode(c){
 
 function asciiFromCharCodes(codes){
   if(!codes || !codes.length) return '';
-  const u8 = codes instanceof Uint8Array ? codes : Uint8Array.from(codes);
-  return longString(new TextDecoder('latin1').decode(u8));
+  /* Workers TextDecoder is often utf-8 only; latin1 throws. */
+  const parts = [];
+  for(let i = 0; i < codes.length; i += FROM_CHAR_CHUNK){
+    const end = Math.min(i + FROM_CHAR_CHUNK, codes.length);
+    const slice = new Array(end - i);
+    for(let j = i; j < end; j++) slice[j - i] = codes[j] & 255;
+    parts.push(String.fromCharCode.apply(null, slice));
+  }
+  return longString(parts.join(''));
+}
+
+function bytesToBinaryString(u8){
+  if(!u8 || !u8.length) return '';
+  const parts = [];
+  for(let i = 0; i < u8.length; i += FROM_CHAR_CHUNK){
+    const end = Math.min(i + FROM_CHAR_CHUNK, u8.length);
+    const slice = new Array(end - i);
+    for(let j = i; j < end; j++) slice[j - i] = u8[j];
+    parts.push(String.fromCharCode.apply(null, slice));
+  }
+  return parts.join('');
 }
 
 function charsetOf(contentType){
@@ -164,7 +186,7 @@ export function collapseUtf16Ascii(buf, contentType){
   } else {
     for(let i = start; i + 1 < buf.length; i += 2) out[k++] = buf[i + 1];
   }
-  return new TextDecoder('latin1').decode(out.subarray(0, k)).replace(/^\uFEFF/, '').trim();
+  return bytesToBinaryString(out.subarray(0, k)).replace(/^\uFEFF/, '').trim();
 }
 
 function nextNonNul(buf, i){
@@ -335,9 +357,28 @@ function looksLikePaEnvelopeText(text){
   return s.includes('$content') || s.includes('UEsDBB') || s.includes('spreadsheetml');
 }
 
+export function looksLikeEnvelopeBuf(buf){
+  if(!buf || buf.length < 6) return false;
+  return findAsciiSkipNuls(buf, 'UEsDBB') >= 0
+    || findAsciiSkipNuls(buf, '$content') >= 0
+    || findAsciiSkipNuls(buf, 'spreadsheetml') >= 0;
+}
+
+function utf8Decode(buf){
+  return new TextDecoder('utf-8').decode(buf).replace(/^\uFEFF/, '').replace(/\0/g, '').trim();
+}
+
 function decodeRequestText(buf, contentType){
+  /* utf-8 first: live Flow 1 is a UTF-8 JSON $content envelope, no Content-Type.
+     utf-16 TextDecoder is not required on Workers (often utf-8 only). */
+  try {
+    const utf8 = utf8Decode(buf);
+    if(utf8 && (utf8.startsWith('{') || utf8.startsWith('[') || looksLikePaEnvelopeText(utf8))){
+      return utf8;
+    }
+  } catch(_){}
   const collapsed = collapseUtf16Ascii(buf, contentType);
-  if(collapsed && (collapsed.startsWith('{') || collapsed.includes('UEsDBB') || collapsed.includes('$content'))){
+  if(collapsed && (collapsed.startsWith('{') || looksLikePaEnvelopeText(collapsed))){
     return collapsed;
   }
   const cs = charsetOf(contentType);
@@ -368,7 +409,7 @@ function decodeRequestText(buf, contentType){
     } catch(_){}
   }
   try {
-    return new TextDecoder().decode(buf).replace(/^\uFEFF/, '').replace(/\0/g, '').trim();
+    return utf8Decode(buf);
   } catch(_){
     return '';
   }
@@ -479,24 +520,126 @@ function tryXlsxBytes(bytes, fileName){
   }
 }
 
-function firstXlsxFromCandidates(candidates){
-  for(const b64 of candidates){
-    const got = rowsFromBase64Zip(b64);
-    if(got && got.kind === 'rows') return got;
-  }
-  return null;
-}
-
 /* Raw POST text → xlsx rows for a PA $content / UEsDBB envelope.
  * Try $content and UEsDBB independently (do not let a MIME-type false
  * match hide the zip). Returns null so the caller can parse or fall through. */
 export function rowsFromRawEnvelopeText(text){
   const s = String(text || '').trim();
   if(!s) return null;
-  return firstXlsxFromCandidates([
-    extractBase64FromMalformed(s),
-    extractBase64ZipFromText(s)
-  ]);
+  try {
+    const fromContent = rowsFromBase64Zip(extractBase64FromMalformed(s));
+    if(fromContent && fromContent.kind === 'rows') return fromContent;
+    const fromZip = rowsFromBase64Zip(extractBase64ZipFromText(s));
+    if(fromZip && fromZip.kind === 'rows') return fromZip;
+    return null;
+  } catch(_){
+    return null;
+  }
+}
+
+function envelopeFail(envelope){
+  return { kind: 'bad', error: envelope ? 'bad_xlsx' : 'bad_json' };
+}
+
+export async function readIngestRequest(request){
+  let buf;
+  try {
+    buf = new Uint8Array(await request.arrayBuffer());
+  } catch(_){
+    return { kind: 'bad', error: 'bad_json' };
+  }
+  const contentType = request.headers.get('Content-Type') || '';
+  const envelope = looksLikeEnvelopeBuf(buf);
+  try {
+    return readIngestBody(buf, request, contentType, envelope);
+  } catch(_){
+    return envelopeFail(envelope);
+  }
+}
+
+function readIngestBody(buf, request, contentType, envelope){
+  /* Content-Type may be omitted (Flow 1) or charset=utf-16. */
+
+  const zipAt = findZipOffset(buf);
+  if(zipAt === 0){
+    try {
+      const cd = request.headers.get('Content-Disposition') || '';
+      const m = cd.match(/filename\*?=(?:UTF-8''|")?([^";]+)/i);
+      const fileName = (m && m[1])
+        ? decodeURIComponent(m[1].replace(/"/g, ''))
+        : DEFAULT_XLSX_NAME;
+      return rowsFromXlsxBytes(buf, fileName);
+    } catch(_){
+      return { kind: 'bad', error: 'bad_xlsx' };
+    }
+  }
+
+  let fromBufB64 = '';
+  try {
+    fromBufB64 = extractBase64ZipFromBytes(buf);
+  } catch(_){}
+  try {
+    const fromBytes = rowsFromBase64Zip(fromBufB64);
+    if(fromBytes && fromBytes.kind === 'rows') return fromBytes;
+  } catch(_){
+    if(envelope) return { kind: 'bad', error: 'bad_xlsx' };
+  }
+
+  let text;
+  try {
+    text = decodeRequestText(buf, contentType);
+  } catch(_){
+    text = '';
+  }
+  if(typeof text !== 'string') text = '';
+  if(!text && !fromBufB64) return envelopeFail(envelope);
+
+  try {
+    const fromRaw = rowsFromRawEnvelopeText(text);
+    if(fromRaw && fromRaw.kind === 'rows') return fromRaw;
+  } catch(_){
+    if(envelope || looksLikePaEnvelopeText(text)) return { kind: 'bad', error: 'bad_xlsx' };
+  }
+
+  if(zipAt > 0){
+    const sliced = tryXlsxBytes(buf.slice(zipAt));
+    if(sliced && sliced.kind === 'rows') return sliced;
+  }
+
+  const asEnvelope = envelope || !!(fromBufB64 || looksLikePaEnvelopeText(text) || utf16Mode(buf, contentType));
+
+  let body;
+  if(typeof text !== 'string') return envelopeFail(asEnvelope);
+  try {
+    body = JSON.parse(text);
+  } catch(_){
+    if(asEnvelope) return { kind: 'bad', error: 'bad_xlsx' };
+    try {
+      const broken = extractBase64FromMalformed(text) || extractBase64ZipFromText(text);
+      if(broken){
+        const got = rowsFromXlsxB64(broken, DEFAULT_XLSX_NAME);
+        if(got) return got;
+      }
+      const b64 = longString(text);
+      if(b64){
+        const got = rowsFromXlsxB64(b64, DEFAULT_XLSX_NAME);
+        if(got && got.kind === 'rows') return got;
+      }
+    } catch(_){
+      return envelopeFail(asEnvelope);
+    }
+    return { kind: 'bad', error: 'bad_json' };
+  }
+  try {
+    const normalized = normalizeIngestJson(body);
+    if(normalized && normalized.kind === 'bad' && asEnvelope
+      && (normalized.error === 'bad_json' || normalized.error === 'no_rows_or_file')){
+      return { kind: 'bad', error: 'bad_xlsx' };
+    }
+    return normalized;
+  } catch(_){
+    return envelopeFail(asEnvelope);
+  }
 }
 
 export function normalizeIngestJson(body, depth){
@@ -505,16 +648,30 @@ export function normalizeIngestJson(body, depth){
   if(typeof body === 'string'){
     const coerced = coerceJson(body);
     if(coerced !== body) return normalizeIngestJson(coerced, depth + 1);
-    const fromRaw = rowsFromRawEnvelopeText(body);
-    if(fromRaw) return fromRaw;
+    try {
+      const fromRaw = rowsFromRawEnvelopeText(body);
+      if(fromRaw) return fromRaw;
+    } catch(_){
+      if(looksLikePaEnvelopeText(body)) return { kind: 'bad', error: 'bad_xlsx' };
+    }
     const b64 = longString(body);
-    if(!b64) return { kind: 'bad', error: 'bad_json' };
-    return rowsFromXlsxB64(b64, DEFAULT_XLSX_NAME);
+    if(!b64) return { kind: 'bad', error: looksLikePaEnvelopeText(body) ? 'bad_xlsx' : 'bad_json' };
+    const got = rowsFromXlsxB64(b64, DEFAULT_XLSX_NAME);
+    if(got && got.kind === 'bad' && looksLikePaEnvelopeText(body)){
+      return { kind: 'bad', error: 'bad_xlsx' };
+    }
+    return got;
   }
   if(body == null) return { kind: 'bad', error: 'bad_json' };
 
   const fromBuf = bufferDataBytes(body.$content) || bufferDataBytes(body);
-  if(fromBuf) return rowsFromXlsxBytes(fromBuf, envelopeFileName(body));
+  if(fromBuf){
+    try {
+      return rowsFromXlsxBytes(fromBuf, envelopeFileName(body));
+    } catch(_){
+      return { kind: 'bad', error: 'bad_xlsx' };
+    }
+  }
 
   const raw = extractBase64FromEnvelope(body);
   if(raw){
@@ -544,70 +701,6 @@ export function normalizeIngestJson(body, depth){
     };
   }
   return { kind: 'bad', error: 'no_rows_or_file' };
-}
-
-export async function readIngestRequest(request){
-  const buf = new Uint8Array(await request.arrayBuffer());
-  const contentType = request.headers.get('Content-Type') || '';
-  /* Content-Type may be omitted (Flow 1) or charset=utf-16. */
-
-  const zipAt = findZipOffset(buf);
-  if(zipAt === 0){
-    try {
-      const cd = request.headers.get('Content-Disposition') || '';
-      const m = cd.match(/filename\*?=(?:UTF-8''|")?([^";]+)/i);
-      const fileName = (m && m[1])
-        ? decodeURIComponent(m[1].replace(/"/g, ''))
-        : DEFAULT_XLSX_NAME;
-      return rowsFromXlsxBytes(buf, fileName);
-    } catch(_){
-      return { kind: 'bad', error: 'bad_xlsx' };
-    }
-  }
-
-  let fromBufB64 = '';
-  try {
-    fromBufB64 = extractBase64ZipFromBytes(buf);
-  } catch(_){}
-  const fromBytes = rowsFromBase64Zip(fromBufB64);
-  if(fromBytes && fromBytes.kind === 'rows') return fromBytes;
-
-  let text;
-  try {
-    text = decodeRequestText(buf, contentType);
-  } catch(_){
-    text = '';
-  }
-  if(!text && !fromBufB64) return { kind: 'bad', error: 'bad_json' };
-
-  const fromRaw = rowsFromRawEnvelopeText(text);
-  if(fromRaw && fromRaw.kind === 'rows') return fromRaw;
-
-  if(zipAt > 0){
-    const sliced = tryXlsxBytes(buf.slice(zipAt));
-    if(sliced && sliced.kind === 'rows') return sliced;
-  }
-
-  const envelope = !!(fromBufB64 || looksLikePaEnvelopeText(text) || utf16Mode(buf, contentType));
-
-  let body;
-  try {
-    body = JSON.parse(text);
-  } catch(_){
-    if(envelope) return { kind: 'bad', error: 'bad_xlsx' };
-    const broken = extractBase64FromMalformed(text) || extractBase64ZipFromText(text);
-    if(broken){
-      const got = rowsFromXlsxB64(broken, DEFAULT_XLSX_NAME);
-      if(got) return got;
-    }
-    const b64 = longString(text);
-    if(b64){
-      const got = rowsFromXlsxB64(b64, DEFAULT_XLSX_NAME);
-      if(got && got.kind === 'rows') return got;
-    }
-    return { kind: 'bad', error: 'bad_json' };
-  }
-  return normalizeIngestJson(body);
 }
 
 export function latestPayloadFromRows(rows){
