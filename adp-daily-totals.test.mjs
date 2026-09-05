@@ -19,8 +19,10 @@ function parseCellDate(v){
   if(v==null || v==='') return null;
   if(v instanceof Date){
     if(isNaN(v.getTime())) return null;
-    const y=v.getFullYear();
-    return (y>=1990 && y<=2100) ? (v.getFullYear()+'-'+p2(v.getMonth()+1)+'-'+p2(v.getDate())) : null;
+    const y=v.getUTCFullYear();
+    return (y>=1990 && y<=2100)
+      ? (y+'-'+p2(v.getUTCMonth()+1)+'-'+p2(v.getUTCDate()))
+      : null;
   }
   if(typeof v==='number'){
     if(v>32874 && v<73415){
@@ -419,8 +421,9 @@ assert.equal(looksLikeAdpAoa([['Date','Driver','Grower','FB','Commodity']]), fal
     'August 1–23 2026 EST $88,195.38 → ADP $107,054.54 is the recorded basis');
   assert.ok(/id="adpBlendCard"/.test(html), 'Settings has a visible ADP blend card');
   assert.ok(/OT &amp; meals vs estimate/.test(html), 'operator-facing name is on the card');
-  assert.ok(/2026-08-27-fct-calc-v2\.1\.47-no-fuel-bar/.test(html), 'APP_VERSION is v2.1.47');
-  assert.ok(/v2\.1\.47-no-fuel-bar/.test(html), 'changelog has v2.1.47');
+  assert.ok(/2026-09-05-fct-calc-v2\.1\.48-pnl-today/.test(html), 'APP_VERSION is v2.1.48');
+  assert.ok(/v2\.1\.48-pnl-today/.test(html), 'changelog has v2.1.48');
+  assert.ok(/v2\.1\.47-no-fuel-bar/.test(html), 'changelog still has v2.1.47');
   assert.ok(/v2\.1\.40-adp-blend/.test(html), 'changelog still has v2.1.40');
 
   /* Do not regress the v2.1.39 cost stack. */

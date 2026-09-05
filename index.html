@@ -8,11 +8,11 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" >
 <meta name="apple-mobile-web-app-title" content="FCT Calc" >
 <!-- Cache-busting so iOS Home Screen / PWA pulls the latest build on next open.
-     Token: 2026-08-27-fct-calc-v2.1.47-no-fuel-bar — bump with APP_VERSION. -->
+     Token: 2026-09-05-fct-calc-v2.1.48-pnl-today — bump with APP_VERSION. -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<meta name="app-version" content="2026-08-27-fct-calc-v2.1.47-no-fuel-bar">
+<meta name="app-version" content="2026-09-05-fct-calc-v2.1.48-pnl-today">
 <title data-id="th-modified">FCT Load Profitability — French Camp Transport</title>
 <link rel="manifest" href='data:application/manifest+json,{"name":"FCT Load Profitability","short_name":"FCT Calc","start_url":".","display":"standalone","background_color":"%2312100e","theme_color":"%2312100e","icons":[{"src":"data:image/svg%2Bxml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 192 192%27%3E%3Crect width=%27192%27 height=%27192%27 fill=%27%2312100e%27/%3E%3Ctext x=%2796%27 y=%27124%27 font-size=%2772%27 font-family=%27sans-serif%27 font-weight=%27700%27 fill=%27%238fb590%27 text-anchor=%27middle%27%3EFCT%3C/text%3E%3C/svg%3E","sizes":"192x192","type":"image/svg+xml"}]}'>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -1421,7 +1421,7 @@
    still exposes the Import JSON box for future refreshes.
    ============================================================= */
 
-const APP_VERSION = '2026-08-27-fct-calc-v2.1.47-no-fuel-bar';
+const APP_VERSION = '2026-09-05-fct-calc-v2.1.48-pnl-today';
 const STORAGE_KEY = 'fct-calc:state';
 const IDB_NAME = 'fct-calc-db';
 const IDB_STORE = 'kv';
@@ -5202,9 +5202,16 @@ function excelSerialToDate(serial){
 function parseCellDate(v){
   if(v==null || v==='') return null;
   if(v instanceof Date){
+    /* Same UTC calendar day as the serial path. SheetJS cellDates:true
+       builds UTC-midnight Dates; isoLocal() in Pacific time reads the
+       previous afternoon and moved ADP / file-drop banners back one day
+       (Wed 9/2 pay landed on Tue 9/1). Worker ingest already stringifies
+       serials and stayed correct. */
     if(isNaN(v.getTime())) return null;
-    const y=v.getFullYear();
-    return (y>=1990 && y<=2100) ? isoLocal(v) : null;
+    const y=v.getUTCFullYear();
+    return (y>=1990 && y<=2100)
+      ? (y+'-'+p2(v.getUTCMonth()+1)+'-'+p2(v.getUTCDate()))
+      : null;
   }
   if(typeof v==='number'){
     if(v>32874 && v<73415){                      // 1990-01-01 .. 2100-12-31 as Excel serials
@@ -7971,13 +7978,46 @@ function parseDispatchRows(aoa, map, headerRow){
            buckets:buckets, unassigned:unassignedList };
 }
 
+/* BEGIN PNL_TODAY */
+/* Local calendar day for the dispatch board. UTC .toISOString() after
+   ~5pm PT is already tomorrow; the Excel file already has tomorrow's
+   preload banner, so that pair opened Saturday while Friday was live.
+   Prefer a requested date only when it is today or earlier (stay on
+   Tue 9/2 after a refresh). A leftover future filterDate from the UTC
+   mash snaps back to today. Picking tomorrow in the dropdown still
+   works — that is applyImportDate, not this ingest default. */
+function pickBoardDate(dates, requested, now){
+  const today = (typeof isoLocal==='function')
+    ? isoLocal(now || new Date())
+    : (function(d){
+        const p2 = n => (n<10?'0':'')+n;
+        return d.getFullYear()+'-'+p2(d.getMonth()+1)+'-'+p2(d.getDate());
+      })(now || new Date());
+  const list = Array.isArray(dates) ? dates : [];
+  const has = d => list.some(x => x && (x.date || x) === d);
+  if(requested && requested <= today && has(requested)) return requested;
+  if(has(today)) return today;
+  if(requested && has(requested)) return requested;
+  if(list.length) return list[0].date || list[0] || today;
+  return today;
+}
+
+function pnlChipOpsNet(x){
+  if(!x) return 0;
+  if(x.opsNet!=null && isFinite(Number(x.opsNet))) return Number(x.opsNet);
+  return (Number(x.net)||0) + (Number(x.wearOther)||0);
+}
+/* END PNL_TODAY */
+
 /* Re-parseable in memory so a mapping change does not need a re-upload.
    Not persisted — too big — so after a reload a remap needs the file again. */
 let __wb = null;   // { fileName, sheetNames, sheets:{name:aoa} }
 
 function ingestWorkbook(arrayBuf, fileName){
   return loadSheetJS().then(XLSX=>{
-    const wb = XLSX.read(new Uint8Array(arrayBuf), {type:'array', cellDates:true});
+    /* cellDates:false — same as fct-dispatch xlsx-rows. Date objects plus
+       isoLocal() shifted every banner back one day in Pacific time. */
+    const wb = XLSX.read(new Uint8Array(arrayBuf), {type:'array', cellDates:false, raw:true});
     if(!wb.SheetNames.length) throw new Error('That workbook has no sheets.');
     const sheets = {};
     wb.SheetNames.forEach(n=>{
@@ -8021,12 +8061,11 @@ function applyParse(){
     ingestedAt: worker ? (__wb.ingestedAt||'') : '',
     dates: res.dates, rows: res.rows,
   };
-  // Land on the requested date, else today, else the first date in the file.
-  const today = new Date().toISOString().slice(0,10);
-  const has = d=>res.dates.some(x=>x.date===d);
-  const pick = has(di.filterDate) ? di.filterDate
-             : has(today) ? today
-             : (res.dates.length ? res.dates[0].date : '');
+  // Land on the requested date if it is today or earlier, else local today,
+  // else the first date in the file. UTC .toISOString() after ~5pm PT is
+  // already tomorrow — and the sheet already has tomorrow's preload banner —
+  // so the board jumped to Saturday while Friday's books were still open.
+  const pick = pickBoardDate(res.dates, di.filterDate);
   di.filterDate = pick;
   applyImportDate(pick, true);
   return res;
@@ -10525,32 +10564,39 @@ function renderDayRollup(){
        being inspected below. Same fix applied to WTD — same class of bug. */
     const rtLive = runningTotals(todayISO);
     const dTodayLive = (typeof computeDay === 'function') ? computeDay() : null;
+    const boardLive = (typeof buildPnlBoard==='function') ? buildPnlBoard(shown) : null;
+    const dayOpsLive = boardLive && boardLive.day
+      ? ((typeof pnlChipOpsNet==='function') ? pnlChipOpsNet(boardLive.day) : Number(boardLive.day.opsNet))
+      : (dTodayLive ? dTodayLive.net : null);
+    const daySrcLive = boardLive && boardLive.day
+      ? ((boardLive.day.adpDays && boardLive.day.estDriverDays) ? 'MIX'
+          : boardLive.day.adpDays ? 'ADP' : 'EST')
+      : (dTodayLive && dTodayLive.totals && dTodayLive.totals.varSource);
     const estHold = (typeof estChipView==='function')
       ? estChipView({
-          dayNet: dTodayLive ? dTodayLive.net : null,
-          daySrc: dTodayLive && dTodayLive.totals && dTodayLive.totals.varSource,
+          dayNet: dayOpsLive,
+          daySrc: daySrcLive,
           cm: dTodayLive && dTodayLive.totals ? dTodayLive.totals.cm : null,
-          week: rtLive && rtLive.week,
-          month: rtLive && rtLive.month
+          week: (boardLive && boardLive.wtd) || (rtLive && rtLive.week),
+          month: (boardLive && boardLive.mtd) || (rtLive && rtLive.month)
         })
       : { pending:false };
     const rt = estHold.pending ? { week:null, month:null, weekStart: rtLive && rtLive.weekStart, monthStart: rtLive && rtLive.monthStart }
-             : { week: estHold.week || (rtLive && rtLive.week), month: estHold.month || (rtLive && rtLive.month),
+             : { week: estHold.week || (boardLive && boardLive.wtd) || (rtLive && rtLive.week),
+                 month: estHold.month || (boardLive && boardLive.mtd) || (rtLive && rtLive.month),
                  weekStart: rtLive && rtLive.weekStart, monthStart: rtLive && rtLive.monthStart };
     const dToday = dTodayLive;
     const daySrc = estHold.pending ? 'EST'
-                 : (estHold.daySrc || (dToday && dToday.totals && dToday.totals.varSource));
+                 : (estHold.daySrc || daySrcLive || (dToday && dToday.totals && dToday.totals.varSource));
     const dayNet = estHold.pending ? null
-                 : (estHold.dayNet!=null ? estHold.dayNet : (dToday && dToday.net));
+                 : (estHold.dayNet!=null ? estHold.dayNet : dayOpsLive);
     const dayTile = dToday ? '<span style="white-space:nowrap" title="'
       + esc(estHold.pending
           ? 'Waiting for calibration / ADP / Verizon miles so EST does not jump on open.'
-          : ('Day: '+dToday.totals.loads+' booked / '+(dToday.totals.activeLoads!=null?dToday.totals.activeLoads:dToday.totals.loads)+' planned'
+          : ('DAY ops net (same as P&L Day): '+dToday.totals.loads+' booked / '+(dToday.totals.activeLoads!=null?dToday.totals.activeLoads:dToday.totals.loads)+' planned'
         + ', '+money(dToday.totals.revenue)+' books (driver + freight bill)'
         + ((dToday.totals.planLoads||0) ? ', plan '+money(dToday.totals.planRevenue)+' not in books' : '')
-        + ', '+money(dToday.totals.varCost)+' variable, '
-        + money(dToday.totals.cm)+' contribution, '+money(dToday.fixedTotal)+' fixed → '
-        + money(dToday.net)+' net'
+        + ' → '+money(dayNet)+' ops net (rev − wages − fuel − fixed). After wear is on the P&L board and is not this chip'
         + (daySrc==='ADP' ? ('. Driver wages from ADP '+money(dToday.totals.driverCost)+' / '+num(dToday.totals.hours,1)+' hr.')
                           : '. Driver wages estimated (hours × loaded $/hr).')))+'">'
       + (estHold.pending ? '<span class="chip y">EST</span> DAY <b class="num">…</b>'
@@ -10575,18 +10621,24 @@ function renderDayRollup(){
           + '<span class="chip y">EST</span> '+t+' <b class="num">…</b></span>';
       }
       if(!x) return '';
-      const mark = x.varSource==='ADP' ? '<span class="chip g">ADP</span> '
-                 : x.varSource==='MIX' ? '<span class="chip a">ADP+EST</span> '
+      const varSource = x.varSource
+        || ((x.adpDays && (x.estDriverDays||x.estDays)) ? 'MIX'
+            : x.adpDays ? 'ADP' : 'EST');
+      const ops = (typeof pnlChipOpsNet==='function')
+        ? pnlChipOpsNet(x)
+        : ((x.opsNet!=null) ? Number(x.opsNet) : Number(x.net)||0);
+      const mark = varSource==='ADP' ? '<span class="chip g">ADP</span> '
+                 : varSource==='MIX' ? '<span class="chip a">ADP+EST</span> '
                  : '<span class="chip y">EST</span> ';
-      const why = x.varSource==='ADP'
+      const why = varSource==='ADP'
         ? ' Driver wages from ADP actuals on each closed day, then summed.'
-        : x.varSource==='MIX'
-          ? ' '+x.adpDays+' closed day'+(x.adpDays===1?'':'s')+' on ADP; '+x.estDays+' estimated (today stays EST until you re-drop after close).'
+        : varSource==='MIX'
+          ? ' '+(x.adpDays||0)+' closed day'+((x.adpDays||0)===1?'':'s')+' on ADP; '+(x.estDriverDays||x.estDays||0)+' estimated (today stays EST until you re-drop after close).'
           : ' Driver wages still hours × loaded $/hr — drop the ADP Daily Totals file to replace closed days.';
       return '<span style="white-space:nowrap" title="'
-        + esc(fullName+'-to-date through today ('+todayHuman+'). Locked to today regardless of the day picker above.'+why)+'">'
+        + esc(fullName+'-to-date ops net through today ('+todayHuman+'). Same number as P&L '+fullName+' to date ops net. After wear is fully loaded and is not this chip. Locked to today regardless of the day picker above.'+why)+'">'
         + mark + t+' <b class="num" style="color:'
-        + (x.net>=0?'var(--green)':'var(--red)')+'">'+(x.net>=0?'+':'')+money(x.net)+'</b></span>';
+        + (ops>=0?'var(--green)':'var(--red)')+'">'+(ops>=0?'+':'')+money(ops)+'</b></span>';
     };
     h += '<div class="card" id="dispDrop" style="padding:10px 14px;margin-bottom:12px">'
       + '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">'
@@ -11944,7 +11996,7 @@ async function fetchVerizonMiles(dateStr){
    background pull. */
 function refreshVerizonMilesToday(){
   const dateStr = (state.dayRollup && state.dayRollup.date)
-               || new Date().toISOString().slice(0,10);
+               || isoLocal(new Date());
   return fetchVerizonMiles(dateStr).then(res => {
     state.verizonMilesToday = {
       fleetMiles: res.fleetMiles || 0,
@@ -11995,20 +12047,20 @@ function refreshVerizonMilesToday(){
    nags. EST DAY/WTD/MTD must not jump thousands while /calibration and ADP
    settle: hold the last stable EST (or "…" on first paint) until those
    inputs finish. Do not invent dollars. */
-var __bootSettle = { cal:false, miles:false, adp:false };
+var __bootSettle = { cal:false, miles:false, adp:false, rows:false };
 var __calInFlight = false;
 var __stableEstPaint = null;
 function markBootSettle(k){
   if(!k) return;
-  const was = __bootSettle.cal && __bootSettle.miles && __bootSettle.adp;
+  const was = __bootSettle.cal && __bootSettle.miles && __bootSettle.adp && __bootSettle.rows;
   __bootSettle[k] = true;
-  const now = __bootSettle.cal && __bootSettle.miles && __bootSettle.adp;
+  const now = __bootSettle.cal && __bootSettle.miles && __bootSettle.adp && __bootSettle.rows;
   if(now && !was){
     try { if(typeof renderDayRollup === 'function' && document.querySelector(DAY_HOST)) renderDayRollup(); } catch(_){}
   }
 }
 function estPaintPending(){
-  return !(__bootSettle.cal && __bootSettle.miles && __bootSettle.adp) && !__stableEstPaint;
+  return !(__bootSettle.cal && __bootSettle.miles && __bootSettle.adp && __bootSettle.rows) && !__stableEstPaint;
 }
 function estPaintUseFrozen(){
   return !!(__calInFlight && __stableEstPaint);
@@ -15021,6 +15073,7 @@ window.addEventListener('resize',closeSugPop);
   }
 
   hydrateLastImportRows().then(function(hydrated){
+    try { markBootSettle('rows'); } catch(_){}
     if(hydrated){
       // Repaint the surfaces that read li.rows so WTD/MTD, Section 2, and the
       // day picker all reflect the full dataset instead of the trimmed LS view.
@@ -15028,7 +15081,7 @@ window.addEventListener('resize',closeSugPop);
       try { renderQueue(); } catch(_){}
       try { renderHist(); } catch(_){}
     }
-  });
+  }).catch(function(){ try { markBootSettle('rows'); } catch(_){} });
   hydrateAdpPay().then(function(hydrated){
     try { markBootSettle('adp'); } catch(_){}
     if(hydrated){
@@ -15165,9 +15218,10 @@ window.addEventListener('resize',closeSugPop);
      POSTs via pushCanonicalSettings; v2.1.25 silent auto-apply stays REVERTED. */
   setTimeout(function(){
     try {
-      if(!__bootSettle.cal) markBootSettle('cal');
+      if(!__bootSettle.cal && !__calInFlight) markBootSettle('cal');
       if(!__bootSettle.miles) markBootSettle('miles');
       if(!__bootSettle.adp) markBootSettle('adp');
+      if(!__bootSettle.rows) markBootSettle('rows');
     } catch(_){}
   }, 8000);
 })();
@@ -15372,6 +15426,9 @@ SHADOW_TIMELINE_TEXT['2026-07-28'] = "**PARTIAL DAY — Phase 2 diff loop stoppe
 
 /* ---- v2.0 DATA: Changelog (in-app version history) ---- */
 const SHADOW_CHANGELOG = [
+  { ver:'v2.1.48-pnl-today', date:'2026-09-05', changes:[
+    'James 2026-09-04 evening PT: live P&L was way off. Two date bugs plus two different month numbers. (1) Dropping the ADP Daily Totals xlsx turned pay dates into Date objects; in Pacific time those read as the previous day, so Wed 9/2 $5,613.92 landed on Tuesday and Thu 9/3 $6,807.84 landed on Wednesday. File-drop dispatch banners had the same slip. Worker ingest already kept Excel serials and stayed correct. Dates now stay on the calendar day on the sheet. (2) After ~5pm PT a refresh treated UTC tomorrow as today, and the sheet already has tomorrow\'s preload banner, so the board opened on Saturday while Friday was still the working day. Refresh now lands on local today. (3) Header DAY/WTD/MTD chips painted after-wear net; the P&L board headline is ops net (rev − wages − fuel − fixed). Those are different numbers — wear is thousands of dollars. Chips now show the same ops-net figure as the P&L board. After wear stays on the board and is not the chip. Diesel, Twilio/SMS, Power Automate ingest not touched'
+  ]},
   { ver:'v2.1.47-no-fuel-bar', date:'2026-08-27', changes:[
     'James on live v2.1.46: "The fuel out of sync red bar is still there, I need it gone for good." Deleted the Device-out-of-sync red bar and tap-to-pull overlay entirely (not just skip fuelPrice). Deleted diesel-default nags (never confirmed, shipped $4.50, DEFAULT chips). Canonical GET never writes currentDieselPricePerGal. Diesel is only the Settings number on this device. Stored local price left alone. Driver+bill books, EST hold, Twilio/SMS, PR #11, Excel ingest, Queue unchanged'
   ]},

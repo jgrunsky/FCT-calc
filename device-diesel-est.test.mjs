@@ -10,7 +10,7 @@ const changelogStart = html.indexOf('const SHADOW_CHANGELOG');
 assert.ok(changelogStart >= 0, 'SHADOW_CHANGELOG present');
 const ui = html.slice(0, changelogStart);
 
-assert.ok(/2026-08-27-fct-calc-v2\.1\.47-no-fuel-bar/.test(html), 'APP_VERSION is v2.1.47');
+assert.ok(/2026-09-05-fct-calc-v2\.1\.48-pnl-today/.test(html), 'APP_VERSION is v2.1.48');
 assert.ok(/v2\.1\.47-no-fuel-bar/.test(html), 'changelog has v2.1.47');
 assert.ok(/v2\.1\.46-device-diesel/.test(html), 'prior diesel changelog kept');
 assert.ok(/v2\.1\.45-driver-fb/.test(html), 'driver+bill changelog kept');
@@ -83,6 +83,7 @@ assert.equal(estChipView({ cm: 9967 }).pending, true, 'do not invent EST dollars
 markBootSettle('cal');
 markBootSettle('miles');
 markBootSettle('adp');
+markBootSettle('rows');
 assert.equal(estPaintPending(), false);
 const painted = estChipView({ cm: 9967, dayNet: 4094 });
 assert.equal(painted.pending, false);
