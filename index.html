@@ -8,7 +8,9 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" >
 <meta name="apple-mobile-web-app-title" content="FCT Calc" >
 <!-- Cache-busting so iOS Home Screen / PWA pulls the latest build on next open.
-     Token: 2026-08-27-fct-calc-v2.1.47-no-fuel-bar — bump with APP_VERSION. -->
+     Token: 2026-08-27-fct-calc-v2.1.47-no-fuel-bar — bump with APP_VERSION.
+     2026-09-07: redeploy this exact v2.1.47-no-fuel-bar tree to Pages production
+     so fct-calc.pages.dev is not the stray v2.1.48-day-pick-fix build. -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -15376,7 +15378,7 @@ const SHADOW_CHANGELOG = [
     'James on live v2.1.46: "The fuel out of sync red bar is still there, I need it gone for good." Deleted the Device-out-of-sync red bar and tap-to-pull overlay entirely (not just skip fuelPrice). Deleted diesel-default nags (never confirmed, shipped $4.50, DEFAULT chips). Canonical GET never writes currentDieselPricePerGal. Diesel is only the Settings number on this device. Stored local price left alone. Driver+bill books, EST hold, Twilio/SMS, PR #11, Excel ingest, Queue unchanged'
   ]},
   { ver:'v2.1.46-device-diesel', date:'2026-08-26', changes:[
-    'James: "No diesel is not 4.50! Get rid of that and only have diesel that I set." fuelPrice is device-owned. The red bar "Device out of sync: fuelPrice differs ($6.000 local vs $4.500 canonical)" is gone. Canonical $4.50 never overwrites Settings diesel, never auto-pulls on load, never nags. Other settings (MPG / driver rate) can still sync. Leave the stored local price alone',
+    'James: "No diesel is not 4.50! Get rid of that and only have diesel that I set." fuelPrice is device-owned. The red diesel sync bar is gone. Canonical $4.50 never overwrites Settings diesel, never auto-pulls on load, never nags. Other settings (MPG / driver rate) can still sync. Leave the stored local price alone',
     'EST DAY / WTD / MTD no longer jump thousands on a quiet open. Cause: /calibration painted 1.15x then a POST-invalidated refetch returned empty ("unavailable") and restated modelled wages. Last-good calibration sticks; EST chips hold at "…" or the last stable number until calibration / ADP / Verizon miles settle. Today\'s REV (driver+FB books) is unchanged. Twilio / SMS / PR #11 not touched'
   ]},
   { ver:'v2.1.45-driver-fb', date:'2026-08-26', changes:[
