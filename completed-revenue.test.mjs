@@ -117,7 +117,7 @@ const accumFn = html.slice(html.indexOf('function accumulatePnlByDay(){'), html.
 assert.ok(/if\(!r\.booked\) return/.test(accumFn), 'P&L accumulate uses booked');
 assert.ok(/verizonFuelDollarsForDate/.test(accumFn), 'Verizon fuel overwrite still on P&L accumulate');
 
-/* ---- Ardent rate: dest from Truck, 52k × $0.00425 × 1.32 FSC ---- */
+/* ---- Ardent rate: dest from Truck, 52k × $0.00425 × 1.43 FSC ---- */
 assert.ok(/function pocDestHint\(r\)/.test(html), 'pocDestHint exists');
 assert.ok(/customerLabelFrom\(r\.truck\)/.test(html), 'dest hint reads Truck column');
 assert.ok(/rec\.destLabel = cls\.destLabel/.test(html), 'parse copies destLabel');
@@ -128,24 +128,26 @@ function normOrigin(v){
 }
 function laneRateOverrideFor(){ return null; }
 `;
-const rateStart = html.indexOf('const POC_MIN_WEIGHT');
+const rateStart = html.indexOf('const POC_CURRENT_FSC_PCT');
 const rateEnd = html.indexOf('function laneOverrideKey(');
 assert.ok(rateStart >= 0 && rateEnd > rateStart, 'POC rate block found');
+assert.ok(/POC_CURRENT_FSC_PCT = 43/.test(html), 'POC FSC clause is 43%');
 const rateBox = { console };
 createContext(rateBox);
 runInContext(ratePrelude + html.slice(rateStart, rateEnd), rateBox);
 
 const ardent = rateBox.pocLaneRevenue('FCGE', 'ARDENT', 48000, 'WHT');
 assert.ok(ardent, 'FCGE→ARDENT lane matches');
-const expected = 52000 * 0.00425 * 1.32;
+const expected = 52000 * 0.00425 * 1.43;
 assert.equal(Math.round(ardent.amount * 100) / 100, Math.round(expected * 100) / 100,
-  'FCGE→Ardent is $291.72 (52k floor × $0.00425 × 32% FSC), not $241 or $425');
+  'FCGE→Ardent is $316.03 (52k floor × $0.00425 × 43% FSC), not $241 or $425');
 assert.equal(ardent.minWeightApplied, true, '48k default hits the 52k POC floor');
+assert.equal(ardent.rule.fscPct, 43, 'Ardent lookup stamps current 43% FSC');
 
 const ardentFcg = rateBox.pocLaneRevenue('FCG', 'ARDENT', 54000, 'WHT');
 assert.ok(ardentFcg);
-assert.equal(Math.round(ardentFcg.amount * 100) / 100, Math.round(54000 * 0.00425 * 1.32 * 100) / 100,
-  'FCG→Ardent at 54k bills actual weight × $0.00425 × 32% FSC');
+assert.equal(Math.round(ardentFcg.amount * 100) / 100, Math.round(54000 * 0.00425 * 1.43 * 100) / 100,
+  'FCG→Ardent at 54k bills actual weight × $0.00425 × 43% FSC');
 
 assert.equal(rateBox.pocLaneRevenue('FCGE', "Phil O'Connell Grain", 48000, 'WHT'), null,
   'customer label is not a dest — that miss was the $425 fallback');
@@ -156,10 +158,10 @@ const noFloor = 43000 * 0.00425 * 1.32;
 assert.equal(Math.round(noFloor * 100) / 100, 241.23);
 const light = rateBox.pocLaneRevenue('FCGE', 'ARDENT', 43000, 'WHT');
 assert.equal(Math.round(light.amount * 100) / 100, Math.round(expected * 100) / 100,
-  '43k still bills the 52k floor ($291.72), not $241');
+  '43k still bills the 52k floor ($316.03), not $241');
 
 assert.ok(/'ARDENT':\s*\{\s*ratePerLb:\s*0\.00425,\s*fscPct:\s*32/.test(html),
-  'stored Ardent short-haul rate is still $0.00425/lb + 32% FSC');
+  'stored Ardent short-haul rate is still $0.00425/lb (table keeps Aug 32% note)');
 assert.ok(/avgRevenue:\s*425/.test(html), 'POC blended fallback stays $425 when no lane matches');
 assert.ok(!/\b241\b/.test(html.slice(html.indexOf('const POC_LANE_RATES'), html.indexOf('function pocLaneRateFor'))),
   'POC_LANE_RATES does not store $241');
@@ -172,7 +174,6 @@ assert.ok(/sheetPlanRow/.test(html) && /not in TOTAL/.test(html),
 assert.ok(/need driver \+ freight bill\) — not in TOTAL/.test(html),
   'PLAN footer says driver + freight bill, not then-completed');
 assert.ok(/Driver plus bill is the way/.test(html), 'P&L copy cites James driver+bill rule');
-  assert.ok(/2026-08-27-fct-calc-v2\.1\.47-no-fuel-bar/.test(html), 'APP_VERSION is v2.1.47');
-  assert.ok(/v2\.1\.47-no-fuel-bar/.test(html), 'changelog has v2.1.47');
-
+assert.ok(/2026-09-14-fct-calc-v2\.1\.50-qbo-mixed-rates/.test(html), 'APP_VERSION is v2.1.50');
+assert.ok(/v2\.1\.47-no-fuel-bar/.test(html), 'changelog keeps v2.1.47');
 console.log('completed-revenue.test.mjs: ok');

@@ -8,12 +8,12 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" >
 <meta name="apple-mobile-web-app-title" content="FCT Calc" >
 <!-- Cache-busting so iOS Home Screen / PWA pulls the latest build on next open.
-     Token: 2026-08-27-fct-calc-v2.1.47-no-fuel-bar — bump with APP_VERSION.
+     Token: 2026-09-14-fct-calc-v2.1.50-qbo-mixed-rates — bump with APP_VERSION.
      2026-09-07 restore: Pages production = PR #16 tree (not day-pick-fix). -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<meta name="app-version" content="2026-08-27-fct-calc-v2.1.47-no-fuel-bar">
+<meta name="app-version" content="2026-09-14-fct-calc-v2.1.50-qbo-mixed-rates">
 <title data-id="th-modified">FCT Load Profitability — French Camp Transport</title>
 <link rel="manifest" href='data:application/manifest+json,{"name":"FCT Load Profitability","short_name":"FCT Calc","start_url":".","display":"standalone","background_color":"%2312100e","theme_color":"%2312100e","icons":[{"src":"data:image/svg%2Bxml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 192 192%27%3E%3Crect width=%27192%27 height=%27192%27 fill=%27%2312100e%27/%3E%3Ctext x=%2796%27 y=%27124%27 font-size=%2772%27 font-family=%27sans-serif%27 font-weight=%27700%27 fill=%27%238fb590%27 text-anchor=%27middle%27%3EFCT%3C/text%3E%3C/svg%3E","sizes":"192x192","type":"image/svg+xml"}]}'>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -1422,7 +1422,7 @@
    still exposes the Import JSON box for future refreshes.
    ============================================================= */
 
-const APP_VERSION = '2026-08-27-fct-calc-v2.1.47-no-fuel-bar';
+const APP_VERSION = '2026-09-14-fct-calc-v2.1.50-qbo-mixed-rates';
 const STORAGE_KEY = 'fct-calc:state';
 const IDB_NAME = 'fct-calc-db';
 const IDB_STORE = 'kv';
@@ -1853,14 +1853,14 @@ function fscMethodUnit(id){ const m=FSC_METHODS.find(x=>x.id===id); return m?m.u
    make a customer appear everywhere — allCustomerNames() unions
    these keys over the QBO customer list.
    ============================================================= */
-const CUSTOMER_RATES_ASOF   = '2026-08-03';
-const CUSTOMER_RATES_SOURCE = 'QBO invoicing — 90-day sample through 2026-07-31';
+const CUSTOMER_RATES_ASOF   = '2026-09-14';
+const CUSTOMER_RATES_SOURCE = 'QBO invoice base rates — Sep 2026 weight-cert sample (qty ~50–56k lb)';
 
 const CUSTOMER_RATE_DEFAULTS = {
   'Diamond Pet Foods':                   { avgRevenue: 508, fscMethod:'percent', fscPct:33,
     notes:'Standard: $0.00677/lb + 30% FSC. Min weight: $442 flat + 30% FSC.' },
-  'Penny Newman':                        { avgRevenue: 430, fscMethod:'per_ton', fscPerTon:2,
-    notes:'v1.9: Ton-based; FSC $2/ton. Real lane structure from QBO invoices 2026-07-30/31 (30 loads sampled). Ripon dest = $0.0072/lb (grains, YC, WR, Peas, Milo, Lentils, Flax) or $0.0075/lb (Ground Brown Rice, Barley). Lathrop dest = $0.00575/lb (grains) or $0.00635/lb (GBR, Barley). Blend ~$430/load @54K lbs typical.' },
+  'Penny Newman':                        { avgRevenue: 430, fscMethod:'per_ton', fscPerTon:2, ratePerLb:0.0072,
+    notes:'v2.1.50 QBO: mostly $0.0072/lb + $2/ton FSC; some loads $0.0135/lb + $2/ton. Dispatch books the PNG lane matrix (Ripon $0.0072/$0.0075, Lathrop $0.00575/$0.00635) — not one flat rate. The $0.0135 loads are a different dest/commodity; missing-rates still prompts when no PNG lane matches. Blend ~$430/load is Settings/what-if only.' },
   'American River Ag':                   { avgRevenue: 512, fscMethod:'percent', fscPct:33,
     notes:'20% FSC (lower than Diamond).',
     /* v1.2 recorded the opposite, from the 2026-07-27 invoicing pull, and marked
@@ -1870,9 +1870,9 @@ const CUSTOMER_RATE_DEFAULTS = {
        record and printed in Settings and on the Info tab. */
     supersedes:'v1.2 (QBO invoicing 2026-07-27) recorded American River Ag as billing NO fuel surcharge. '
              + 'The 2026-07-28 90-day pull shows 20% of linehaul. Confirm which is current before pricing off it.' },
-  "Phil O'Connell Grain":                { avgRevenue: 425, fscMethod:'percent', fscPct:33,
+  "Phil O'Connell Grain":                { avgRevenue: 425, fscMethod:'percent', fscPct:43,
     qboName:"Phil O'Connell Grain Co., Inc",
-    notes:'v1.9 REAL RATES: lane-based per-lb + FSC. Base is $0.00525/lb + 30% FSC for FCG→Purina Turlock and FCG→Farmers Warehouse Keyes lanes. Ardent Mills Stockton = $0.00425/lb (short haul). Pelican/Stokes/Merwin/Victoria/Spinella/Coleman origins = $0.00775-$0.00825/lb (longer haul, min-weight billing at 52,000 lb). PNG→DPF Ripon POC-brokered = $0.0065/lb + 27% FSC. FSC clause moved 27% (June) → 30-32% (late July). The $425 is a blended fallback — pocLaneRevenue() overrides with lane-specific math when origin + destination match POC_LANE_RATES. Source: QBO invoices 2026-06 through 2026-07-31 (~40 POC loads sampled).' },
+    notes:'v2.1.50 QBO: $0.00425–$0.0125/lb + 43% FSC. Dispatch books the POC lane matrix (Ardent $0.00425, Purina/Farmers $0.00525, Miller $0.00925, long-haul growers $0.00775–$0.00825) — each load keeps its own rate. FSC clause moved 27→30→32/33 (summer) → 43% (Sep invoices). The $425 blend is fallback only when origin+dest miss the matrix AND miss a dest customer card (CNP / Lagoria / FCG).' },
   'LinkOne Potato Ingredient Solutions': { avgRevenue: 429, fscMethod:'percent', fscPct:33,
     notes:'Invoicing-level split of the LinkOne group. The QBO T12M customer list still carries '
         + '"LinkOne (combined)" and "LinkOne Logistics" as separate lines — the two views have not '
@@ -1881,15 +1881,15 @@ const CUSTOMER_RATE_DEFAULTS = {
     notes:'No fuel surcharge billed. Lowest average revenue per load on the card.' },
   'LinkOne Logistics':                   { avgRevenue: 500, fscMethod:'percent', fscPct:33,
     notes:'v1.9 placeholder — small LinkOne split ($8K last 90 days). Group with LinkOne Potato/Ingredient Solutions when analyzing customer concentration. Rate not verified per invoice.' },
-  'California Natural Products':         { avgRevenue: 775, fscMethod:'percent', fscPct:33,
-    notes:'Longer haul / premium.' },
+  'California Natural Products':         { avgRevenue: 775, fscMethod:'percent', fscPct:43, ratePerLb:0.0094,
+    notes:'v2.1.50 QBO: ~$0.0094/lb + 43% FSC on weight-cert qty. Dispatch dest CNP / CAL NATURAL is billed here — not the $425 POC blend. 54k lb ≈ $726 all-in; $775 remains the older longer-haul average for Settings/what-if.' },
   '3D Corporate Solutions':              { avgRevenue: 397, fscMethod:'percent', fscPct:33 },
   'Foster Farms':                        { avgRevenue: 562, fscMethod:'percent', fscPct:33,
     notes:'Chicken Meal (Fosters), $18/ton × 24 tons default + 30% FSC. Super hopper #106 lane.' },
   'Harris Ranch':                        { avgRevenue:1100, fscMethod:'flat_included',
     notes:'Long haul from Coalinga, ~300 mi round trip. FSC baked into the rate.' },
-  'Perdue Farms Inc':                    { avgRevenue: 500, fscMethod:'none',
-    notes:'v1.9 (added 2026-08-03): single lane FCGE → Diestel Jamestown, Organic Soy Meal. $500 flat per load, no FSC on invoice. Rate expressed as $/lb adjusted to hit exactly $500 (about $0.0089-0.0092/lb). ~10 loads/month YTD. NOTE: dispatch shows destination DIESTEL — classifyLoad currently maps DIESTEL to POC. That is still the right BUCKET (POC-brokered / steady), but the actual biller is Perdue Farms and the rate is $500 flat. pocLaneRevenue() FCGE→DIESTEL lane returns $500.' },
+  'Perdue Farms Inc':                    { avgRevenue: 500, fscMethod:'none', ratePerLb:0.0075,
+    notes:'v2.1.50 QBO: $0.0075/lb (no separate FSC) on weight-cert qty — PNG/Penny Newman → Associated Feed ORG CORN is the same $15/ton in POC_LANE_RATES. FCGE→Diestel Organic Soy Meal stays $500 flat (invoice backs out $/lb to hit $500). Dispatch DIESTEL still routes through the POC bucket so the flat lane wins; other Perdue labels book qty × $0.0075.' },
   'Integrated Proteins, LLC':            { avgRevenue: 500, fscMethod:'none',
     qboName:'Integrated Proteins, LLC',
     notes:'v1.9 (added 2026-08-03): ARA Stockton → DPF Lathrop/Ripon lanes carrying Lamb Meal, Chicken Meal, Salmon Meal, Fish Meal, Salmon Dried van loads. $500 flat per load, no FSC. **FLAG for James**: these loads look like Diamond direct on the dispatch sheet (PO like 76495-42 matches the Diamond release-series regex, so classifyLoad tags them as Diamond and prices them off the Diamond tier — currently over-stating revenue by ~$22/load vs the $500 actual). If IP volume is material, the classifier needs an IP-specific signature.' },
@@ -1899,6 +1899,11 @@ const CUSTOMER_RATE_DEFAULTS = {
     notes:'v1.9 placeholder — small (<$1K last 90 days). Rate not verified.' },
   'IQI Warehousing USA':                 { avgRevenue: 500, fscMethod:'percent', fscPct:33,
     notes:'v1.9 placeholder — tiny (<$1K last 90 days). Rate not verified.' },
+  'V&A Lagoria':                         { avgRevenue: 648, fscMethod:'none', ratePerLb:0.012,
+    qboName:'V&A Lagoria',
+    notes:'v2.1.50 QBO: $0.012/lb, no FSC line on the sampled invoices. 54k lb ≈ $648. Dispatch dest LAGORIA / V&A / VA LAGORIA maps here so the load is not $500 spot placeholder.' },
+  'French Camp Grain':                   { avgRevenue: 309, fscMethod:'percent', fscPct:43, ratePerLb:0.004,
+    notes:'v2.1.50 QBO: $0.004/lb + 43% FSC. Distinct from POC FCG→Ardent ($0.00425/lb + 43% FSC) — that lane stays on the POC matrix. This card applies when the billed customer/dest is French Camp Grain (not when FCG is only the origin code).' },
 };
 
 /* The rate card's shorthand -> the FSC_METHODS ids the engine computes on.
@@ -1928,6 +1933,7 @@ function defaultCustomerRates(){
                 : null;
     out[name] = {
       revenuePerLoad: Number(c.avgRevenue) > 0 ? Number(c.avgRevenue) : null,
+      ratePerLb: Number(c.ratePerLb) > 0 ? Number(c.ratePerLb) : null,
       fscMethod: method,
       fscValue:  method === 'none' ? null : value,
       fscIncluded: included,
@@ -1973,8 +1979,14 @@ const EXTRA_CUSTOMERS = ['Foster Farms'];
    table. pocLaneRevenue() consults those overrides after this
    constant and before the blended $425 fallback. Do not bake live
    fills into the source.
+
+   v2.1.50: QBO invoices now bill 43% FSC on POC percent-of-linehaul
+   lanes (was 32/33 in the Aug sample). pocLaneRateFor() stamps
+   POC_CURRENT_FSC_PCT onto any matrix rule with fscPct>0 so the
+   table can keep the historical 32/33 notes without under-billing.
    ============================================================= */
-const POC_LANE_RATES_ASOF = '2026-08-14';
+const POC_LANE_RATES_ASOF = '2026-09-14';
+const POC_CURRENT_FSC_PCT = 43; // QBO Sep 2026. Was 27→30→32/33 over the summer.
 const POC_MIN_WEIGHT = 52000;  // Min-weight billing floor seen on Coleman/Victoria/Spinella invoices.
 // v2.0.10 (2026-08-14): FSC flipped 33% → 32% on every lane with confirmed Aug 11-13
 // invoice activity (PN/PNG→PURINA, FCG→PURINA/FARMERS/ARDENT, MERWIN→FCG). Lanes with
@@ -2068,7 +2080,11 @@ function pocLaneRateFor(origin, destination, commodity){
       if(d.indexOf(destKey) >= 0){
         const rule = originMap[destKey];
         if(rule.commodityMatch && !rule.commodityMatch.test(c)) continue;
-        return Object.assign({ origin:o, dest:destKey }, rule);
+        const out = Object.assign({ origin:o, dest:destKey }, rule);
+        /* Percent-FSC lanes follow the current QBO clause. fscPct 0
+           (Perdue ORG CORN, ADM rice, Diestel flat, Pelican) stays 0. */
+        if(Number(out.fscPct)>0) out.fscPct = POC_CURRENT_FSC_PCT;
+        return out;
       }
     }
   }
@@ -2219,6 +2235,11 @@ function laneRateBasisText(lane){
        Barley, Ground Brown Rice:                              $0.00635/lb
 
      FSC (all lanes): $2 per ton (2,000 lb)
+
+   v2.1.50 QBO: some PN invoices are $0.0135/lb + $2/ton (not Ripon/
+   Lathrop). Those dests stay OUT of this matrix so PNG→Purina still
+   prices as POC. Missing-rates prompts; do not flatten every PN load
+   onto $0.0072.
 
    pngLaneRevenue() returns the exact bill for a load — bypasses
    Diamond tier pricing when it matches. Falls through when no match.
@@ -2404,6 +2425,29 @@ const V17_SHIPPED_CUSTOMER_RATES = {
   'American River Ag':      { fscMethod:'none',                 fscValue:null },
 };
 
+/* v1.8 / 2026-08-03 card figures. A save that still matches these (or
+   V17) is a shipped default, not a James edit — take the Sep 2026 card
+   (POC/CNP 43% FSC, new Lagoria/FCG keys). */
+const V18_SHIPPED_CUSTOMER_RATES = {
+  'Diamond Pet Foods':           { fscMethod:'percent_of_linehaul', fscValue:33 },
+  "Phil O'Connell Grain":        { fscMethod:'percent_of_linehaul', fscValue:33 },
+  'Foster Farms':                { fscMethod:'percent_of_linehaul', fscValue:33 },
+  'Penny Newman':                { fscMethod:'per_ton',             fscValue:2  },
+  'California Natural Products': { fscMethod:'percent_of_linehaul', fscValue:33 },
+};
+
+function shippedFscMatches(name, saved){
+  if(!saved) return true;
+  const method = String(saved.fscMethod||'');
+  const value = Number(saved.fscValue==null?-1:saved.fscValue);
+  const candidates = [V17_SHIPPED_CUSTOMER_RATES[name], V18_SHIPPED_CUSTOMER_RATES[name]].filter(Boolean);
+  if(!candidates.length) return true;
+  return candidates.some(function(ship){
+    return method === String(ship.fscMethod||'')
+        && value === Number(ship.fscValue==null?-1:ship.fscValue);
+  });
+}
+
 /* Resolve which FSC rule applies to a customer.
    No override -> settings default (percent_of_linehaul @ 30%). */
 function fscRuleFor(cust){
@@ -2436,6 +2480,105 @@ function fscRuleText(rule){
         : rule.method==='flat' ? money2(rule.value)+' flat'
         : money2(rule.value)+suffix);
 }
+
+/* BEGIN MIXED_RATES */
+/* Dispatch dest / column-G spellings → CUSTOMER_RATE_DEFAULTS keys.
+   CNP used to be swept into Phil O'Connell Grain and then the $425
+   blend; Lagoria and French Camp Grain had no card at all. */
+const CUSTOMER_RATE_ALIASES = {
+  'CNP': 'California Natural Products',
+  'CAL NATURAL': 'California Natural Products',
+  'CAL NATURAL PRODUCTS': 'California Natural Products',
+  'CALIFORNIA NATURAL PRODUCTS': 'California Natural Products',
+  'LAGORIA': 'V&A Lagoria',
+  'V&A LAGORIA': 'V&A Lagoria',
+  'VA LAGORIA': 'V&A Lagoria',
+  'V AND A LAGORIA': 'V&A Lagoria',
+  'V & A LAGORIA': 'V&A Lagoria',
+  'V&A': 'V&A Lagoria',
+  'FRENCH CAMP GRAIN': 'French Camp Grain',
+  'FC GRAIN': 'French Camp Grain',
+  'PERDUE': 'Perdue Farms Inc',
+  'PERDUE FARMS': 'Perdue Farms Inc',
+  'PERDUE FARMS INC': 'Perdue Farms Inc'
+};
+
+function resolveCustomerRateName(raw){
+  if(raw==null || raw==='') return '';
+  const rates = (typeof state!=='undefined' && state && state.customerRates) || {};
+  if(rates[raw]) return raw;
+  const label = (typeof normLabel==='function') ? normLabel(raw) : String(raw).toUpperCase().replace(/\s+/g,' ').trim();
+  if(!label) return '';
+  if(rates[label]) return label;
+  if(CUSTOMER_RATE_ALIASES[label]) return CUSTOMER_RATE_ALIASES[label];
+  const compact = label.replace(/[.'`]/g,'');
+  const aliasKeys = Object.keys(CUSTOMER_RATE_ALIASES);
+  for(let i=0;i<aliasKeys.length;i++){
+    if(aliasKeys[i].replace(/[.'`]/g,'') === compact) return CUSTOMER_RATE_ALIASES[aliasKeys[i]];
+  }
+  const names = Object.keys(rates);
+  for(let i=0;i<names.length;i++){
+    if(((typeof normLabel==='function') ? normLabel(names[i]) : String(names[i]).toUpperCase()) === label)
+      return names[i];
+  }
+  return '';
+}
+
+function billedCustomerNameFor(r){
+  if(!r) return '';
+  const fromTruck = (r.truck && typeof customerLabelFrom==='function') ? customerLabelFrom(r.truck) : (r.truck||'');
+  /* Dest first: a CNP dest that classifyLoad still tagged as POC must
+     not keep the $425 Phil O'Connell blend. */
+  const hints = [r.destLabel, r.destination, fromTruck, r.custLabel, r.customer];
+  for(let i=0;i<hints.length;i++){
+    const n = resolveCustomerRateName(hints[i]);
+    if(n) return n;
+  }
+  return '';
+}
+
+function customerCardLinehaulFsc(name, lbs){
+  const rates = (typeof state!=='undefined' && state && state.customerRates) || {};
+  const card = name && rates[name];
+  const ratePerLb = card ? Number(card.ratePerLb) : 0;
+  if(!(ratePerLb>0)) return null;
+  const w = Number(lbs)>0 ? Number(lbs) : 54000;
+  const linehaul = w * ratePerLb;
+  const method = card.fscMethod || 'none';
+  const value = card.fscValue==null ? 0 : Number(card.fscValue);
+  const fsc = (typeof fscAmount==='function')
+    ? fscAmount(method, value, {linehaul:linehaul, lbs:w, loadedMi:0})
+    : 0;
+  return { amount:linehaul+fsc, linehaul:linehaul, fsc:fsc, ratePerLb:ratePerLb,
+           lbs:w, name:name, fscMethod:method, fscValue:value };
+}
+
+function customerCardRevenueForRow(r){
+  const name = billedCustomerNameFor(r);
+  if(!name) return null;
+  /* Penny Newman and POC book the lane matrices (multiple $/lb on one
+     day). A single card ratePerLb would flatten that mix. */
+  if(name==='Penny Newman' || name==="Phil O'Connell Grain") return null;
+  const priced = customerCardLinehaulFsc(name, r && r.lbs);
+  if(!priced) return null;
+  const fscTxt = priced.fscMethod==='percent_of_linehaul' ? (' + '+priced.fscValue+'% FSC')
+               : priced.fscMethod==='per_ton' ? (' + $'+priced.fscValue+'/ton FSC')
+               : priced.fsc>0 ? ' + FSC'
+               : ' (no FSC)';
+  return { amount:priced.amount, est:false,
+           basis: name+' rate card — $'+priced.ratePerLb.toFixed(5)+'/lb × '
+                + priced.lbs+' lb'+fscTxt };
+}
+
+function qboMixLinehaulFsc(lbs, ratePerLb, fscKind, fscValue){
+  const w = Number(lbs)||0;
+  const linehaul = w * (Number(ratePerLb)||0);
+  let fsc = 0;
+  if(fscKind==='percent') fsc = linehaul * ((Number(fscValue)||0)/100);
+  else if(fscKind==='per_ton') fsc = (w/2000) * (Number(fscValue)||0);
+  return linehaul + fsc;
+}
+/* END MIXED_RATES */
 
 /* Baseline $/hr per customer.
    Derived, not pulled: built from the verified rate card against a typical
@@ -2684,6 +2827,9 @@ function pocDestHint(r){
   return String(dest||'').trim();
 }
 function revenueForRow(r){
+  /* Each row is priced on its own. Completing / editing one load never
+     writes Settings.ratePerLb or copies that load's rate onto siblings.
+     Mixed-day books = sum of these independent amounts. */
   const ov = Number(r && r.revenueOverride)||0;
   if(ov>0) return { amount:ov, est:false, basis:'row override' };
   const T = state.rateTable || defaultRateTable();
@@ -2710,8 +2856,9 @@ function revenueForRow(r){
      inferred from the Truck cell (ARDENT / PURINA / FARMERS) — that is
      where POC dest lives on the sheet. Never use custLabel "Phil O'Connell
      Grain" as the dest key; that misses the lane matrix and falls through
-     to the $425 blend. Falls through to the POC customer avgRevenue when no
-     lane matches. */
+     to the $425 blend. v2.1.50: a dest that maps to another billed
+     customer (CNP, Lagoria, FCG, Perdue) uses that card after a lane miss
+     instead of flattening the day onto the POC average. */
   const rowBucket = (r && r.bucket) || '';
   const isPocRow = r && rowBucket !== 'diamond' && (
        r.customer === "Phil O'Connell Grain"
@@ -2725,6 +2872,8 @@ function revenueForRow(r){
        fall through to the blended average. */
     const lane = pocLaneRevenue(r.origin, dest, r.lbs, r.commodity);
     if(lane) return { amount: lane.amount, est:false, basis: laneRateBasisText(lane) };
+    const destCard = customerCardRevenueForRow(r);
+    if(destCard) return destCard;
     // No lane match: fall through to POC customer avgRevenue.
     const custRev = revenuePerLoad("Phil O'Connell Grain");
     if(custRev > 0) return { amount: custRev, est:true,
@@ -2750,6 +2899,8 @@ function revenueForRow(r){
     const ovLane = applyLaneRateRule(ovRule, r.lbs);
     if(ovLane) return { amount: ovLane.amount, est:false, basis: laneRateBasisText(ovLane) };
   }
+  const card = customerCardRevenueForRow(r);
+  if(card) return card;
   return { amount: br>0?br:placeholder, est:true,
            basis: bucketMeta(b).label+' placeholder — no verified rate yet' };
 }
@@ -2818,7 +2969,7 @@ function inSeasonWindow(iso){
    2026 log; the counts in the comments are that year's load volume. */
 function defaultCustomerLabels(){
   return {
-    steady:   ['PURINA','CARGILL','FARMERS','DIESTEL','CNP'],              // 203/35/179/84/121
+    steady:   ['PURINA','CARGILL','FARMERS','DIESTEL','CNP','CAL NATURAL','CAL NATURAL PRODUCTS','LAGORIA','V&A LAGORIA','VA LAGORIA','FRENCH CAMP GRAIN'],              // 203/35/179/84/121
     seasonal: ['POC','HUNT BEHRENS','POST BRANDS'],                        // 5/3/3
     spot:     ['PERF. PET','PERFECTION PET','LOCKWOOD'],                   // 18/2/1
   };
@@ -2997,11 +3148,12 @@ function labelBucket(label){
   return '';
 }
 
-/* v1.8.2: POC (Phil O'Connell Grain) brokers freight through FCT to a rotating
-   set of destinations. On the dispatch sheet these show up with non-Diamond
-   customer/destination labels. Map those to POC so the rate card applies. */
+/* v2.1.50: CNP / CAL NATURAL are California Natural Products invoices
+   (~$0.0094/lb + 43% FSC), not Phil O'Connell. Leaving them on
+   POC_DESTINATIONS used to classify every CNP dest as POC and then
+   the $425 blend. */
 const POC_DESTINATIONS = [
-  'DIESTEL', 'CNP', 'CAL NATURAL', 'CAL NATURAL PRODUCTS',
+  'DIESTEL',
   'IWP SELMA', 'IWP', 'SELMA',
   'PLEASANT GROVE', 'SUNWEST', 'CF&R', 'CFR',
   'FCGE',  // FCGE-origin outbound loads billed to POC
@@ -3753,12 +3905,7 @@ function reconcileCustomerRateCard(merged, savedRates){
        absent from the shipped defaults for exactly that reason. */
     if(saved && String(saved.rateCardApplied||'') === CUSTOMER_RATES_ASOF) return;
 
-    const ship  = V17_SHIPPED_CUSTOMER_RATES[name] || null;
-
-    const untouched = !saved
-      || !ship
-      || (String(saved.fscMethod||'') === String(ship.fscMethod||'')
-          && Number(saved.fscValue==null?-1:saved.fscValue) === Number(ship.fscValue==null?-1:ship.fscValue));
+    const untouched = !saved || shippedFscMatches(name, saved);
 
     if(untouched){
       cur.fscMethod = nu.fscMethod;
@@ -3772,6 +3919,8 @@ function reconcileCustomerRateCard(merged, savedRates){
     // Revenue: land the card figure only where the operator has no opinion.
     const hasOwnRev = saved && saved.revenuePerLoad!=null && Number(saved.revenuePerLoad)>0;
     if(!hasOwnRev) cur.revenuePerLoad = nu.revenuePerLoad;
+    const hasOwnLb = saved && saved.ratePerLb!=null && Number(saved.ratePerLb)>0;
+    if(!hasOwnLb) cur.ratePerLb = nu.ratePerLb;
 
     cur.fscIncluded = nu.fscIncluded;
     cur.verified    = true;
@@ -13441,16 +13590,18 @@ function renderInfo(){
     h += '<div class="card" id="infoRates"><h2>Rate cards '
       + '<span style="font-size:10px;color:var(--green);text-transform:none;letter-spacing:0">✓ '
       + esc(CUSTOMER_RATES_SOURCE)+', '+esc(CUSTOMER_RATES_ASOF)+'</span></h2>'
-      + '<div class="hint" style="margin-bottom:12px">Average revenue per load and the fuel-surcharge rule, per '
-      + 'customer. Both are editable — an edit here is an override and survives the next rate refresh. '
-      + 'Revenue drives the per-customer baseline and the what-if calculator; it does not re-price the dispatch '
-      + 'sheet, which books off the lane rate table.</div>';
+      + '<div class="hint" style="margin-bottom:12px">Per-customer $/lb + FSC (percent of linehaul or $/ton). '
+      + 'Dispatch and P&amp;L book each load on its own lane or this card — mixed rates on one day add up; '
+      + 'completing a load does not copy one rate onto the others. Avg $/load is Settings/what-if only. '
+      + 'Penny Newman and Phil O\'Connell still use their lane matrices (several $/lb on the same day). '
+      + 'A missing lane still prompts on Today.</div>';
 
     const names = Object.keys(CUSTOMER_RATE_DEFAULTS);
     names.forEach((name,i)=>{
       const cr   = (state.customerRates && state.customerRates[name]) || {};
       const card = CUSTOMER_RATE_DEFAULTS[name];
       const rev  = cr.revenuePerLoad != null ? cr.revenuePerLoad : '';
+      const lb   = cr.ratePerLb != null ? cr.ratePerLb : '';
       const meth = cr.fscMethod || 'percent_of_linehaul';
       const unit = fscMethodUnit(meth);
       const note = ci.rateNotes[name] || '';
@@ -13461,12 +13612,15 @@ function renderInfo(){
             ? '<span class="info-alt" title="How this customer is spelled on the QBO invoice">'+esc(cr.qboName)+'</span>' : '')
         + '</div>'
         + '<div class="fld fld2" style="margin-bottom:6px">'
+        + '<div><label for="ilb'+i+'">$ / lb (invoice)</label>'
+        + '<input id="ilb'+i+'" type="number" inputmode="decimal" step="0.0001" data-inforate="'+esc(name)+'" '
+        + 'value="'+esc(lb)+'" placeholder="'+(card.ratePerLb!=null?esc(card.ratePerLb):'lane matrix')+'"></div>'
         + '<div><label for="ir'+i+'">Avg revenue / load</label>'
         + '<input id="ir'+i+'" type="number" inputmode="decimal" step="1" data-inforev="'+esc(name)+'" '
         + 'value="'+esc(rev)+'" placeholder="'+esc(card.avgRevenue)+'"></div>'
-        + '<div><label for="im'+i+'">FSC method</label>'
-        + '<select id="im'+i+'" data-infofscm="'+esc(name)+'">'+fscMethodOptions(meth)+'</select></div>'
-        + '</div>';
+        + '</div>'
+        + '<div class="fld" style="margin-bottom:6px"><label for="im'+i+'">FSC method</label>'
+        + '<select id="im'+i+'" data-infofscm="'+esc(name)+'">'+fscMethodOptions(meth)+'</select></div>';
       if(meth !== 'none'){
         h += '<div class="fld"><label for="iv'+i+'">FSC rate ('+esc(unit)+')</label>'
           + '<input id="iv'+i+'" type="number" inputmode="decimal" step="0.5" data-infofsc="'+esc(name)+'" '
@@ -13688,6 +13842,19 @@ function renderInfo(){
   /* --- wiring --- */
   const touch = ()=>{ state.companyInfo.editedAt = isoLocal(new Date()); };
 
+  document.querySelectorAll('#p-info [data-inforate]').forEach(el=>el.addEventListener('change',()=>{
+    const name = el.dataset.inforate, raw = el.value.trim();
+    const cr = state.customerRates[name] || (state.customerRates[name] = {});
+    if(raw === ''){
+      const d = defaultCustomerRates()[name];
+      cr.ratePerLb = d && d.ratePerLb != null ? d.ratePerLb : null;
+    } else {
+      const v = parseFloat(raw);
+      if(isNaN(v) || v < 0){ toast('Enter a $/lb of zero or more'); renderInfo(); return; }
+      cr.ratePerLb = v;
+    }
+    touch(); save(); renderInfo(); renderSet(); renderDash(); renderCalc();
+  }));
   document.querySelectorAll('#p-info [data-inforev]').forEach(el=>el.addEventListener('change',()=>{
     const name = el.dataset.inforev, raw = el.value.trim();
     const cr = state.customerRates[name] || (state.customerRates[name] = {});
@@ -15373,6 +15540,11 @@ SHADOW_TIMELINE_TEXT['2026-07-28'] = "**PARTIAL DAY — Phase 2 diff loop stoppe
 
 /* ---- v2.0 DATA: Changelog (in-app version history) ---- */
 const SHADOW_CHANGELOG = [
+  { ver:'v2.1.50-qbo-mixed-rates', date:'2026-09-14', changes:[
+    'QBO invoice mix: each load keeps its own $/lb + FSC. Completing a load does not write a global rate onto the rest of the day. Day / P&L revenue is still sum(qty × that load\'s rate [+ FSC])',
+    'Rate cards: V&A Lagoria $0.012/lb (no FSC); French Camp Grain $0.004/lb + 43% FSC; California Natural Products ~$0.0094/lb + 43% FSC (CNP dest no longer swallowed by the $425 POC blend); Perdue $0.0075/lb; Penny Newman still PNG lanes ($0.0072 typical + $2/ton; $0.0135 other dests prompt missing-rates); Phil O\'Connell lane matrix $0.00425–$0.0125 with FSC 43% (was 32/33)',
+    'Missing-rates card unchanged — lanes with no matrix and no customer $/lb still prompt. Diesel is still only what James types; no Device-out-of-sync bar, no $4.50 canonical overwrite'
+  ]},
   { ver:'v2.1.47-no-fuel-bar', date:'2026-08-27', changes:[
     'James on live v2.1.46: "The fuel out of sync red bar is still there, I need it gone for good." Deleted the Device-out-of-sync red bar and tap-to-pull overlay entirely (not just skip fuelPrice). Deleted diesel-default nags (never confirmed, shipped $4.50, DEFAULT chips). Canonical GET never writes currentDieselPricePerGal. Diesel is only the Settings number on this device. Stored local price left alone. Driver+bill books, EST hold, Twilio/SMS, PR #11, Excel ingest, Queue unchanged'
   ]},
