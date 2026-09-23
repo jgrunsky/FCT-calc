@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node src/canonical-settings.test.mjs",
+    "test": "node src/canonical-settings.test.mjs && node src/asset-gps.test.mjs",
     "deploy": "wrangler deploy"
   }
 }

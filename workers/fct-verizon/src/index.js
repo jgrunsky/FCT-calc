@@ -7,6 +7,18 @@
  * Keep /latest, /miles, /signals, /calibration, /dispatch-log, /health.
  */
 import { handleCanonicalSettingsRequest } from "./canonical-settings.js";
+import {
+  classifyFleetAsset,
+  countsTowardTruckMiles,
+  judgeLocationResponse,
+  pathLocationCandidates,
+  pickBulkLocationItem,
+  slashLocationCandidates,
+  summarizeAssets,
+  unwrapBulkLocationItem
+} from "./asset-gps.js";
+
+var WORKER_VERSION = "v0.15-trailer-gps-2026-09-23";
 
 var __defProp = Object.defineProperty;
 var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
@@ -168,7 +180,7 @@ var index_default = {
       if (url.pathname === "/") {
         return json({
           service: "fct-verizon",
-          version: "v0.14-canonical-settings-qbo-defaults-2026-08-24",
+          version: WORKER_VERSION,
           endpoints: ["/health", "/latest", "/miles", "/miles-real", "/miles-today", "/miles-yesterday", "/miles/range", "/signals", "/calibration", "/canonical-settings (GET+POST/PUT)", "/dispatch-log (POST)", "/debug/auth", "/debug/token", "/debug/refresh", "/debug/miles-probe", "/debug/calibration-inputs"]
         });
       }
@@ -300,12 +312,13 @@ async function refreshSnapshot(env) {
   for (let i = 0; i < vehicleList.length; i += batchSize) {
     const batch = vehicleList.slice(i, i + batchSize);
     const settled = await Promise.allSettled(batch.map(async (v) => {
+      const assetClass = classifyFleetAsset(v);
       const asgNum = v.VehicleNumber || v.Name;
-      const locNum = v.Name || v.VehicleNumber;
-      if (!asgNum) return { ...v, _location: null, _assignment: null, _driverName: null };
-      const [loc, asg] = await Promise.all([
-        callApi(env, tok.token, `/rad/v1/vehicles/${encodeURIComponent(locNum)}/location`),
-        callApi(env, tok.token, `/da/v1/driverassignments/vehicles/${encodeURIComponent(asgNum)}/currentassignment`)
+      const [resolved, asg] = await Promise.all([
+        resolveVehicleLocation(env, tok.token, v),
+        asgNum
+          ? callApi(env, tok.token, `/da/v1/driverassignments/vehicles/${encodeURIComponent(asgNum)}/currentassignment`)
+          : Promise.resolve({ ok: false, status: 0, data: null, raw: "" })
       ]);
       let driverName = null, asgStart = null;
       if (asg.ok && asg.data) {
@@ -320,8 +333,12 @@ async function refreshSnapshot(env) {
       }
       return {
         ...v,
-        _location: loc.ok ? loc.data : null,
-        _locStatus: loc.status,
+        _assetClass: assetClass,
+        _location: resolved.gps === "live" ? resolved.location : null,
+        _locStatus: resolved.status,
+        _locKey: resolved.key,
+        _locVia: resolved.via,
+        _gps: resolved.gps,
         _assignment: asg.ok ? asg.data : null,
         _asgStatus: asg.status,
         _asgRaw: asg.status === 404 ? String(asg.raw || "").slice(0, 200) : null,
@@ -329,12 +346,20 @@ async function refreshSnapshot(env) {
         _driverAssignmentStart: asgStart
       };
     }));
-    const results = settled.map((s, idx) => s.status === "fulfilled" ? s.value : { ...batch[idx], _location: null, _driverName: null, _enrichmentError: String(s.reason && s.reason.message || s.reason) });
+    const results = settled.map((s, idx) => s.status === "fulfilled" ? s.value : {
+      ...batch[idx],
+      _assetClass: classifyFleetAsset(batch[idx]),
+      _location: null,
+      _gps: "unlocated",
+      _driverName: null,
+      _enrichmentError: String(s.reason && s.reason.message || s.reason)
+    });
     enriched.push(...results);
     try {
       await env.FCT_VERIZON.put(KV_KEY_LATEST, JSON.stringify({
         ingestedAt: started,
-        workerVersion: "v0.11-calibration-2026-08-21",
+        workerVersion: WORKER_VERSION,
+        assetSummary: summarizeAssets(enriched),
         vehicleCount: vehicleList.length,
         driverCount: Array.isArray(drivers.data) ? drivers.data.length : 0,
         vehiclesEnrichedWithDriverName: enriched.filter((v) => v._driverName).length,
@@ -353,6 +378,7 @@ async function refreshSnapshot(env) {
     const newSignals = [];
     const nowIsoStr = nowIso();
     enriched.forEach((v) => {
+      if (!countsTowardTruckMiles(v)) return;
       const truckId = String(v.Name || v.VehicleNumber || "");
       if (!truckId || !v._location) return;
       const loc = v._location;
@@ -400,6 +426,7 @@ async function refreshSnapshot(env) {
     const milesToday = milesRaw ? JSON.parse(milesRaw) : {};
     const nowMs = Date.now();
     for (const v of enriched) {
+      if (!countsTowardTruckMiles(v)) continue;
       const tid = String(v.Name || v.VehicleNumber || "");
       if (!tid || !v._location) continue;
       const loc = v._location;
@@ -420,7 +447,8 @@ async function refreshSnapshot(env) {
   }
   const snapshot = {
     ingestedAt: started,
-    workerVersion: "v0.9.1-reset-day-2026-08-21",
+    workerVersion: WORKER_VERSION,
+    assetSummary: summarizeAssets(enriched),
     vehicleCount: Array.isArray(vehicles.data) ? vehicles.data.length : 0,
     driverCount: Array.isArray(drivers.data) ? drivers.data.length : 0,
     vehiclesEnrichedWithDriverName: enriched.filter((v) => v._driverName).length,
@@ -745,15 +773,45 @@ async function getToken(env, force = false) {
   return { ok: true, status: res.status, token, raw: token.slice(0, 40) + "\u2026" };
 }
 __name(getToken, "getToken");
-async function callApi(env, token, path) {
+async function resolveVehicleLocation(env, token, vehicle) {
+  let lastStatus = null;
+  for (const key of pathLocationCandidates(vehicle)) {
+    const loc = await callApi(env, token, `/rad/v1/vehicles/${encodeURIComponent(key)}/location`);
+    lastStatus = loc.status;
+    const judged = judgeLocationResponse(loc.status, loc.data);
+    if (judged.done) return { ...judged, key, via: "get" };
+  }
+  for (const key of slashLocationCandidates(vehicle)) {
+    const posted = await callApi(env, token, "/rad/v1/vehicles/locations", {
+      method: "POST",
+      body: [key]
+    });
+    lastStatus = posted.status;
+    if (!posted.ok || !posted.data) continue;
+    const item = pickBulkLocationItem(posted.data, key);
+    if (!item) continue;
+    const unwrapped = unwrapBulkLocationItem(item);
+    const itemStatus = unwrapped.status != null ? unwrapped.status : posted.status;
+    lastStatus = itemStatus;
+    const judged = judgeLocationResponse(itemStatus, unwrapped.data);
+    if (judged.done) return { ...judged, key, via: "post" };
+  }
+  return { done: true, gps: "unlocated", location: null, status: lastStatus || 404, key: null, via: null };
+}
+__name(resolveVehicleLocation, "resolveVehicleLocation");
+async function callApi(env, token, path, opts) {
+  const method = opts && opts.method || "GET";
   const authHeader = `Atmosphere atmosphere_app_id=${env.VERIZON_APP_ID}, Bearer ${token}`;
-  const res = await fetch(`${BASE}${path}`, {
-    method: "GET",
-    headers: {
-      Authorization: authHeader,
-      Accept: "application/json"
-    }
-  });
+  const headers = {
+    Authorization: authHeader,
+    Accept: "application/json"
+  };
+  const init = { method, headers };
+  if (opts && opts.body != null) {
+    headers["Content-Type"] = "application/json";
+    init.body = JSON.stringify(opts.body);
+  }
+  const res = await fetch(`${BASE}${path}`, init);
   const bodyText = await res.text();
   let data = null;
   try {
