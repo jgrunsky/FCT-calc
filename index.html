@@ -8,12 +8,12 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" >
 <meta name="apple-mobile-web-app-title" content="FCT Calc" >
 <!-- Cache-busting so iOS Home Screen / PWA pulls the latest build on next open.
-     Token: 2026-09-14-fct-calc-v2.1.50-qbo-mixed-rates — bump with APP_VERSION.
+     Token: 2026-09-23-fct-calc-v2.1.51-trailer-gps — bump with APP_VERSION.
      2026-09-07 restore: Pages production = PR #16 tree (not day-pick-fix). -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<meta name="app-version" content="2026-09-14-fct-calc-v2.1.50-qbo-mixed-rates">
+<meta name="app-version" content="2026-09-23-fct-calc-v2.1.51-trailer-gps">
 <title data-id="th-modified">FCT Load Profitability — French Camp Transport</title>
 <link rel="manifest" href='data:application/manifest+json,{"name":"FCT Load Profitability","short_name":"FCT Calc","start_url":".","display":"standalone","background_color":"%2312100e","theme_color":"%2312100e","icons":[{"src":"data:image/svg%2Bxml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 192 192%27%3E%3Crect width=%27192%27 height=%27192%27 fill=%27%2312100e%27/%3E%3Ctext x=%2796%27 y=%27124%27 font-size=%2772%27 font-family=%27sans-serif%27 font-weight=%27700%27 fill=%27%238fb590%27 text-anchor=%27middle%27%3EFCT%3C/text%3E%3C/svg%3E","sizes":"192x192","type":"image/svg+xml"}]}'>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -953,6 +953,9 @@
     padding:12px 0 0;
     margin-top:4px;
   }
+  /* Trailer GPS pins. Leaflet's default div-icon is a white bordered box;
+     this class replaces it so the square reads as the pin itself. */
+  .fct-trl-pin{background:transparent;border:none}
 </style>
 <meta property="og:title" content="FCT Load Profitability — French Camp Transport" data-id="th-modified" ><meta name="description" content="index" data-id="th-modified" ><meta property="og:description" content="index" data-id="th-modified" ><meta property="og:image" content="https://tiiny.host/assets/logo-purple-bg.png" data-id="th-modified" ><meta property="og:image:width" content="1501" data-id="th-modified" ><meta property="og:image:height" content="1501" data-id="th-modified" ><meta property="og:image:type" content="image/png" data-id="th-modified" ><meta property="og:url" content="https://fct-calc-jax.tiiny.site/" data-id="th-modified" ><meta property="og:type" content="website" data-id="th-modified" ><script defer data-domain="fct-calc-jax.tiiny.site" src="https://analytics.tiiny.net/js/plausible.js"></script></head>
 <body>
@@ -1422,7 +1425,7 @@
    still exposes the Import JSON box for future refreshes.
    ============================================================= */
 
-const APP_VERSION = '2026-09-14-fct-calc-v2.1.50-qbo-mixed-rates';
+const APP_VERSION = '2026-09-23-fct-calc-v2.1.51-trailer-gps';
 const STORAGE_KEY = 'fct-calc:state';
 const IDB_NAME = 'fct-calc-db';
 const IDB_STORE = 'kv';
@@ -6120,6 +6123,28 @@ function originHistoryFor(name){ return DRIVER_ORIGIN_HISTORY[shortNameFor(name)
    each driver's real-time status. Returns null if the driver isn't matched to a
    truck in Verizon (either not assigned, or one of the 10 unlinked trucks).
    Match strategy: exact case-insensitive, then first-name + last-initial. */
+/* FLEET_ASSET_CLASSIFY_START */
+function classifyFleetAsset(v){
+  const stamped = v && v._assetClass;
+  if(stamped === "truck" || stamped === "trailer" || stamped === "pending") return stamped;
+  const name = String((v && v.Name) || "").trim();
+  const num = v && v.VehicleNumber != null ? String(v.VehicleNumber).trim() : "";
+  const reg = String((v && v.RegistrationNumber) || "").trim();
+  const make = String((v && v.Make) || "").trim();
+  if(/^\d{6,}_20\d{6}T\d{2}:\d{2}:\d{2}$/.test(name)) return "pending";
+  if(/\b(van|flat|trailer|hopper)\b/i.test(name)) return "trailer";
+  if(/^\d+\s*\/\s*\d+$/.test(name) || /^\d+\s*\/\s*\d+$/.test(num)) return "trailer";
+  if(/^not\s*available/i.test(reg)) return "trailer";
+  if(make) return "truck";
+  if(/^\d{1,2}$/.test(name) && (!num || num === name)) return "truck";
+  return "trailer";
+}
+/* FLEET_ASSET_CLASSIFY_END */
+function fleetHasGps(v){
+  const loc = v && v._location;
+  return !!(loc && typeof loc.Latitude === "number" && typeof loc.Longitude === "number");
+}
+
 function verizonDriverStatus(fctName){
   const vl = state.verizonLive;
   if(!vl || !vl.vehicles || !vl.vehicles.length) return null;
@@ -6142,6 +6167,7 @@ function verizonDriverStatus(fctName){
     return vf === targetFirst && vl2[0] === targetLastInit;
   };
   const match = vl.vehicles.find(v => {
+    if(classifyFleetAsset(v) !== "truck") return false;
     const tid = String(v.Name || v.VehicleNumber || '');
     const overrideName = overrides[tid] && overrides[tid].name;
     if(overrideName && nameMatchesTruckDriver(overrideName)) return true;
@@ -12458,7 +12484,10 @@ function renderVerizonLiveTile(){
   if(!vl || (!vl.vehicles.length && !vl.drivers.length && !vl.lastError)){
     return '<div class="banner amber" style="margin-bottom:12px"><b>📡 Verizon Live — waiting for first sync</b>Feed is on. Data flows every 10 minutes from fct-verizon.workers.dev/latest.</div>';
   }
-  const nv = vl.vehicles.length, nd = vl.drivers.length;
+  const trucks = vl.vehicles.filter(v => classifyFleetAsset(v) === "truck");
+  const trailers = vl.vehicles.filter(v => classifyFleetAsset(v) === "trailer");
+  const pendingN = vl.vehicles.filter(v => classifyFleetAsset(v) === "pending").length;
+  const nd = vl.drivers.length;
   const stampMs = vl.lastSync ? Date.parse(vl.lastSync) : 0;
   const ageSec = stampMs ? Math.floor((Date.now()-stampMs)/1000) : null;
   const ageLabel = ageSec == null ? 'never' :
@@ -12466,16 +12495,20 @@ function renderVerizonLiveTile(){
     ageSec < 3600 ? Math.floor(ageSec/60)+'m ago' :
     Math.floor(ageSec/3600)+'h ago';
   const err = vl.lastError ? `<div class="hint" style="color:var(--red)">Last sync error: ${esc(vl.lastError)}</div>` : '';
-  const moving = vl.vehicles.filter(v => v._location && v._location.Speed > 0).length;
-  const stopped = vl.vehicles.filter(v => v._location && v._location.DisplayState === 'Stop').length;
-  const atHome = vl.vehicles.filter(v => v._location && /home terminal/i.test(String(v._location.GeoFenceName||''))).length;
+  const moving = trucks.filter(v => v._location && v._location.Speed > 0).length;
+  const stopped = trucks.filter(v => v._location && v._location.DisplayState === 'Stop').length;
+  const atHome = trucks.filter(v => v._location && /home terminal/i.test(String(v._location.GeoFenceName||''))).length;
+  const trailerOnMap = trailers.filter(fleetHasGps).length;
   return `
     <div class="card" style="background:var(--green-bg);border:1px solid color-mix(in oklab,var(--green) 40%,transparent);border-radius:8px;padding:12px 14px;margin-bottom:12px">
       <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
         <div>
-          <b style="color:var(--green);font-family:var(--display);font-size:15px">📡 Verizon Live · ${nv} vehicles · ${nd} drivers</b>
+          <b style="color:var(--green);font-family:var(--display);font-size:15px">📡 Verizon Live · ${trucks.length} trucks · ${trailers.length} trailers</b>
           <div class="hint" style="margin-top:2px">
-            ${atHome} at yard · ${stopped-atHome} stopped in field · ${moving} moving · updated ${ageLabel}
+            ${atHome} trucks at yard · ${stopped-atHome} stopped in field · ${moving} moving · ${nd} drivers
+            · ${trailerOnMap} trailer${trailerOnMap===1?'':'s'} on map · ${trailers.length-trailerOnMap} no GPS yet
+            ${pendingN ? ' · '+pendingN+' trackers not named yet' : ''}
+            · updated ${ageLabel}
           </div>
         </div>
         <button class="btn btn-sm" onclick="switchTab('fleet')" style="background:transparent;color:var(--green);border:1px solid color-mix(in oklab,var(--green) 40%,transparent);padding:6px 12px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap">🗺️ View Fleet →</button>
@@ -12554,8 +12587,54 @@ function renderDispatchSignalsPanel(){
     </div>`;
 }
 
+/* Trailer / unassigned-tracker rows. Trucks keep the driver + ready row above.
+   Assets with no coordinates stay visible as "no GPS yet". */
+function fleetAssetRows(list){
+  const nowT = Date.now();
+  return (list || []).map(v => {
+    const loc = v._location || {};
+    const has = fleetHasGps(v);
+    const name = String(v.Name || v.VehicleNumber || "trailer");
+    const num = v.VehicleNumber != null ? String(v.VehicleNumber) : "";
+    const numNote = num && num !== name ? " · #" + num : "";
+    const kind = classifyFleetAsset(v) === "pending" ? "tracker" : "trailer";
+    const addr = has
+      ? ((loc.Address && loc.Address.AddressLine1) || loc.GeoFenceName || "")
+      : "";
+    const gpsMs = has && loc.UpdateUTC ? Date.parse(loc.UpdateUTC + "Z") : 0;
+    const ageMin = gpsMs ? Math.floor((nowT - gpsMs) / 60000) : Infinity;
+    const ageLabel = !has ? "no GPS yet"
+      : ageMin === Infinity ? "no GPS yet"
+      : ageMin < 60 ? ageMin + " min ago"
+      : ageMin < 60 * 24 ? Math.floor(ageMin / 60) + "h ago"
+      : Math.floor(ageMin / 60 / 24) + "d ago";
+    const isMoving = has && loc.Speed > 0;
+    const isHome = has && /home terminal/i.test(String(loc.GeoFenceName || ""));
+    const stateBadge = !has
+      ? `<span style="color:var(--amber);font-weight:600;font-size:11px;text-transform:uppercase">no GPS yet</span>`
+      : isMoving
+        ? `<span style="color:#7dd3fc;font-weight:600;font-size:11px;text-transform:uppercase">▶ ${Math.round(loc.Speed)} mph ${esc(loc.Heading||"")}</span>`
+        : (isHome
+          ? `<span style="color:var(--text-muted);font-size:11px;text-transform:uppercase">⌂ yard</span>`
+          : `<span style="color:#c4b5fd;font-size:11px;text-transform:uppercase">■ stopped</span>`);
+    const rank = !has ? 2 : (ageMin > 240 ? 1 : 0);
+    return { rank, html: `
+      <div style="display:grid;grid-template-columns:minmax(88px,140px) 1fr auto;gap:10px;align-items:center;padding:10px 4px;border-bottom:1px solid var(--border);${!has || ageMin > 240 ? "opacity:0.85" : ""}">
+        <div>
+          <div style="font-weight:700;font-size:14px">${esc(name)}</div>
+          <div style="font-size:11px;color:#a78bfa">${esc(kind)}${esc(numNote)}</div>
+        </div>
+        <div>
+          <div style="font-size:12px;color:var(--text-muted)">${has ? esc(addr) : "no GPS yet"}</div>
+          <div style="font-size:11px;color:${has ? "var(--text-faint)" : "var(--amber)"};margin-top:2px">${has ? "GPS " + esc(ageLabel) : "Verizon has this " + esc(kind) + " on the account. A pin shows up once the tracker reports."}</div>
+        </div>
+        <div style="text-align:right">${stateBadge}</div>
+      </div>` };
+  }).sort((a, b) => a.rank - b.rank).map(r => r.html).join("");
+}
+
 /* 2026-08-18 v2.1.2: full Fleet tab — big map on top, full truck+driver list
-   below. Own page so Today stays clean. */
+   below. Own page so Today stays clean. Trailers are a separate list. */
 function renderFleet(){
   const host = document.getElementById('p-fleet');
   if(!host) return;
@@ -12564,22 +12643,26 @@ function renderFleet(){
     host.innerHTML = `<div class="banner amber" style="margin:16px"><b>📡 Verizon Live — waiting for first sync</b>Feed is on. Data flows every 10 minutes from fct-verizon.workers.dev/latest.</div>`;
     return;
   }
-  const nv = vl.vehicles.length, nd = vl.drivers.length;
+  const trucks = vl.vehicles.filter(v => classifyFleetAsset(v) === "truck");
+  const trailers = vl.vehicles.filter(v => classifyFleetAsset(v) === "trailer");
+  const pending = vl.vehicles.filter(v => classifyFleetAsset(v) === "pending");
+  const nv = trucks.length, nd = vl.drivers.length;
   const stampMs = vl.lastSync ? Date.parse(vl.lastSync) : 0;
   const ageSec = stampMs ? Math.floor((Date.now()-stampMs)/1000) : null;
   const ageLabel = ageSec == null ? 'never' :
     ageSec < 60 ? ageSec+'s ago' :
     ageSec < 3600 ? Math.floor(ageSec/60)+'m ago' :
     Math.floor(ageSec/3600)+'h ago';
-  const moving = vl.vehicles.filter(v => v._location && v._location.Speed > 0).length;
-  const stopped = vl.vehicles.filter(v => v._location && v._location.DisplayState === 'Stop').length;
-  const atHome = vl.vehicles.filter(v => v._location && /home terminal/i.test(String(v._location.GeoFenceName||''))).length;
+  const moving = trucks.filter(v => v._location && v._location.Speed > 0).length;
+  const stopped = trucks.filter(v => v._location && v._location.DisplayState === 'Stop').length;
+  const atHome = trucks.filter(v => v._location && /home terminal/i.test(String(v._location.GeoFenceName||''))).length;
+  const trailerOnMap = trailers.filter(fleetHasGps).length;
 
   // Full truck list rows, sorted: fresh + moving first, then fresh + stopped-out,
   // then fresh + home, then stale, then no-location.
   const nowT = Date.now();
   const readyOv = vl.readyOverrides || {};
-  const rows = vl.vehicles.map(v => {
+  const rows = trucks.map(v => {
     const loc = v._location || {};
     const addr = (loc.Address && loc.Address.AddressLine1) || loc.GeoFenceName || '(no location)';
     const isMoving = loc.Speed > 0;
@@ -12673,16 +12756,33 @@ function renderFleet(){
         <div>
           <b style="color:var(--green);font-family:var(--display);font-size:17px">📡 Live Fleet</b>
           <div class="hint" style="margin-top:2px">
-            ${nv} vehicles · ${nd} drivers · ${atHome} at yard · ${stopped-atHome} stopped in field · ${moving} moving · updated ${ageLabel}
+            ${nv} trucks · ${nd} drivers · ${atHome} at yard · ${stopped-atHome} stopped in field · ${moving} moving
+            · ${trailers.length} trailers · ${trailerOnMap} on map · ${trailers.length-trailerOnMap} no GPS yet
+            ${pending.length ? ' · '+pending.length+' trackers not named yet' : ''}
+            · updated ${ageLabel}
           </div>
         </div>
         <button class="btn btn-sm" onclick="syncFromVerizon({force:true}).then(()=>renderFleet())" style="background:transparent;color:var(--green);border:1px solid color-mix(in oklab,var(--green) 40%,transparent);padding:6px 12px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">🔄 Refresh</button>
       </div>
+      <div style="display:flex;gap:14px;font-size:11px;color:var(--text-muted);margin:0 0 8px">
+        <span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#4ade80;vertical-align:-1px;margin-right:4px"></span>Truck</span>
+        <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#a78bfa;vertical-align:-1px;margin-right:4px"></span>Trailer</span>
+      </div>
       <div id="fleetMapContainer" style="height:52vh;min-height:340px;border-radius:8px;overflow:hidden;border:1px solid var(--border);margin-bottom:16px"></div>
       <div class="card" style="padding:8px 12px">
-        <div style="font-size:12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;padding:6px 4px 10px">All trucks (${nv})</div>
+        <div style="font-size:12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;padding:6px 4px 10px">Trucks (${nv})</div>
         ${rows || '<div class="hint">No trucks in feed.</div>'}
       </div>
+      <div class="card" style="padding:8px 12px;margin-top:12px">
+        <div style="font-size:12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;padding:6px 4px 10px">Trailers (${trailers.length})</div>
+        <div class="hint" style="padding:0 4px 8px">Named trailers stay listed when Verizon has not reported a fix yet. A square pin is drawn only after a location comes back.</div>
+        ${fleetAssetRows(trailers) || '<div class="hint">No named trailers in the feed.</div>'}
+      </div>
+      ${pending.length ? `<details class="card" style="padding:8px 12px;margin-top:12px">
+        <summary style="cursor:pointer;font-size:12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em">Unassigned trackers (${pending.length}) — no GPS yet</summary>
+        <div class="hint" style="padding:8px 4px">Tracker serials Verizon has not given a display name. They stay off the truck list. A pin appears here only if a location comes back.</div>
+        ${fleetAssetRows(pending)}
+      </details>` : ''}
     </div>`;
 
   // Render map into the Fleet tab's container
@@ -12750,6 +12850,8 @@ function renderVerizonMapInto(containerId){
     if(!loc || typeof loc.Latitude !== 'number' || typeof loc.Longitude !== 'number') return;
     const lat = loc.Latitude, lng = loc.Longitude;
     if(!lat || !lng) return;
+    const assetClass = classifyFleetAsset(v);
+    const isTrailer = assetClass === "trailer" || assetClass === "pending";
     const isHome = /home terminal/i.test(String(loc.GeoFenceName||''));
     const isMoving = loc.Speed > 0;
     const gpsMs = loc.UpdateUTC ? Date.parse(loc.UpdateUTC + 'Z') : 0;
@@ -12760,22 +12862,37 @@ function renderVerizonMapInto(containerId){
     else if(ageMin < 240) ageTier = 'recent';
     const isFresh = ageTier === 'fresh';
     const isRecent = ageTier === 'recent';
-    // Base color by state
-    const color = isMoving ? '#4ade80' : (isHome ? '#94a3b8' : '#fbbf24');
+    // Trucks stay circles (green moving, slate yard, amber stopped).
+    // Trailers are squares in a different hue so a trailer pin is not a truck.
+    const color = isTrailer
+      ? (isMoving ? '#38bdf8' : (isHome ? '#818cf8' : '#a78bfa'))
+      : (isMoving ? '#4ade80' : (isHome ? '#94a3b8' : '#fbbf24'));
     // Stale markers desaturate to gray + shrink + drop opacity
     const staleColor = '#525252';
     const displayColor = ageTier === 'stale' ? staleColor : color;
     const radius = isFresh ? (isMoving ? 10 : 9) : (isRecent ? 7 : 5);
     const fillOpacity = isFresh ? 0.95 : (isRecent ? 0.55 : 0.3);
     const strokeOpacity = isFresh ? 1 : (isRecent ? 0.6 : 0.35);
-    const marker = L.circleMarker([lat, lng], {
-      radius,
-      fillColor: displayColor,
-      color: '#0f172a',
-      weight: 2,
-      opacity: strokeOpacity,
-      fillOpacity,
-    }).addTo(__verizonMap);
+    let marker;
+    if(isTrailer){
+      const px = radius * 2;
+      const icon = L.divIcon({
+        className: 'fct-trl-pin',
+        html: `<div style="width:${px}px;height:${px}px;border-radius:3px;background:${displayColor};border:2px solid #0f172a;opacity:${fillOpacity};box-sizing:border-box"></div>`,
+        iconSize: [px, px],
+        iconAnchor: [radius, radius]
+      });
+      marker = L.marker([lat, lng], { icon }).addTo(__verizonMap);
+    } else {
+      marker = L.circleMarker([lat, lng], {
+        radius,
+        fillColor: displayColor,
+        color: '#0f172a',
+        weight: 2,
+        opacity: strokeOpacity,
+        fillOpacity,
+      }).addTo(__verizonMap);
+    }
     const speedTxt = isMoving ? ` — ${Math.round(loc.Speed)} mph ${loc.Heading||''}` : ' — stopped';
     const addr = (loc.Address && loc.Address.AddressLine1) || loc.GeoFenceName || '';
     const ageLabel = ageMin === Infinity ? 'never' :
@@ -12783,9 +12900,10 @@ function renderVerizonMapInto(containerId){
       ageMin < 60*24 ? `${Math.floor(ageMin/60)}h ago` :
       `${Math.floor(ageMin/60/24)}d ago`;
     const ageColor = isFresh ? '#22c55e' : (isRecent ? '#eab308' : '#ef4444');
+    const kindLabel = assetClass === 'pending' ? 'Unassigned tracker' : (isTrailer ? 'Trailer' : 'Truck');
     marker.bindPopup(
       `<div style="font-family:system-ui,sans-serif;font-size:13px">
-        <b>Truck ${v.Name || v.VehicleNumber || '?'}</b>${speedTxt}<br>
+        <b>${kindLabel} ${v.Name || v.VehicleNumber || '?'}</b>${speedTxt}<br>
         <span style="color:#475569">${addr}</span><br>
         <span style="color:${ageColor};font-size:11px;font-weight:600">Last GPS: ${ageLabel}</span>
       </div>`
@@ -15541,6 +15659,10 @@ SHADOW_TIMELINE_TEXT['2026-07-28'] = "**PARTIAL DAY — Phase 2 diff loop stoppe
 
 /* ---- v2.0 DATA: Changelog (in-app version history) ---- */
 const SHADOW_CHANGELOG = [
+  { ver:'v2.1.51-trailer-gps', date:'2026-09-23', changes:[
+    'Fleet map draws trailer GPS as squares, separate from truck circles. Named trailers with no Verizon fix stay on the list as “no GPS yet” instead of disappearing. Unassigned tracker serials sit in their own collapsed list',
+    'fct-verizon looks up location by VehicleNumber, then Name, then VehicleId. Trailer pairs whose number contains a slash (37/38) are posted to the bulk locations API because a slash in the URL path is rejected. Truck miles, yard signals, and diesel defaults are unchanged'
+  ]},
   { ver:'v2.1.50-qbo-mixed-rates', date:'2026-09-14', changes:[
     'QBO invoice mix: each load keeps its own $/lb + FSC. Completing a load does not write a global rate onto the rest of the day. Day / P&L revenue is still sum(qty × that load\'s rate [+ FSC])',
     'Rate cards: V&A Lagoria $0.012/lb (no FSC); French Camp Grain $0.004/lb + 43% FSC; California Natural Products ~$0.0094/lb + 43% FSC (CNP dest no longer swallowed by the $425 POC blend); Perdue $0.0075/lb; Penny Newman still PNG lanes ($0.0072 typical + $2/ton; $0.0135 other dests prompt missing-rates); Phil O\'Connell lane matrix $0.00425–$0.0125 with FSC 43% (was 32/33)',

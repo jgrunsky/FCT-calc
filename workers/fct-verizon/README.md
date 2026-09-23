@@ -37,8 +37,58 @@ curl -s https://fct-verizon.jamesgrunsky.workers.dev/latest | head -c 200
 ```
 
 If Pages ships first, Settings save still works on the device; the “couldn’t
-update the other one” toast fires until this worker is deployed. `/latest`,
-`/miles`, and `/signals` are unchanged.
+update the other one” toast fires until this worker is deployed. `/miles` and
+`/signals` stay truck-only: trailer GPS is not added into fleet miles or
+dispatch signals, so a trailer riding with a truck does not double-count.
+
+## Trailer GPS (v0.15)
+
+`/latest` stamps every vehicle with `_assetClass` (`truck`, `trailer`, or
+`pending`), `_gps` (`live`, `no_gps`, or `unlocated`), and `_locKey` (the
+Reveal id that answered). Location lookup tries **VehicleNumber**, then
+**Name**, then **VehicleId**. A number that contains `/` (trailer pairs such
+as `37/38`) is not put in the URL path — the gateway rejects it — and is
+sent instead as `POST /rad/v1/vehicles/locations`.
+
+Truck miles, yard signals, and canonical fuel defaults are unchanged.
+Haversine `/miles` and `/signals` skip anything that is not `_assetClass:
+truck`. Trucks `1`–`24` still resolve on the same number they always used
+(`Name` and `VehicleNumber` are the same string).
+
+Deploy, then either wait for the 10-minute cron or queue one refresh:
+
+```bash
+curl -s https://fct-verizon.jamesgrunsky.workers.dev/debug/refresh
+# {"ok": true, "msg": "refresh queued"}
+# wait ~30s for the snapshot to finish writing
+```
+
+Verify trailers. A trailer Verizon is actually tracking has `_gps: "live"`
+and a non-null `_location`. A trailer that exists on the account but has
+not reported a fix stays on the list with `_location: null` and `_gps` of
+`no_gps` or `unlocated` — the Fleet tab shows that as “no GPS yet”.
+
+```bash
+curl -s https://fct-verizon.jamesgrunsky.workers.dev/latest \
+  | jq '{version:.workerVersion, assets:.assetSummary,
+        trailers:[.vehicles[]
+          | select(._assetClass=="trailer")
+          | {Name, VehicleNumber, _gps, _locStatus, _locKey, _locVia,
+             lat: ._location.Latitude, lng: ._location.Longitude}]}'
+
+# Trucks 1–24 must still have coordinates. This count should stay in the
+# low twenties (truck 5 is not on the account as of 2026-09-23).
+curl -s https://fct-verizon.jamesgrunsky.workers.dev/latest \
+  | jq '[.vehicles[]
+        | select(._assetClass=="truck" and (._location.Latitude|type)=="number")]
+        | length'
+
+curl -s https://fct-verizon.jamesgrunsky.workers.dev/canonical-settings
+# fuelPricePerGal should still be 4.50 (QBO), NOT 6.919 (EIA)
+```
+
+`pending` rows are tracker serials Verizon has not given a display name yet
+(`2400…_20260821T21:51:58`). They are not pins until a location comes back.
 
 ## `/canonical-settings`
 
