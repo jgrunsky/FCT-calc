@@ -8,12 +8,12 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" >
 <meta name="apple-mobile-web-app-title" content="FCT Calc" >
 <!-- Cache-busting so iOS Home Screen / PWA pulls the latest build on next open.
-     Token: 2026-09-23-fct-calc-v2.1.51-trailer-gps — bump with APP_VERSION.
+     Token: 2026-09-23-fct-calc-v2.1.52-fsc-45 — bump with APP_VERSION.
      2026-09-07 restore: Pages production = PR #16 tree (not day-pick-fix). -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<meta name="app-version" content="2026-09-23-fct-calc-v2.1.51-trailer-gps">
+<meta name="app-version" content="2026-09-23-fct-calc-v2.1.52-fsc-45">
 <title data-id="th-modified">FCT Load Profitability — French Camp Transport</title>
 <link rel="manifest" href='data:application/manifest+json,{"name":"FCT Load Profitability","short_name":"FCT Calc","start_url":".","display":"standalone","background_color":"%2312100e","theme_color":"%2312100e","icons":[{"src":"data:image/svg%2Bxml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 192 192%27%3E%3Crect width=%27192%27 height=%27192%27 fill=%27%2312100e%27/%3E%3Ctext x=%2796%27 y=%27124%27 font-size=%2772%27 font-family=%27sans-serif%27 font-weight=%27700%27 fill=%27%238fb590%27 text-anchor=%27middle%27%3EFCT%3C/text%3E%3C/svg%3E","sizes":"192x192","type":"image/svg+xml"}]}'>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -1425,7 +1425,7 @@
    still exposes the Import JSON box for future refreshes.
    ============================================================= */
 
-const APP_VERSION = '2026-09-23-fct-calc-v2.1.51-trailer-gps';
+const APP_VERSION = '2026-09-23-fct-calc-v2.1.52-fsc-45';
 const STORAGE_KEY = 'fct-calc:state';
 const IDB_NAME = 'fct-calc-db';
 const IDB_STORE = 'kv';
@@ -1856,16 +1856,16 @@ function fscMethodUnit(id){ const m=FSC_METHODS.find(x=>x.id===id); return m?m.u
    make a customer appear everywhere — allCustomerNames() unions
    these keys over the QBO customer list.
    ============================================================= */
-const CUSTOMER_RATES_ASOF   = '2026-09-14';
-const CUSTOMER_RATES_SOURCE = 'QBO invoice base rates — Sep 2026 weight-cert sample (qty ~50–56k lb)';
+const CUSTOMER_RATES_ASOF   = '2026-09-23';
+const CUSTOMER_RATES_SOURCE = 'QBO invoice base rates — Sep 2026 weight-cert sample (qty ~50–56k lb); percent FSC 45% (James 2026-09-23)';
 
 const CUSTOMER_RATE_DEFAULTS = {
-  'Diamond Pet Foods':                   { avgRevenue: 508, fscMethod:'percent', fscPct:33,
-    notes:'Standard: $0.00677/lb + 30% FSC. Min weight: $442 flat + 30% FSC.' },
+  'Diamond Pet Foods':                   { avgRevenue: 508, fscMethod:'percent', fscPct:45,
+    notes:'Standard: $0.00677/lb + percent FSC. Min weight: $442 flat + percent FSC. v2.1.52: percent clause is 45% (was 33/30).' },
   'Penny Newman':                        { avgRevenue: 430, fscMethod:'per_ton', fscPerTon:2, ratePerLb:0.0072,
     notes:'v2.1.50 QBO: mostly $0.0072/lb + $2/ton FSC; some loads $0.0135/lb + $2/ton. Dispatch books the PNG lane matrix (Ripon $0.0072/$0.0075, Lathrop $0.00575/$0.00635) — not one flat rate. The $0.0135 loads are a different dest/commodity; missing-rates still prompts when no PNG lane matches. Blend ~$430/load is Settings/what-if only.' },
-  'American River Ag':                   { avgRevenue: 512, fscMethod:'percent', fscPct:33,
-    notes:'20% FSC (lower than Diamond).',
+  'American River Ag':                   { avgRevenue: 512, fscMethod:'percent', fscPct:45,
+    notes:'v2.1.52: percent clause is 45%, same as other percent-of-linehaul customers (was 33; earlier pulls said 20%).',
     /* v1.2 recorded the opposite, from the 2026-07-27 invoicing pull, and marked
        it verified. The 90-day pull one day later shows a 20% surcharge. The newer
        read wins, but a reversal of a verified value is exactly the thing that
@@ -1873,22 +1873,22 @@ const CUSTOMER_RATE_DEFAULTS = {
        record and printed in Settings and on the Info tab. */
     supersedes:'v1.2 (QBO invoicing 2026-07-27) recorded American River Ag as billing NO fuel surcharge. '
              + 'The 2026-07-28 90-day pull shows 20% of linehaul. Confirm which is current before pricing off it.' },
-  "Phil O'Connell Grain":                { avgRevenue: 425, fscMethod:'percent', fscPct:43,
+  "Phil O'Connell Grain":                { avgRevenue: 425, fscMethod:'percent', fscPct:45,
     qboName:"Phil O'Connell Grain Co., Inc",
-    notes:'v2.1.50 QBO: $0.00425–$0.0125/lb + 43% FSC. Dispatch books the POC lane matrix (Ardent $0.00425, Purina/Farmers $0.00525, Miller $0.00925, long-haul growers $0.00775–$0.00825) — each load keeps its own rate. FSC clause moved 27→30→32/33 (summer) → 43% (Sep invoices). The $425 blend is fallback only when origin+dest miss the matrix AND miss a dest customer card (CNP / Lagoria / FCG).' },
-  'LinkOne Potato Ingredient Solutions': { avgRevenue: 429, fscMethod:'percent', fscPct:33,
+    notes:'v2.1.52: $0.00425–$0.0125/lb + 45% FSC. Dispatch books the POC lane matrix (Ardent $0.00425, Purina/Farmers $0.00525, Miller $0.00925, long-haul growers $0.00775–$0.00825) — each load keeps its own rate. FSC clause moved 27→30→32/33 (summer) → 43% (early Sep) → 45% (James 2026-09-23). The $425 blend is fallback only when origin+dest miss the matrix AND miss a dest customer card (CNP / Lagoria / FCG).' },
+  'LinkOne Potato Ingredient Solutions': { avgRevenue: 429, fscMethod:'percent', fscPct:45,
     notes:'Invoicing-level split of the LinkOne group. The QBO T12M customer list still carries '
         + '"LinkOne (combined)" and "LinkOne Logistics" as separate lines — the two views have not '
         + 'been reconciled, so treat the group total, not the sum of these rows, as authoritative.' },
   'LinkOne Ingredient Solutions':        { avgRevenue: 219, fscMethod:'none',
     notes:'No fuel surcharge billed. Lowest average revenue per load on the card.' },
-  'LinkOne Logistics':                   { avgRevenue: 500, fscMethod:'percent', fscPct:33,
+  'LinkOne Logistics':                   { avgRevenue: 500, fscMethod:'percent', fscPct:45,
     notes:'v1.9 placeholder — small LinkOne split ($8K last 90 days). Group with LinkOne Potato/Ingredient Solutions when analyzing customer concentration. Rate not verified per invoice.' },
-  'California Natural Products':         { avgRevenue: 775, fscMethod:'percent', fscPct:43, ratePerLb:0.0094,
-    notes:'v2.1.50 QBO: ~$0.0094/lb + 43% FSC on weight-cert qty. Dispatch dest CNP / CAL NATURAL is billed here — not the $425 POC blend. 54k lb ≈ $726 all-in; $775 remains the older longer-haul average for Settings/what-if.' },
-  '3D Corporate Solutions':              { avgRevenue: 397, fscMethod:'percent', fscPct:33 },
-  'Foster Farms':                        { avgRevenue: 562, fscMethod:'percent', fscPct:33,
-    notes:'Chicken Meal (Fosters), $18/ton × 24 tons default + 30% FSC. Super hopper #106 lane.' },
+  'California Natural Products':         { avgRevenue: 775, fscMethod:'percent', fscPct:45, ratePerLb:0.0094,
+    notes:'v2.1.52: ~$0.0094/lb + 45% FSC on weight-cert qty. Dispatch dest CNP / CAL NATURAL is billed here — not the $425 POC blend. 54k lb ≈ $736 all-in; $775 remains the older longer-haul average for Settings/what-if.' },
+  '3D Corporate Solutions':              { avgRevenue: 397, fscMethod:'percent', fscPct:45 },
+  'Foster Farms':                        { avgRevenue: 562, fscMethod:'percent', fscPct:45,
+    notes:'Chicken Meal (Fosters), $18/ton × 24 tons default + 45% FSC. Super hopper #106 lane.' },
   'Harris Ranch':                        { avgRevenue:1100, fscMethod:'flat_included',
     notes:'Long haul from Coalinga, ~300 mi round trip. FSC baked into the rate.' },
   'Perdue Farms Inc':                    { avgRevenue: 500, fscMethod:'none', ratePerLb:0.0075,
@@ -1896,17 +1896,17 @@ const CUSTOMER_RATE_DEFAULTS = {
   'Integrated Proteins, LLC':            { avgRevenue: 500, fscMethod:'none',
     qboName:'Integrated Proteins, LLC',
     notes:'v1.9 (added 2026-08-03): ARA Stockton → DPF Lathrop/Ripon lanes carrying Lamb Meal, Chicken Meal, Salmon Meal, Fish Meal, Salmon Dried van loads. $500 flat per load, no FSC. **FLAG for James**: these loads look like Diamond direct on the dispatch sheet (PO like 76495-42 matches the Diamond release-series regex, so classifyLoad tags them as Diamond and prices them off the Diamond tier — currently over-stating revenue by ~$22/load vs the $500 actual). If IP volume is material, the classifier needs an IP-specific signature.' },
-  'Ag Pro Trading':                      { avgRevenue: 500, fscMethod:'percent', fscPct:33,
+  'Ag Pro Trading':                      { avgRevenue: 500, fscMethod:'percent', fscPct:45,
     notes:'v1.9 placeholder — small customer ($7K over last 90 days). Rate not yet verified against invoices. Adjust when volume grows.' },
-  'US Commodities':                      { avgRevenue: 500, fscMethod:'percent', fscPct:33,
+  'US Commodities':                      { avgRevenue: 500, fscMethod:'percent', fscPct:45,
     notes:'v1.9 placeholder — small (<$1K last 90 days). Rate not verified.' },
-  'IQI Warehousing USA':                 { avgRevenue: 500, fscMethod:'percent', fscPct:33,
+  'IQI Warehousing USA':                 { avgRevenue: 500, fscMethod:'percent', fscPct:45,
     notes:'v1.9 placeholder — tiny (<$1K last 90 days). Rate not verified.' },
   'V&A Lagoria':                         { avgRevenue: 648, fscMethod:'none', ratePerLb:0.012,
     qboName:'V&A Lagoria',
     notes:'v2.1.50 QBO: $0.012/lb, no FSC line on the sampled invoices. 54k lb ≈ $648. Dispatch dest LAGORIA / V&A / VA LAGORIA maps here so the load is not $500 spot placeholder.' },
-  'French Camp Grain':                   { avgRevenue: 309, fscMethod:'percent', fscPct:43, ratePerLb:0.004,
-    notes:'v2.1.50 QBO: $0.004/lb + 43% FSC. Distinct from POC FCG→Ardent ($0.00425/lb + 43% FSC) — that lane stays on the POC matrix. This card applies when the billed customer/dest is French Camp Grain (not when FCG is only the origin code).' },
+  'French Camp Grain':                   { avgRevenue: 309, fscMethod:'percent', fscPct:45, ratePerLb:0.004,
+    notes:'v2.1.52: $0.004/lb + 45% FSC. Distinct from POC FCG→Ardent ($0.00425/lb + 45% FSC) — that lane stays on the POC matrix. This card applies when the billed customer/dest is French Camp Grain (not when FCG is only the origin code).' },
 };
 
 /* The rate card's shorthand -> the FSC_METHODS ids the engine computes on.
@@ -1983,13 +1983,14 @@ const EXTRA_CUSTOMERS = ['Foster Farms'];
    constant and before the blended $425 fallback. Do not bake live
    fills into the source.
 
-   v2.1.50: QBO invoices now bill 43% FSC on POC percent-of-linehaul
-   lanes (was 32/33 in the Aug sample). pocLaneRateFor() stamps
-   POC_CURRENT_FSC_PCT onto any matrix rule with fscPct>0 so the
-   table can keep the historical 32/33 notes without under-billing.
+   v2.1.52: percent-of-linehaul FSC is 45% (James 2026-09-23; was 43%
+   on the early-Sep card, 32/33 in the Aug sample). pocLaneRateFor()
+   stamps POC_CURRENT_FSC_PCT onto any matrix rule with fscPct>0 so
+   the table can keep the historical 32/33 notes without under-billing.
+   fscPct 0 (Pelican, Diestel/Perdue flat, ADM rice) stays 0.
    ============================================================= */
-const POC_LANE_RATES_ASOF = '2026-09-14';
-const POC_CURRENT_FSC_PCT = 43; // QBO Sep 2026. Was 27→30→32/33 over the summer.
+const POC_LANE_RATES_ASOF = '2026-09-23';
+const POC_CURRENT_FSC_PCT = 45; // James 2026-09-23. Was 27→30→32/33→43.
 const POC_MIN_WEIGHT = 52000;  // Min-weight billing floor seen on Coleman/Victoria/Spinella invoices.
 // v2.0.10 (2026-08-14): FSC flipped 33% → 32% on every lane with confirmed Aug 11-13
 // invoice activity (PN/PNG→PURINA, FCG→PURINA/FARMERS/ARDENT, MERWIN→FCG). Lanes with
@@ -2429,8 +2430,8 @@ const V17_SHIPPED_CUSTOMER_RATES = {
 };
 
 /* v1.8 / 2026-08-03 card figures. A save that still matches these (or
-   V17) is a shipped default, not a James edit — take the Sep 2026 card
-   (POC/CNP 43% FSC, new Lagoria/FCG keys). */
+   V17, or a later shipped percent clause 27/30/32/33/43) is a default,
+   not a James edit — take the current card (percent FSC 45%). */
 const V18_SHIPPED_CUSTOMER_RATES = {
   'Diamond Pet Foods':           { fscMethod:'percent_of_linehaul', fscValue:33 },
   "Phil O'Connell Grain":        { fscMethod:'percent_of_linehaul', fscValue:33 },
@@ -2444,7 +2445,22 @@ function shippedFscMatches(name, saved){
   if(!saved) return true;
   const method = String(saved.fscMethod||'');
   const value = Number(saved.fscValue==null?-1:saved.fscValue);
+  /* Previous percent clauses on a percent card are shipped defaults.
+     43 was the v2.1.50 POC/CNP/FCG figure and is not in V17/V18, so
+     without this it would be treated as a hand edit and stay at 43.
+     per_ton / none cards are not in this list. */
+  const OLD_PERCENT_FSC = [27, 30, 32, 33, 43];
+  const card = CUSTOMER_RATE_DEFAULTS[name];
   const candidates = [V17_SHIPPED_CUSTOMER_RATES[name], V18_SHIPPED_CUSTOMER_RATES[name]].filter(Boolean);
+  if(card && card.fscMethod==='percent' && method==='percent_of_linehaul'){
+    if(OLD_PERCENT_FSC.indexOf(value)>=0) return true;
+    /* Any other percent on a percent card is an operator edit — including
+       customers that were never in the v1.7/v1.8 maps (FCG, placeholders). */
+    return candidates.some(function(ship){
+      return method === String(ship.fscMethod||'')
+          && value === Number(ship.fscValue==null?-1:ship.fscValue);
+    });
+  }
   if(!candidates.length) return true;
   return candidates.some(function(ship){
     return method === String(ship.fscMethod||'')
@@ -2453,7 +2469,7 @@ function shippedFscMatches(name, saved){
 }
 
 /* Resolve which FSC rule applies to a customer.
-   No override -> settings default (percent_of_linehaul @ 30%). */
+   No override -> settings default (percent_of_linehaul @ 45%). */
 function fscRuleFor(cust){
   const r = state.customerRates && state.customerRates[cust];
   if(r && r.fscMethod){
@@ -2461,7 +2477,7 @@ function fscRuleFor(cust){
   }
   const s = state.settings;
   return { method: s.defaultFscMethod || 'percent_of_linehaul',
-           value: Number(s.defaultFscPercent!=null ? s.defaultFscPercent : 33),
+           value: Number(s.defaultFscPercent!=null ? s.defaultFscPercent : 45),
            source:'default', note:'' };
 }
 /* ctx = { linehaul, lbs, loadedMi } */
@@ -3029,28 +3045,28 @@ const DIAMOND_ORIGINS = ['HARRIS','FOSTER','FOSTERS'];
 function defaultDiamondTiers(){
   return [
     { k:'standard', label:'Standard Diamond', match:'PNG / FCGE / ARA / FCG → D.P. Lathrop or Ripon',
-      method:'per_lb', rate:0.00650, fscPct:33, fscIncluded:false, minWeight:52000,
+      method:'per_lb', rate:0.00650, fscPct:45, fscIncluded:false, minWeight:52000,
       miles:50, hours:5, useT12M:false, verified:true,
-      note:'v2.0.10: rebased off actual PNG→Lathrop invoice math. $0.00650/lb × 52,000 lb min-weight × 1.33 FSC = $449.54/load — matches Aug 11-13 DPF invoices. The old useT12M shortcut booked a flat $508 (the T12M blended average) on every standard-tier load, which over-counted by ~$60/load because the $522 T12M numerator included Harris ($1,100) and Fosters ($575) premium loads. Standard-tier now prices off the card the same way Fosters and Harris do.' },
+      note:'v2.1.52: percent FSC is 45% (James 2026-09-23). $0.00650/lb × 52,000 lb min-weight × 1.45 = $490.10/load. v2.0.10 had this tier at 33% ($449.54) off Aug 11-13 DPF invoices. useT12M stays off — the old $508 blend included Harris and Fosters premiums.' },
     { k:'fosters', label:'Fosters premium', match:'origin FOSTERS / FOSTER / FOSTER’S',
-      method:'per_ton', rate:18, fscPct:33, fscIncluded:false,
+      method:'per_ton', rate:18, fscPct:45, fscIncluded:false,
       miles:40, hours:4.5, useT12M:false, verified:false,
-      note:'$18/ton plus 30% FSC. Livingston / Modesto area — short run off FCGE. FSC assumed to match standard Diamond until the operator confirms.' },
+      note:'$18/ton plus 45% FSC. Livingston / Modesto area — short run off FCGE. Percent clause matches standard Diamond.' },
     /* v1.4. Foster's super-hopper lane. Spec.md special lanes: "Foster's
        super-hopper: Chicken Meal -> trailer #106". equipment_constraints.json
        confirms the pairing from the live log — a 106 tag in the truck/trailer
        column with a Foster origin is the single super hopper, 73 loads of
        Chicken Meal (Fosters) in the 2026 year to date.
 
-       It seeds to the Fosters premium exactly ($18/ton + 30% FSC, same miles
+       It seeds to the Fosters premium exactly ($18/ton + 45% FSC, same miles
        and hours), so splitting it out moves NO money today. The point is that
        it can now be moved on its own: the operator can reprice the super-hopper
        lane without repricing every Fosters load, which is not possible while
        the two share one tier. */
     { k:'lane106', label:'Lane #106 (Fosters variant)', match:'origin FOSTERS + truck/trailer 106 — super hopper',
-      method:'per_ton', rate:18, fscPct:33, fscIncluded:false,
+      method:'per_ton', rate:18, fscPct:45, fscIncluded:false,
       miles:40, hours:4.5, useT12M:false, verified:false,
-      note:'Seeded to the Fosters premium rate ($18/ton + 30% FSC). Single-unit equipment — only one super hopper exists, so two 106 loads on a day is a conflict, not a plan.' },
+      note:'Seeded to the Fosters premium rate ($18/ton + 45% FSC). Single-unit equipment — only one super hopper exists, so two 106 loads on a day is a conflict, not a plan.' },
     { k:'harris', label:'Harris premium', match:'origin HARRIS',
       method:'flat', rate:1100, fscPct:0, fscIncluded:true,
       miles:300, hours:9, useT12M:false, verified:false,
@@ -3153,7 +3169,7 @@ function labelBucket(label){
 }
 
 /* v2.1.50: CNP / CAL NATURAL are California Natural Products invoices
-   (~$0.0094/lb + 43% FSC), not Phil O'Connell. Leaving them on
+   (~$0.0094/lb + 45% FSC), not Phil O'Connell. Leaving them on
    POC_DESTINATIONS used to classify every CNP dest as POC and then
    the $425 blend. */
 const POC_DESTINATIONS = [
@@ -3259,7 +3275,7 @@ function defaultSettings(){
     // The old per-mile number produced $36 on a $324.96 linehaul (11%);
     // real FCT invoicing bills 30% ($97.49 on the same load).
     defaultFscMethod: 'percent_of_linehaul',
-    defaultFscPercent: 33,   // v2.0.5: bumped from 30 to match current-week FSC
+    defaultFscPercent: 45,   // v2.1.52: percent-of-linehaul clause (was 33, then 43)
     fscPerMile: 0.30,           // retained: the rate-card $/mi figure, used when method = $ per loaded mile
     detentionPerHr: 472.83,
     // v1.1: cost/mile derived from QBO actuals divided by annualMiles.
@@ -4290,6 +4306,36 @@ function loadState(){
         try { save(); } catch(_){}
         // Toast fires from boot() after DOM is ready.
         window.__v205MigrationJustRan = true;
+      }
+
+      /* v2.1.52 (2026-09-23, James: percent fuel surcharge is 45%).
+         v205 already ran on live devices and only rewrote 30/27/32/20 → 33,
+         so this is a new one-shot. Percent-of-linehaul customers still on
+         27/30/32/33/43 move to 45. per_ton (Penny Newman $2/ton), none, and
+         flat-included are not percent and are left alone. Diamond tiers that
+         add a percent on top (not Harris, which is included) follow the same
+         old-percent list. Does not read or write diesel. */
+      if(!state.settings.migrated_v2152){
+        const OLD_FSC_DEFAULTS = [27, 30, 32, 33, 43];
+        try {
+          Object.keys(state.customerRates || {}).forEach(function(name){
+            const r = state.customerRates[name];
+            if(!r || r.fscMethod !== 'percent_of_linehaul') return;
+            const v = Number(r.fscValue);
+            if(OLD_FSC_DEFAULTS.indexOf(v) >= 0) r.fscValue = 45;
+          });
+          if(Array.isArray(state.diamondTiers)){
+            state.diamondTiers.forEach(function(tier){
+              if(!tier || tier.fscIncluded) return;
+              const v = Number(tier.fscPct);
+              if(OLD_FSC_DEFAULTS.indexOf(v) >= 0) tier.fscPct = 45;
+            });
+          }
+          const dflt = Number(state.settings.defaultFscPercent);
+          if(OLD_FSC_DEFAULTS.indexOf(dflt) >= 0) state.settings.defaultFscPercent = 45;
+        } catch(_){}
+        state.settings.migrated_v2152 = true;
+        try { save(); } catch(_){}
       }
     }
   }catch(e){ showStorageError('Saved data could not be read', String(e&&e.message||e)); }
@@ -14308,7 +14354,7 @@ function renderSet(){
     + '</div><div class="fld fld2">'
     + '<div><label for="sFscMethod">Default FSC method</label><select id="sFscMethod">'+fscMethodOptions(s.defaultFscMethod)+'</select>'
     + '<div class="hint">Used when a customer has no rule below.</div></div>'
-    + nf('sFscPct','Default FSC rate', s.defaultFscPercent,'0.5','Percent of linehaul. Real FCT invoicing bills 30% — v1.1 shipped $0.30/mi (≈11%) and understated every load.')
+    + nf('sFscPct','Default FSC rate', s.defaultFscPercent,'0.5','Percent of linehaul. Real FCT invoicing bills 45% on customers that pay a percent FSC — v1.1 shipped $0.30/mi (≈11%) and understated every load.')
     + '</div><div class="fld fld2">'
     + nf('sFsc','FSC $/loaded mile', s.fscPerMile,'0.01','Rate-card code 310 figure. Only used when a rule is set to "$ per loaded mile".')
     + nf('sTgt','Target % of baseline', s.targetPct,'1','Counter-rates aim here.')
@@ -15659,6 +15705,10 @@ SHADOW_TIMELINE_TEXT['2026-07-28'] = "**PARTIAL DAY — Phase 2 diff loop stoppe
 
 /* ---- v2.0 DATA: Changelog (in-app version history) ---- */
 const SHADOW_CHANGELOG = [
+  { ver:'v2.1.52-fsc-45', date:'2026-09-23', changes:[
+    'James: fuel surcharge on customers that pay a percent of linehaul is 45%. POC lane overlay, customer cards (Diamond, ARA, POC, CNP, Foster, French Camp Grain, percent placeholders), and Diamond tiers that add FSC on top move 33/43 → 45. Penny Newman stays $2/ton. Harris stays flat-included. Pelican, Diestel/Perdue flat, and ADM rice stay fscPct 0',
+    'Devices still holding an old percent (27/30/32/33/43) on a percent-of-linehaul customer migrate to 45 once. per_ton and none are not rewritten. Diesel stays the number in Settings on this device — $7 is already on the worker canonical-settings KV. No Device-out-of-sync bar and no diesel overwrite'
+  ]},
   { ver:'v2.1.51-trailer-gps', date:'2026-09-23', changes:[
     'Fleet map draws trailer GPS as squares, separate from truck circles. Named trailers with no Verizon fix stay on the list as “no GPS yet” instead of disappearing. Unassigned tracker serials sit in their own collapsed list',
     'fct-verizon looks up location by VehicleNumber, then Name, then VehicleId. Trailer pairs whose number contains a slash (37/38) are posted to the bulk locations API because a slash in the URL path is rejected. Truck miles, yard signals, and diesel defaults are unchanged'
