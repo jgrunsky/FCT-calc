@@ -1,6 +1,11 @@
 # fct-verizon Worker
 
 Cloudflare Worker behind `https://fct-verizon.jamesgrunsky.workers.dev`.
+
+The phone reads it through `https://fct-calc.pages.dev/api/verizon/*` (Pages
+forwards `/latest`, `/signals`, `/miles`, `/miles-real`, `/calibration`,
+`/dispatch-log`, and `/canonical-settings`). `/debug/*` is not forwarded.
+Direct worker URLs below are for deploy checks from a machine, not from Safari.
 Serves Verizon Reveal GPS (`/latest`, `/miles`, `/signals`, …) and, as of
 v0.14, company-wide calc settings at `/canonical-settings`.
 

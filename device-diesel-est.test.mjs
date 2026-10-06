@@ -10,7 +10,7 @@ const changelogStart = html.indexOf('const SHADOW_CHANGELOG');
 assert.ok(changelogStart >= 0, 'SHADOW_CHANGELOG present');
 const ui = html.slice(0, changelogStart);
 
-assert.ok(/2026-09-23-fct-calc-v2\.1\.52-fsc-45/.test(html), 'APP_VERSION is v2.1.52');
+assert.ok(/2026-10-06-fct-calc-v2\.1\.54-same-origin-sync/.test(html), 'APP_VERSION is v2.1.54');
 assert.ok(/v2\.1\.47-no-fuel-bar/.test(html), 'changelog has v2.1.47');
 assert.ok(/v2\.1\.46-device-diesel/.test(html), 'prior diesel changelog kept');
 assert.ok(/v2\.1\.45-driver-fb/.test(html), 'driver+bill changelog kept');

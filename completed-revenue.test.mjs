@@ -174,6 +174,6 @@ assert.ok(/sheetPlanRow/.test(html) && /not in TOTAL/.test(html),
 assert.ok(/need driver \+ freight bill\) — not in TOTAL/.test(html),
   'PLAN footer says driver + freight bill, not then-completed');
 assert.ok(/Driver plus bill is the way/.test(html), 'P&L copy cites James driver+bill rule');
-assert.ok(/2026-09-23-fct-calc-v2\.1\.52-fsc-45/.test(html), 'APP_VERSION is v2.1.52');
+assert.ok(/2026-10-06-fct-calc-v2\.1\.54-same-origin-sync/.test(html), 'APP_VERSION is v2.1.54');
 assert.ok(/v2\.1\.47-no-fuel-bar/.test(html), 'changelog keeps v2.1.47');
 console.log('completed-revenue.test.mjs: ok');
