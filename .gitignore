@@ -1,3 +1,6 @@
+# Wrangler local cache (pages dev / deploy)
+.wrangler/
+
 # Pay data — never commit ADP payroll exports
 *Daily Totals*
 *DailyTotals*

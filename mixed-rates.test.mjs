@@ -7,7 +7,7 @@ import { dirname, join } from 'node:path';
 const root = dirname(fileURLToPath(import.meta.url));
 const html = readFileSync(join(root, 'index.html'), 'utf8');
 
-assert.ok(/2026-09-23-fct-calc-v2\.1\.52-fsc-45/.test(html), 'APP_VERSION is v2.1.52');
+assert.ok(/2026-10-06-fct-calc-v2\.1\.54-same-origin-sync/.test(html), 'APP_VERSION is v2.1.54');
 assert.ok(/v2\.1\.50-qbo-mixed-rates/.test(html), 'changelog has mixed-rates');
 assert.ok(!/Device out of sync/.test(html.slice(0, html.indexOf('const SHADOW_CHANGELOG'))),
   'no Device-out-of-sync UI outside changelog');

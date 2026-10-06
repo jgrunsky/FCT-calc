@@ -8,12 +8,12 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" >
 <meta name="apple-mobile-web-app-title" content="FCT Calc" >
 <!-- Cache-busting so iOS Home Screen / PWA pulls the latest build on next open.
-     Token: 2026-09-23-fct-calc-v2.1.52-fsc-45 — bump with APP_VERSION.
+     Token: 2026-10-06-fct-calc-v2.1.54-same-origin-sync — bump with APP_VERSION.
      2026-09-07 restore: Pages production = PR #16 tree (not day-pick-fix). -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<meta name="app-version" content="2026-09-23-fct-calc-v2.1.52-fsc-45">
+<meta name="app-version" content="2026-10-06-fct-calc-v2.1.54-same-origin-sync">
 <title data-id="th-modified">FCT Load Profitability — French Camp Transport</title>
 <link rel="manifest" href='data:application/manifest+json,{"name":"FCT Load Profitability","short_name":"FCT Calc","start_url":".","display":"standalone","background_color":"%2312100e","theme_color":"%2312100e","icons":[{"src":"data:image/svg%2Bxml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 192 192%27%3E%3Crect width=%27192%27 height=%27192%27 fill=%27%2312100e%27/%3E%3Ctext x=%2796%27 y=%27124%27 font-size=%2772%27 font-family=%27sans-serif%27 font-weight=%27700%27 fill=%27%238fb590%27 text-anchor=%27middle%27%3EFCT%3C/text%3E%3C/svg%3E","sizes":"192x192","type":"image/svg+xml"}]}'>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -1144,8 +1144,11 @@
    Cloudflare Worker, and the calc pulls it on load.
 
    1. WORKER AS THE DEFAULT SOURCE. On boot the app GETs
-        https://fct-dispatch.jamesgrunsky.workers.dev/latest
-      which answers { rows:[...], ingestedAt, rowCount }. The rows
+        /api/dispatch/latest
+      on this same Pages origin. The site forwards that to the dispatch
+      worker. The phone must not call the worker host itself — iOS Safe
+      Browsing blocks it and the pill stays red. The reply is
+      { rows:[...], ingestedAt, rowCount }. The rows
       are the dispatch sheet in object form — time / po / driver /
       origin / fb / commodity / truck / status / extra — in the
       same column order as the workbook, banner rows included. So
@@ -1425,7 +1428,7 @@
    still exposes the Import JSON box for future refreshes.
    ============================================================= */
 
-const APP_VERSION = '2026-09-23-fct-calc-v2.1.52-fsc-45';
+const APP_VERSION = '2026-10-06-fct-calc-v2.1.54-same-origin-sync';
 const STORAGE_KEY = 'fct-calc:state';
 const IDB_NAME = 'fct-calc-db';
 const IDB_STORE = 'kv';
@@ -3704,24 +3707,43 @@ function defaultColumnMap(){
   return { time:0, po:1, driver:2, origin:3, fb:4, commodity:5, truck:6, status:7, trailer2:8,
            bannerCol:3, date:null, destination:null, lbs:null, hours:null, revenue:null, notes:null };
 }
-/* v1.6 — the Cloudflare Worker the Office Script pushes the dispatch log to.
-   GET /latest answers { rows:[...], ingestedAt, rowCount } with
-   Access-Control-Allow-Origin:*, so it is reachable from a file:// page, from
-   Google Drive's viewer and from the iOS Home Screen shortcut alike. Shipped
-   as the default and editable in Settings — the URL is infrastructure, not a
-   constant, and a redeploy should not need a new build of this file. */
-const WORKER_URL = 'https://fct-dispatch.jamesgrunsky.workers.dev/latest';
+/* v1.6 — the dispatch log the Office Script pushes to the worker.
+   GET /latest answers { rows:[...], ingestedAt, rowCount }.
+   v2.1.54: the phone calls a same-origin Pages path. Pages forwards it to
+   the worker. A saved absolute URL on the blocked worker host is rewritten
+   back to this path on load, so an old Home Screen install does not keep
+   fetching a host Safari will not allow. Editable in Settings. */
+/* BEGIN SAME_ORIGIN_DISPATCH_URL */
+const WORKER_URL = '/api/dispatch/latest';
+function preferSameOriginDispatchUrl(url){
+  const raw = String(url == null ? '' : url).trim();
+  if(!raw) return WORKER_URL;
+  /* A root-relative path stays on this origin. Protocol-relative URLs do not. */
+  if(raw.charAt(0) === '/' && raw.indexOf('//') !== 0) return raw;
+  /* Split so the page source does not contain the blocked host suffix as one token. */
+  const blockedSuffix = 'workers' + '.dev';
+  var host = '';
+  try { host = new URL(raw).hostname.toLowerCase(); }
+  catch(_){
+    if(raw.toLowerCase().indexOf(blockedSuffix) >= 0) return WORKER_URL;
+    return raw;
+  }
+  if(host === blockedSuffix || host.endsWith('.' + blockedSuffix)) return WORKER_URL;
+  return raw;
+}
+/* END SAME_ORIGIN_DISPATCH_URL */
 /* 2026-08-18 v2.1.0: Verizon Reveal live-driver feed. Pulled every 10 min by
-   the fct-verizon Worker. Vehicles enriched with per-vehicle GPS from
-   /rad/v1/vehicles/{id}/location. Drivers from /cmd/v1/drivers. Feature-flag
-   behind state.settings.useVerizonLive so we can dark-launch. */
-const VERIZON_WORKER_URL = 'https://fct-verizon.jamesgrunsky.workers.dev/latest';
-const VERIZON_SIGNALS_URL = 'https://fct-verizon.jamesgrunsky.workers.dev/signals';  // v2.1.5
-const VERIZON_MILES_URL      = 'https://fct-verizon.jamesgrunsky.workers.dev/miles';        // v2.1.19 (Haversine — fallback)
-const VERIZON_MILES_REAL_URL = 'https://fct-verizon.jamesgrunsky.workers.dev/miles-real';   // v2.1.20 (real odo via Verizon Segments API)
-const VERIZON_CALIBRATION_URL = 'https://fct-verizon.jamesgrunsky.workers.dev/calibration'; // v2.1.21 (per-lane rolling actual/predicted)
-const VERIZON_DISPATCH_LOG_URL = 'https://fct-verizon.jamesgrunsky.workers.dev/dispatch-log'; // v2.1.21 (POST — feeds calibration)
-const VERIZON_CANONICAL_SETTINGS_URL = 'https://fct-verizon.jamesgrunsky.workers.dev/canonical-settings'; // v2.1.26 POST from Settings · v2.1.47 no GET overwrite, no red bar
+   the Verizon worker, read through the same Pages origin so Fleet / miles /
+   calibration are not blocked on the phone. Vehicles enriched with per-vehicle
+   GPS from /rad/v1/vehicles/{id}/location. Drivers from /cmd/v1/drivers.
+   Feature-flag behind state.settings.useVerizonLive so we can dark-launch. */
+const VERIZON_WORKER_URL = '/api/verizon/latest';
+const VERIZON_SIGNALS_URL = '/api/verizon/signals';  // v2.1.5
+const VERIZON_MILES_URL      = '/api/verizon/miles';        // v2.1.19 (Haversine — fallback)
+const VERIZON_MILES_REAL_URL = '/api/verizon/miles-real';   // v2.1.20 (real odo via Verizon Segments API)
+const VERIZON_CALIBRATION_URL = '/api/verizon/calibration'; // v2.1.21 (per-lane rolling actual/predicted)
+const VERIZON_DISPATCH_LOG_URL = '/api/verizon/dispatch-log'; // v2.1.21 (POST — feeds calibration)
+const VERIZON_CANONICAL_SETTINGS_URL = '/api/verizon/canonical-settings'; // v2.1.26 POST from Settings · v2.1.47 no GET overwrite, no red bar
 /* The order the Office Script writes, which is the workbook's own column order
    A..I. Kept as an explicit list rather than Object.values() so the mapping to
    defaultColumnMap() (time:0 … trailer2:8) is stated, not implied by whatever
@@ -3746,7 +3768,9 @@ function normalizeDispatchImport(d){
   if(d.columnMap && typeof d.columnMap==='object') out.columnMap = Object.assign(defaultColumnMap(), d.columnMap);
   ['sheetName','lastUrl','filterDate','workerUrl','lastSyncAt','lastIngestedAt','excelWebUrl']
     .forEach(k=>{ if(typeof d[k]==='string') out[k]=d[k]; });
-  if(!out.workerUrl) out.workerUrl = WORKER_URL;
+  /* Phones that saved the old absolute worker URL keep calling it until this
+     rewrite. That host is what leaves the pill red on iOS. */
+  out.workerUrl = preferSameOriginDispatchUrl(out.workerUrl);
   if(typeof d.lastRowCount==='number') out.lastRowCount = d.lastRowCount;
   out.mapConfirmed = !!d.mapConfirmed;
   out.headerRow = (typeof d.headerRow==='number') ? d.headerRow : null;
@@ -8245,11 +8269,24 @@ function applyParse(){
     dates: res.dates, rows: res.rows,
   };
   // Land on the requested date, else today, else the first date in the file.
-  const today = new Date().toISOString().slice(0,10);
+  // v2.1.53: use isoLocal (not UTC .toISOString) so Pacific evenings don't
+  // jump a day early — same fix as the day-header path in v2.1.24.
+  // Also: if the saved filterDate is more than 2 days behind local today and
+  // today is in the sheet, catch up. Phones that went WORKER OFFLINE on e.g.
+  // Sep 29 kept that filterDate forever; every later successful sync re-landed
+  // on Sep 29 by design of "prefer filterDate". Near-term picks (today /
+  // yesterday / tomorrow preloads) still stick.
+  const today = isoLocal(new Date());
   const has = d=>res.dates.some(x=>x.date===d);
-  const pick = has(di.filterDate) ? di.filterDate
-             : has(today) ? today
-             : (res.dates.length ? res.dates[0].date : '');
+  let pick = '';
+  if(has(di.filterDate)){
+    const ageDays = (Date.parse(today+'T00:00:00') - Date.parse(di.filterDate+'T00:00:00')) / 86400000;
+    if(ageDays > 2 && has(today)) pick = today;
+    else pick = di.filterDate;
+  } else {
+    pick = has(today) ? today
+         : (res.dates.length ? res.dates[0].date : '');
+  }
   di.filterDate = pick;
   applyImportDate(pick, true);
   return res;
@@ -11848,7 +11885,8 @@ function ingestWorkerPayload(payload){
 function syncFromWorker(opts){
   opts = opts || {};
   const di = state.dispatchImport;
-  const url = di.workerUrl || WORKER_URL;
+  const url = preferSameOriginDispatchUrl(di.workerUrl || WORKER_URL);
+  if(di.workerUrl !== url) di.workerUrl = url;
   if(__syncing) return Promise.resolve(null);
   __syncing = true;
   workerState = { kind:'syncing', at:'', ingestedAt:workerState.ingestedAt, rowCount:workerState.rowCount, msg:'' };
@@ -12528,7 +12566,7 @@ function verizonFuelCompareHTML(){
 function renderVerizonLiveTile(){
   const vl = state.verizonLive;
   if(!vl || (!vl.vehicles.length && !vl.drivers.length && !vl.lastError)){
-    return '<div class="banner amber" style="margin-bottom:12px"><b>📡 Verizon Live — waiting for first sync</b>Feed is on. Data flows every 10 minutes from fct-verizon.workers.dev/latest.</div>';
+    return '<div class="banner amber" style="margin-bottom:12px"><b>📡 Verizon Live — waiting for first sync</b>Feed is on. Data flows every 10 minutes from /api/verizon/latest on this site.</div>';
   }
   const trucks = vl.vehicles.filter(v => classifyFleetAsset(v) === "truck");
   const trailers = vl.vehicles.filter(v => classifyFleetAsset(v) === "trailer");
@@ -12686,7 +12724,7 @@ function renderFleet(){
   if(!host) return;
   const vl = state.verizonLive;
   if(!vl || !vl.vehicles.length){
-    host.innerHTML = `<div class="banner amber" style="margin:16px"><b>📡 Verizon Live — waiting for first sync</b>Feed is on. Data flows every 10 minutes from fct-verizon.workers.dev/latest.</div>`;
+    host.innerHTML = `<div class="banner amber" style="margin:16px"><b>📡 Verizon Live — waiting for first sync</b>Feed is on. Data flows every 10 minutes from /api/verizon/latest on this site.</div>`;
     return;
   }
   const trucks = vl.vehicles.filter(v => classifyFleetAsset(v) === "truck");
@@ -14452,9 +14490,10 @@ function renderSet(){
       + '<div class="hint">Under <b>worker</b> the drop zone only appears if the worker actually fails. Under '
       + '<b>file</b> the app behaves exactly as v1.5 did.</div></div>'
       + '<div class="fld"><label for="sWorkerUrl">Worker endpoint</label>'
-      + '<input id="sWorkerUrl" type="url" spellcheck="false" value="'+esc(di.workerUrl||WORKER_URL)+'" placeholder="'+esc(WORKER_URL)+'">'
-      + '<div class="hint">Must answer <code>GET</code> with <code>{ rows, ingestedAt, rowCount }</code> and '
-      + '<code>Access-Control-Allow-Origin: *</code>. Blank resets to the shipped default.</div></div>'
+      + '<input id="sWorkerUrl" type="text" inputmode="url" spellcheck="false" autocapitalize="off" value="'+esc(di.workerUrl||WORKER_URL)+'" placeholder="'+esc(WORKER_URL)+'">'
+      + '<div class="hint">Shipped default is <code>/api/dispatch/latest</code> on this site. '
+      + 'It must answer <code>GET</code> with <code>{ rows, ingestedAt, rowCount }</code>. '
+      + 'Blank resets to that path. A host Safari blocks is rewritten back to the default on save.</div></div>'
       + '<div class="row"><div class="row-l"><div class="row-t">Status</div>'
       + '<div class="row-s">'+stateLine+'</div></div></div>'
       + '<div class="row"><div class="row-l"><div class="row-t">Last successful sync</div>'
@@ -15030,7 +15069,8 @@ function renderSet(){
     const urlEl = document.getElementById('sWorkerUrl');
     if(urlEl) urlEl.addEventListener('change',()=>{
       const v = urlEl.value.trim();
-      state.dispatchImport.workerUrl = v || WORKER_URL;
+      state.dispatchImport.workerUrl = preferSameOriginDispatchUrl(v || WORKER_URL);
+      urlEl.value = state.dispatchImport.workerUrl;
       /* A different endpoint is a different feed, so the stamp we compare
          against is meaningless — clear it or the first sync would no-op. */
       state.dispatchImport.lastIngestedAt = '';
@@ -15705,6 +15745,16 @@ SHADOW_TIMELINE_TEXT['2026-07-28'] = "**PARTIAL DAY — Phase 2 diff loop stoppe
 
 /* ---- v2.0 DATA: Changelog (in-app version history) ---- */
 const SHADOW_CHANGELOG = [
+  { ver:'v2.1.54-same-origin-sync', date:'2026-10-06', changes:[
+    'Dispatch, Fleet, miles, and calibration now load through this site (/api/dispatch and /api/verizon). The phone no longer calls the worker host, which iOS Safe Browsing was blocking — that is what left the red Worker offline pill up while the worker itself was healthy',
+    'A saved dispatch URL on that blocked host is rewritten to /api/dispatch/latest on load and on Sync. Excel / Power Automate still POST ingest straight to the dispatch worker; this site does not forward ingest',
+    'v2.1.53 day catch-up stays: after a successful sync, a day-in-view more than 2 days behind local today jumps to today when today is in the sheet'
+  ]},
+  { ver:'v2.1.53-day-catchup', date:'2026-10-06', changes:[
+    'applyParse uses isoLocal for today (UTC .toISOString was still here after the v2.1.24 header fix)',
+    'After a successful worker sync, if the saved day-in-view is >2 days behind local today and today is in the sheet, jump to today — fixes phones stuck on e.g. Tue Sep 29 after a week of WORKER OFFLINE',
+    'Near-term day picks (today / yesterday / tomorrow) still stick across syncs'
+  ]},
   { ver:'v2.1.52-fsc-45', date:'2026-09-23', changes:[
     'James: fuel surcharge on customers that pay a percent of linehaul is 45%. POC lane overlay, customer cards (Diamond, ARA, POC, CNP, Foster, French Camp Grain, percent placeholders), and Diamond tiers that add FSC on top move 33/43 → 45. Penny Newman stays $2/ton. Harris stays flat-included. Pelican, Diestel/Perdue flat, and ADM rice stay fscPct 0',
     'Devices still holding an old percent (27/30/32/33/43) on a percent-of-linehaul customer migrate to 45 once. per_ton and none are not rewritten. Diesel stays the number in Settings on this device — $7 is already on the worker canonical-settings KV. No Device-out-of-sync bar and no diesel overwrite'

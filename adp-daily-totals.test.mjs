@@ -419,7 +419,7 @@ assert.equal(looksLikeAdpAoa([['Date','Driver','Grower','FB','Commodity']]), fal
     'August 1–23 2026 EST $88,195.38 → ADP $107,054.54 is the recorded basis');
   assert.ok(/id="adpBlendCard"/.test(html), 'Settings has a visible ADP blend card');
   assert.ok(/OT &amp; meals vs estimate/.test(html), 'operator-facing name is on the card');
-  assert.ok(/2026-09-23-fct-calc-v2\.1\.52-fsc-45/.test(html), 'APP_VERSION is v2.1.52');
+  assert.ok(/2026-10-06-fct-calc-v2\.1\.54-same-origin-sync/.test(html), 'APP_VERSION is v2.1.54');
   assert.ok(/v2\.1\.47-no-fuel-bar/.test(html), 'changelog has v2.1.47');
   assert.ok(/v2\.1\.40-adp-blend/.test(html), 'changelog still has v2.1.40');
 
