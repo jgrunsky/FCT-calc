@@ -8,12 +8,12 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" >
 <meta name="apple-mobile-web-app-title" content="FCT Calc" >
 <!-- Cache-busting so iOS Home Screen / PWA pulls the latest build on next open.
-     Token: 2026-10-06-fct-calc-v2.1.54-same-origin-sync — bump with APP_VERSION.
+     Token: 2026-10-07-fct-calc-v2.1.55-calibration-retry — bump with APP_VERSION.
      2026-09-07 restore: Pages production = PR #16 tree (not day-pick-fix). -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<meta name="app-version" content="2026-10-06-fct-calc-v2.1.54-same-origin-sync">
+<meta name="app-version" content="2026-10-07-fct-calc-v2.1.55-calibration-retry">
 <title data-id="th-modified">FCT Load Profitability — French Camp Transport</title>
 <link rel="manifest" href='data:application/manifest+json,{"name":"FCT Load Profitability","short_name":"FCT Calc","start_url":".","display":"standalone","background_color":"%2312100e","theme_color":"%2312100e","icons":[{"src":"data:image/svg%2Bxml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 192 192%27%3E%3Crect width=%27192%27 height=%27192%27 fill=%27%2312100e%27/%3E%3Ctext x=%2796%27 y=%27124%27 font-size=%2772%27 font-family=%27sans-serif%27 font-weight=%27700%27 fill=%27%238fb590%27 text-anchor=%27middle%27%3EFCT%3C/text%3E%3C/svg%3E","sizes":"192x192","type":"image/svg+xml"}]}'>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -1428,7 +1428,7 @@
    still exposes the Import JSON box for future refreshes.
    ============================================================= */
 
-const APP_VERSION = '2026-10-06-fct-calc-v2.1.54-same-origin-sync';
+const APP_VERSION = '2026-10-07-fct-calc-v2.1.55-calibration-retry';
 const STORAGE_KEY = 'fct-calc:state';
 const IDB_NAME = 'fct-calc-db';
 const IDB_STORE = 'kv';
@@ -1495,8 +1495,9 @@ function compactStateForStorage(s){
   }
   /* v2.1.46: calibration + today's miles are runtime fetches. Persisting a
      1.15x snapshot then painting "unavailable" a second later is what made
-     EST DAY/WTD/MTD jump thousands on a quiet open. */
-  out.laneCalibration = { ok:false, lanes:{}, fleetFactor:1.0, windowDays:0, computedAt:null, error:null };
+     EST DAY/WTD/MTD jump thousands on a quiet open.
+     v2.1.55: a saved ok:false / error must not be written back either. */
+  out.laneCalibration = laneCalibrationBootSlot(s && s.laneCalibration);
   out.verizonMilesToday = { fleetMiles:0, ok:false, error:null, fetchedAt:null, date:null };
   return out;
 }
@@ -4026,8 +4027,11 @@ function loadState(){
       state = Object.assign(defaultState(), p);
       state.settings = Object.assign(defaultSettings(), p.settings||{});
       /* v2.1.46: never restore a saved calibration / miles-today blob.
-         Those are live fetches. A stale 1.15x would paint EST then drop. */
-      state.laneCalibration = { ok:false, lanes:{}, fleetFactor:1.0, windowDays:0, computedAt:null, error:null };
+         Those are live fetches. A stale 1.15x would paint EST then drop.
+         v2.1.55: a persisted ok:false / error is not copied back either.
+         The phone was painting "unavailable" from an in-memory failure;
+         a saved error must not survive the next boot. */
+      state.laneCalibration = laneCalibrationBootSlot(p && p.laneCalibration);
       state.verizonMilesToday = { fleetMiles:0, ok:false, error:null, fetchedAt:null, date:null };
       state.history = Array.isArray(p.history)?p.history:[];
       // v1.2 slots — always normalized, always merged over the shipped defaults.
@@ -10014,9 +10018,11 @@ function landingStripHTML(){
       + money2(fpm) + '/mi. Actual Verizon miles will replace this once /miles-real returns non-zero.';
 
   // ---- Tile 3: Fleet calibration ----
-  const ff = Number(lc.fleetFactor);
-  const calValid = lc.ok && isFinite(ff) && ff > 0;
-  const calFactor = calValid ? ff : 1.0;
+  const calView = calibrationTileView(lc);
+  const calValid = calView.valid;
+  const calFactor = calView.factor;
+  const calBig = calView.big;
+  const calSub = calView.sub;
   // Matches the per-load pill's color band: green ≤1.10, yellow 1.10–1.25, red >1.25
   const absDev = Math.abs(calFactor - 1.0);
   let calColor = '';
@@ -10031,11 +10037,6 @@ function landingStripHTML(){
   } else {
     calColor = 'r';
   }
-  const calArrow = !calValid ? '' : calFactor > 1.02 ? '↑' : calFactor < 0.98 ? '↓' : '·';
-  const calBig = calValid ? (calArrow + calFactor.toFixed(2) + '×') : '—';
-  const calSub = calValid
-    ? (lc.windowDays || 7) + '-day window'
-    : (lc.error ? 'unavailable' : 'awaiting data');
   const calTitle = calValid
     ? (lc.windowDays || 7) + '-day rolling actual/predicted from /calibration. '
       + 'Updates hourly + on every dispatch push. computedAt '
@@ -11526,7 +11527,7 @@ function wireDayRollup(){
     lsRefreshBtn.textContent = '↻ Refreshing…';
     const tasks = [];
     try { tasks.push(refreshVerizonMilesToday()); } catch(_){}
-    try { tasks.push(refreshLaneCalibration()); } catch(_){}
+    try { tasks.push(refreshLaneCalibration({reason:'refresh'})); } catch(_){}
     // /latest — live driver + GPS. Gated on useVerizonLive because syncFromVerizon
     // itself no-ops silently when the flag is off, and we don't want a false-positive
     // "refreshed" stamp on a fleet feed that isn't running.
@@ -11924,6 +11925,11 @@ function syncFromWorker(opts){
         save();
         paintWorkerPill();
         console.log('Worker has nothing newer — '+count+' rows, ingested at '+stamp+'. Kept the parsed day.');
+        /* CAL_SYNC_REFETCH v2.1.55: a green SYNCED pill used to return here
+           without touching /calibration. The tile then stayed on a boot
+           failure ("unavailable") even though the server had a fleet factor.
+           Nothing newer upstream still means "worker is healthy" — refetch. */
+        try { refreshLaneCalibration({reason:'sync'}); } catch(_){}
         return null;
       }
       const res = ingestWorkerPayload(payload);
@@ -12298,35 +12304,20 @@ function keepLastGoodCalibration(prev){
     error: null
   };
 }
-/* END DEVICE_DIESEL_EST */
-
-/* v2.1.21 (2026-08-21): fetch the worker's rolling per-lane calibration and
-   land it into state.laneCalibration for computeDayRow to consume. Silent
-   failure — an unavailable calibration just means everyone uses factor=1.0,
-   which is exactly what shipped in v2.1.20.
-   v2.1.46: NEVER drop a last-good snapshot. POST /dispatch-log invalidates
-   the worker cache; a GET in the same second used to return empty, flip
-   the tile to "unavailable", and restate modelled wages so EST jumped. */
-async function refreshLaneCalibration(){
-  const prevGood = (typeof keepLastGoodCalibration==='function')
-    ? keepLastGoodCalibration(state.laneCalibration) : null;
-  __calInFlight = true;
-  try {
-    const ctrl = new AbortController();
-    const to = setTimeout(()=>ctrl.abort(), 10000);
-    const r = await fetch(VERIZON_CALIBRATION_URL + '?window=7&bust=' + Date.now(),
-                          { cache:'no-store', signal:ctrl.signal });
-    clearTimeout(to);
-    if(!r.ok) throw new Error('HTTP '+r.status);
-    const j = await r.json();
-    const lanes = (j && j.lanes && typeof j.lanes === 'object') ? j.lanes : {};
-    const ff = Number((j && j.fleetFactor) || 0);
-    const hasLanes = Object.keys(lanes).length > 0;
-    /* A cache-bust empty payload is often {lanes:{}, fleetFactor:1}. That is
-       NOT a new compute — if we already have 1.15x, keep it. */
-    const looksLive = hasLanes || (isFinite(ff) && ff > 0 && Math.abs(ff - 1) > 0.001 && !(j && j.error));
-    if(looksLive && isFinite(ff) && ff > 0){
-      state.laneCalibration = {
+/* v2.1.55: a /calibration body with a real fleet factor is success even when
+   lanes is {} and even when state still holds ok:false + an error string.
+   {lanes:{}, fleetFactor:1} is the cache-bust empty payload — not a new
+   compute. Never replace a last-good snapshot with that. */
+function interpretCalibrationPayload(j, prev){
+  const lanes = (j && j.lanes && typeof j.lanes === 'object' && !Array.isArray(j.lanes)) ? j.lanes : {};
+  const ff = Number(j && j.fleetFactor);
+  const hasLanes = Object.keys(lanes).length > 0;
+  const factorLive = isFinite(ff) && ff > 0 && Math.abs(ff - 1) > 0.001;
+  const looksLive = (hasLanes && isFinite(ff) && ff > 0) || factorLive;
+  if(looksLive){
+    return {
+      retry: false,
+      state: {
         ok: true,
         lanes: lanes,
         fleetFactor: ff,
@@ -12336,41 +12327,193 @@ async function refreshLaneCalibration(){
         coverage: (j && j.coverage) || null,
         note: (j && j.note) || null,
         error: null,
-      };
-    } else if(prevGood){
-      state.laneCalibration = Object.assign({}, prevGood, {
-        stale: true,
-        error: (j && j.error) || null
-      });
-    } else {
-      state.laneCalibration = {
-        ok: false,
-        lanes: {},
-        fleetFactor: 1.0,
-        windowDays: Number((j && j.windowDays) || 0),
-        computedAt: (j && j.computedAt) || null,
-        flagged: (j && j.flagged) || [],
-        coverage: (j && j.coverage) || null,
-        note: (j && j.note) || null,
-        error: (j && j.error) || 'empty',
-      };
-    }
-    try { if(typeof refreshDay === 'function') refreshDay(); } catch(_){}
-  } catch(err){
-    if(prevGood){
-      state.laneCalibration = Object.assign({}, prevGood, {
-        error: String(err && err.message || err)
-      });
-    } else {
-      state.laneCalibration = state.laneCalibration || { lanes:{}, fleetFactor:1.0 };
-      state.laneCalibration.ok = false;
-      state.laneCalibration.error = String(err && err.message || err);
-    }
-  } finally {
-    __calInFlight = false;
-    try { markBootSettle('cal'); } catch(_){}
-    try { if(typeof renderDayRollup === 'function' && document.querySelector(DAY_HOST)) renderDayRollup(); } catch(_){}
+        stale: false
+      }
+    };
   }
+  const kept = keepLastGoodCalibration(prev);
+  if(kept){
+    return {
+      retry: true,
+      state: Object.assign({}, kept, {
+        stale: true,
+        error: (j && j.error) ? String(j.error) : null
+      })
+    };
+  }
+  return {
+    retry: true,
+    state: {
+      ok: false,
+      lanes: {},
+      fleetFactor: 1.0,
+      windowDays: Number((j && j.windowDays) || 0),
+      computedAt: (j && j.computedAt) || null,
+      flagged: (j && j.flagged) || [],
+      coverage: (j && j.coverage) || null,
+      note: (j && j.note) || null,
+      error: (j && j.error) ? String(j.error) : 'empty',
+      stale: false
+    }
+  };
+}
+/* Read last-good at apply time. A snapshot taken when the request started
+   is how a slow failure wiped a factor that landed while it was in flight. */
+function calibrationFailureState(prev, errMsg){
+  const kept = keepLastGoodCalibration(prev);
+  const msg = String(errMsg || 'failed');
+  if(kept){
+    return { retry: true, state: Object.assign({}, kept, { error: msg }) };
+  }
+  return {
+    retry: true,
+    state: {
+      ok: false,
+      lanes: {},
+      fleetFactor: 1.0,
+      windowDays: 0,
+      computedAt: null,
+      error: msg,
+      stale: false
+    }
+  };
+}
+/* Boot / save slot. Never copy a persisted ok:false error, and never copy a
+   persisted ok:true factor (that is the v2.1.46 EST jump). */
+function laneCalibrationBootSlot(saved){
+  /* Ignores saved. A persisted ok:false error must not be restored, and a
+     persisted ok:true factor must not be restored either (v2.1.46 — painting
+     it, then dropping it, jumps EST). */
+  void saved;
+  return { ok:false, lanes:{}, fleetFactor:1.0, windowDays:0, computedAt:null, error:null };
+}
+function calibrationWriteAllowed(seq, latestSeq){
+  return seq === latestSeq;
+}
+function calibrationTileView(lc){
+  lc = lc || {};
+  const ff = Number(lc.fleetFactor);
+  const calValid = !!(lc.ok && isFinite(ff) && ff > 0);
+  const calFactor = calValid ? ff : 1.0;
+  const calArrow = !calValid ? '' : calFactor > 1.02 ? '↑' : calFactor < 0.98 ? '↓' : '·';
+  return {
+    valid: calValid,
+    factor: calFactor,
+    big: calValid ? (calArrow + calFactor.toFixed(2) + '×') : '—',
+    sub: calValid
+      ? ((lc.windowDays || 7) + '-day window')
+      : (lc.error ? 'unavailable' : 'awaiting data')
+  };
+}
+/* END DEVICE_DIESEL_EST */
+
+/* v2.1.21 (2026-08-21): fetch the worker's rolling per-lane calibration and
+   land it into state.laneCalibration for computeDayRow to consume. Silent
+   failure — an unavailable calibration just means everyone uses factor=1.0,
+   which is exactly what shipped in v2.1.20.
+   v2.1.46: NEVER drop a last-good snapshot. POST /dispatch-log invalidates
+   the worker cache; a GET in the same second used to return empty, flip
+   the tile to "unavailable", and restate modelled wages so EST jumped.
+   v2.1.55: a failed or empty fetch retries. A later success replaces
+   ok:false / error. An older in-flight failure must not clobber that. */
+var __calSeq = 0;
+var __calAbort = null;
+var __calFlight = null;
+var __calRetryTimer = null;
+var __calRetryAttempt = 0;
+var __calForegroundTimer = null;
+var CAL_RETRY_BACKOFF_MS = [4000, 12000, 30000, 60000];
+function clearCalibrationRetryTimer(){
+  if(__calRetryTimer){ clearTimeout(__calRetryTimer); __calRetryTimer = null; }
+}
+function scheduleCalibrationRetry(){
+  if(__calRetryTimer) return;
+  if(typeof document !== 'undefined' && document.hidden) return;
+  if(__calRetryAttempt >= CAL_RETRY_BACKOFF_MS.length) return;
+  const delay = CAL_RETRY_BACKOFF_MS[__calRetryAttempt];
+  __calRetryAttempt++;
+  __calRetryTimer = setTimeout(function(){
+    __calRetryTimer = null;
+    refreshLaneCalibration({reason:'retry'});
+  }, delay);
+}
+function scheduleCalibrationForeground(reason){
+  if(typeof document !== 'undefined' && document.hidden) return;
+  if(__calForegroundTimer) clearTimeout(__calForegroundTimer);
+  __calForegroundTimer = setTimeout(function(){
+    __calForegroundTimer = null;
+    if(typeof document !== 'undefined' && document.hidden) return;
+    refreshLaneCalibration({reason: reason || 'visible'});
+  }, 700);
+}
+function paintLaneCalibration(){
+  try { if(typeof refreshDay === 'function') refreshDay(); } catch(_){}
+  try { markBootSettle('cal'); } catch(_){}
+  try { if(typeof renderDayRollup === 'function' && document.querySelector(DAY_HOST)) renderDayRollup(); } catch(_){}
+}
+async function refreshLaneCalibrationAttempt(seq, ctrl){
+  __calInFlight = true;
+  let paint = false;
+  try {
+    const to = setTimeout(function(){ try{ ctrl.abort(); }catch(_){} }, 10000);
+    const r = await fetch(VERIZON_CALIBRATION_URL + '?window=7&bust=' + Date.now(),
+                          { cache:'no-store', signal:ctrl.signal });
+    clearTimeout(to);
+    if(!r.ok){
+      if(!calibrationWriteAllowed(seq, __calSeq)) return;
+      throw new Error('HTTP '+r.status);
+    }
+    const j = await r.json();
+    /* Last-good is read NOW, not when this request started. A live factor
+       is applied even if a newer attempt has started — an ok:false error
+       must not outlive a successful body. Empty/failure from a stale
+       attempt is ignored so it cannot wipe that factor. */
+    const outcome = interpretCalibrationPayload(j, state.laneCalibration);
+    const live = !!(outcome.state && outcome.state.ok && !outcome.retry);
+    if(!live && !calibrationWriteAllowed(seq, __calSeq)) return;
+    state.laneCalibration = outcome.state;
+    if(live){
+      __calRetryAttempt = 0;
+      clearCalibrationRetryTimer();
+    } else if(outcome.retry){
+      scheduleCalibrationRetry();
+    }
+    paint = true;
+  } catch(err){
+    if(!calibrationWriteAllowed(seq, __calSeq)) return;
+    const outcome = calibrationFailureState(state.laneCalibration, err && err.message || err);
+    if(!calibrationWriteAllowed(seq, __calSeq)) return;
+    state.laneCalibration = outcome.state;
+    if(outcome.retry) scheduleCalibrationRetry();
+    paint = true;
+  } finally {
+    if(__calAbort === ctrl) __calAbort = null;
+    /* Clear in-flight before paint so EST can leave the frozen number.
+       Only the latest attempt owns the flag; a stale success still paints
+       the tile (the factor is already in state). */
+    if(calibrationWriteAllowed(seq, __calSeq)) __calInFlight = false;
+    if(paint) paintLaneCalibration();
+  }
+}
+async function refreshLaneCalibration(opts){
+  opts = opts || {};
+  const reason = String(opts.reason || '');
+  const force = reason === 'refresh';
+  if(reason !== 'retry'){
+    __calRetryAttempt = 0;
+    clearCalibrationRetryTimer();
+  }
+  if(__calFlight && !force) return __calFlight;
+  const seq = ++__calSeq;
+  if(force && __calAbort){ try { __calAbort.abort(); } catch(_){} }
+  const ctrl = new AbortController();
+  __calAbort = ctrl;
+  const run = refreshLaneCalibrationAttempt(seq, ctrl);
+  __calFlight = run;
+  run.then(function(){}, function(){}).finally(function(){
+    if(__calFlight === run) __calFlight = null;
+  });
+  return run;
 }
 
 /* v2.1.26 (2026-08-24): after diesel / MPG / default driver rate is saved
@@ -12426,7 +12569,10 @@ async function pushDispatchLog(opts){
   opts = opts || {};
   const nDays = Math.max(1, Math.min(14, opts.days || 8));  // yesterday + prior week
   const li = state.dayRollup && state.dayRollup.lastImport;
-  if(!li || !Array.isArray(li.rows) || !li.rows.length) return;
+  if(!li || !Array.isArray(li.rows) || !li.rows.length){
+    try { await refreshLaneCalibration({reason:'sync'}); } catch(_){}
+    return;
+  }
   // Group by date, keep the N most recent dates that have rows.
   const byDate = {};
   li.rows.forEach(r => {
@@ -12434,7 +12580,10 @@ async function pushDispatchLog(opts){
     (byDate[r.date] = byDate[r.date] || []).push(r);
   });
   const dates = Object.keys(byDate).sort().slice(-nDays);
-  if(!dates.length) return;
+  if(!dates.length){
+    try { await refreshLaneCalibration({reason:'sync'}); } catch(_){}
+    return;
+  }
   const days = dates.map(date => ({
     date,
     rows: byDate[date].map(r => ({
@@ -12461,12 +12610,15 @@ async function pushDispatchLog(opts){
     // "unavailable", and drop EST by thousands. Wait, then refetch.
     // keepLastGoodCalibration covers a still-empty response.
     await new Promise(function(res){ setTimeout(res, 2500); });
-    await refreshLaneCalibration();
+    await refreshLaneCalibration({reason:'sync'});
   } catch(err){
     // Non-fatal — calc still works with whatever calibration was cached.
+    // POST failed, so the worker cache was not invalidated. GET anyway:
+    // a cached fleet factor must still be able to clear ok:false.
     if(state.laneCalibration){
       state.laneCalibration.lastPushError = String(err && err.message || err);
     }
+    try { await refreshLaneCalibration({reason:'sync'}); } catch(_){}
   }
 }
 
@@ -15465,16 +15617,24 @@ window.addEventListener('resize',closeSugPop);
        2. fetch the resulting /calibration and apply factors to per-load
           fuel/wear in computeDayRow.
      Both are silent-fail; a missing calibration just means factor=1.0.
-     Refetch every hour so a fresh POST from another tab/day rolls in. */
+     Refetch every hour so a fresh POST from another tab/day rolls in.
+     v2.1.55: iOS Home Screen resumes this page without re-running boot, and
+     there was no visibility hook — a failed fetch stayed on the tile until
+     the hourly timer, which the OS suspends in the background. Resume,
+     pageshow (bfcache), and coming back online refetch. Failures also
+     retry on a short backoff. */
   setTimeout(()=>{
     pushDispatchLog({days:8}).catch(()=>{});
   }, 2500);  // let boot settle first
   setTimeout(()=>{
-    refreshLaneCalibration();
+    refreshLaneCalibration({reason:'boot'});
   }, 1200);  // read cached calibration while POST runs in parallel
   setInterval(()=>{
-    if(!document.hidden) refreshLaneCalibration();
+    if(!document.hidden) refreshLaneCalibration({reason:'hourly'});
   }, 60 * 60 * 1000);
+  document.addEventListener('visibilitychange', function(){ scheduleCalibrationForeground('visible'); });
+  window.addEventListener('pageshow', function(){ scheduleCalibrationForeground('visible'); });
+  window.addEventListener('online', function(){ scheduleCalibrationForeground('online'); });
 
   if(STORAGE_ENV.warnings.length){
     showStorageError('Storage warning', STORAGE_ENV.warnings.join(' '), {severity:'warn'});
@@ -15745,6 +15905,10 @@ SHADOW_TIMELINE_TEXT['2026-07-28'] = "**PARTIAL DAY — Phase 2 diff loop stoppe
 
 /* ---- v2.0 DATA: Changelog (in-app version history) ---- */
 const SHADOW_CHANGELOG = [
+  { ver:'v2.1.55-calibration-retry', date:'2026-10-07', changes:[
+    'Today CALIBRATION stayed on — / unavailable on the phone while /api/verizon/calibration already had a fleet factor (0.87, lanes empty, 7-day coverage). A failed or empty fetch now retries (4s, 12s, 30s, 60s). Opening the app again, the Refresh button, and a successful dispatch sync (including “nothing newer”) refetch it. A saved ok:false error is not restored on boot, and a real factor clears that error',
+    'v2.1.46 still holds: an empty {lanes:{}, fleetFactor:1} response does not drop the last good factor, and EST DAY/WTD/MTD do not jump across that refetch. Same-origin /api proxy from v2.1.54 is unchanged'
+  ]},
   { ver:'v2.1.54-same-origin-sync', date:'2026-10-06', changes:[
     'Dispatch, Fleet, miles, and calibration now load through this site (/api/dispatch and /api/verizon). The phone no longer calls the worker host, which iOS Safe Browsing was blocking — that is what left the red Worker offline pill up while the worker itself was healthy',
     'A saved dispatch URL on that blocked host is rewritten to /api/dispatch/latest on load and on Sync. Excel / Power Automate still POST ingest straight to the dispatch worker; this site does not forward ingest',
