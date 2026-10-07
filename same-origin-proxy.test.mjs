@@ -127,8 +127,8 @@ function mockFetch(handler) {
   assert.equal((await res.json()).error, 'upstream_unreachable');
 }
 
-assert.ok(/const APP_VERSION = '2026-10-06-fct-calc-v2\.1\.54-same-origin-sync'/.test(html), 'APP_VERSION bumped');
-assert.ok(/name="app-version" content="2026-10-06-fct-calc-v2\.1\.54-same-origin-sync"/.test(html), 'meta app-version bumped');
+assert.ok(/const APP_VERSION = '2026-10-07-fct-calc-v2\.1\.55-calibration-retry'/.test(html), 'APP_VERSION bumped');
+assert.ok(/name="app-version" content="2026-10-07-fct-calc-v2\.1\.55-calibration-retry"/.test(html), 'meta app-version bumped');
 assert.ok(!/workers\.dev/i.test(html), 'the page the phone loads must not name a workers.dev host');
 
 assert.ok(/const WORKER_URL = '\/api\/dispatch\/latest'/.test(html), 'dispatch default is same-origin');
