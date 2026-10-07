@@ -32,6 +32,7 @@ updates the script only. Do not put the ingest key in git, logs, or
 responses. `GET /latest` stays public. CORS is `*`.
 
 The v2.1.54 phone fix does **not** need a worker deploy. Ingest is unchanged.
+v2.1.55 (calibration tile retry) is calc-only as well — Pages only.
 
 ## Deploy the Pages proxy (phone sync)
 
@@ -56,7 +57,7 @@ curl -s -o /dev/null -w '%{http_code}\n' -X POST https://fct-dispatch.jamesgruns
 ```
 
 On the phone, open FCT Calc and reload when the new-build banner shows
-`fct-calc-v2.1.54-same-origin-sync`, then tap Refresh. The pill should
+`fct-calc-v2.1.55-calibration-retry`, then tap Refresh. The pill should
 leave Worker offline. The header version is the cache-bust token.
 
 ## Endpoints
