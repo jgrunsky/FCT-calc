@@ -69,7 +69,13 @@ export default {
       }
       const parsed = await readIngestRequest(request);
       if(parsed.kind === 'bad'){
-        return json({ error: parsed.error || 'bad_json' }, 400);
+        /* bodyBytes/headHex: first 16 wire bytes so a PA 400 shows empty vs `{` vs PK.
+           Never echo INGEST_KEY / X-FCT-Key. */
+        return json({
+          error: parsed.error || 'bad_json',
+          bodyBytes: Number.isFinite(parsed.bodyBytes) ? parsed.bodyBytes : 0,
+          headHex: typeof parsed.headHex === 'string' ? parsed.headHex : ''
+        }, 400);
       }
       const payload = latestPayloadFromRows(parsed.rows);
       await env.DISPATCH.put(KV_LATEST, JSON.stringify(payload));

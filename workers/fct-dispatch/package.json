@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node src/ingest.test.mjs",
+    "test": "node src/ingest.test.mjs && node src/ingest.web.test.mjs",
     "deploy": "wrangler deploy"
   },
   "dependencies": {

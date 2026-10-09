@@ -1,4 +1,6 @@
 name = "fct-dispatch"
+# Git Builds root must be this directory (workers/fct-dispatch).
+# npx wrangler deploy bundles main + ./ingest.js + ./xlsx-rows.js (esbuild).
 main = "src/index.js"
 compatibility_date = "2026-08-26"
 workers_dev = true

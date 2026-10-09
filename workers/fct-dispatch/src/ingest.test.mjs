@@ -6,8 +6,14 @@ import {
   looksLikeZipXlsx,
   decodeBase64,
   extractBase64FromEnvelope,
+  extractBase64FromMalformed,
+  extractBase64ZipFromText,
+  extractBase64ZipFromBytes,
+  collapseUtf16Ascii,
   normalizeIngestJson,
-  latestPayloadFromRows
+  latestPayloadFromRows,
+  rowsFromRawEnvelopeText,
+  headHexOf
 } from './ingest.js';
 import { WORKER_FIELDS, DISPATCH_SHEET, aoaToWorkerRows } from './xlsx-rows.js';
 
@@ -50,6 +56,53 @@ async function call(env, path, opts){
   return { status: res.status, text, json, headers: res.headers };
 }
 
+async function postIngest(env, body, extraHeaders){
+  const headers = { 'X-FCT-Key': INGEST_KEY, ...(extraHeaders || {}) };
+  const req = new Request(ORIGIN + '/ingest', { method: 'POST', headers, body });
+  if(!extraHeaders || !Object.keys(extraHeaders).some(k => k.toLowerCase() === 'content-type')){
+    req.headers.delete('Content-Type');
+  }
+  const res = await worker.fetch(req, env);
+  const text = await res.text();
+  let json = null;
+  try { json = JSON.parse(text); } catch(_){}
+  return { status: res.status, text, json, headers: res.headers };
+}
+
+function buildXlsxOnSheet(sheetName){
+  const aoa = [
+    ['Time', 'PO / Rel #', 'Driver', 'Grower / Origin', 'FB #', 'Commodity', 'Truck', 'Status', 'Extra'],
+    ['', '', '', 46023, '', '', '', '', ''],
+    ['9am', '75811-49', 'SAL', 'PNG', '192563', 'Barley-1850', '64/65', 'DELIVERED', '']
+  ];
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, sheetName);
+  return Buffer.from(XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }));
+}
+
+function buildXlsxNearBase64Len(targetLen){
+  const aoa = [
+    ['Time', 'PO / Rel #', 'Driver', 'Grower / Origin', 'FB #', 'Commodity', 'Truck', 'Status', 'Extra'],
+    ['', '', '', 46023, '', '', '', '', ''],
+    ['', '', '', 'D.P. LATHROP', '', '', '', '', ''],
+    ['9am', '75811-49', 'SAL', 'PNG', '192563', 'Barley-1850', '64/65', 'DELIVERED', ''],
+    ['0.25', '75575-106', 'RAFA', 'PNG', '192886', 'Fava Beans-1623', '49/50', 'DELIVERED', '346-14']
+  ];
+  const blob = 'Z'.repeat(4000);
+  let buf = buildDispatchXlsx();
+  for(let n = 0; n < 8000; n++){
+    aoa.push(['9am', 'P' + n, 'SAL', 'PNG', '1', blob, '64/65', 'DELIVERED', 'x']);
+    if(n % 10 !== 9) continue;
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, DISPATCH_SHEET);
+    buf = Buffer.from(XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }));
+    if(buf.toString('base64').length >= targetLen) return buf;
+  }
+  return buf;
+}
+
 {
   assert.equal(WORKER_FIELDS.join(','), 'time,po,driver,origin,fb,commodity,truck,status,extra');
   const mapped = aoaToWorkerRows([['9am', '1', 'SAL', 'PNG', '192563', 'Barley', '64/65', 'DELIVERED', 'x']]);
@@ -63,6 +116,12 @@ async function call(env, path, opts){
   assert.equal(ingestKeyOk({ headers: { get: () => null } }, { INGEST_KEY }), false);
   assert.equal(ingestKeyOk(req, { INGEST_KEY: '' }), false);
   assert.equal(ingestKeyOk({ headers: { get: () => 'nope' } }, { INGEST_KEY }), false);
+}
+
+{
+  assert.equal(headHexOf(new Uint8Array(0), 16), '');
+  assert.equal(headHexOf(new Uint8Array([0x50, 0x4b, 0x03, 0x04]), 16), '504b0304');
+  assert.equal(headHexOf(new TextEncoder().encode('{"$content-type"'), 16), '7b2224636f6e74656e742d7479706522');
 }
 
 {
@@ -120,6 +179,24 @@ async function call(env, path, opts){
 
   const decoded = decodeBase64(b64);
   assert.ok(looksLikeZipXlsx(decoded));
+}
+
+{
+  const xlsx = buildDispatchXlsx();
+  const b64 = xlsx.toString('base64');
+  const orig = globalThis.Buffer;
+  globalThis.Buffer = {
+    from(){ throw new Error('nodejs_compat missing'); },
+    alloc(){ throw new Error('nodejs_compat missing'); },
+    isBuffer(){ return false; }
+  };
+  try {
+    const decoded = decodeBase64(b64);
+    assert.ok(looksLikeZipXlsx(decoded));
+    assert.equal(decoded[0], 0x50);
+  } finally {
+    globalThis.Buffer = orig;
+  }
 }
 
 {
@@ -195,6 +272,8 @@ async function call(env, path, opts){
   });
   assert.equal(posted.status, 200, posted.text);
   assert.ok(posted.json.rowCount >= 4);
+  assert.equal(Object.prototype.hasOwnProperty.call(posted.json, 'bodyBytes'), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(posted.json, 'headHex'), false);
 }
 
 {
@@ -218,7 +297,31 @@ async function call(env, path, opts){
   });
   assert.equal(bad.status, 400);
   assert.equal(bad.json.error, 'bad_json');
+  assert.equal(bad.json.bodyBytes, '{not json'.length);
+  assert.equal(bad.json.headHex, '7b6e6f74206a736f6e');
+  assert.deepEqual(Object.keys(bad.json).sort(), ['bodyBytes', 'error', 'headHex']);
   assert.equal(JSON.stringify(bad.json).includes(INGEST_KEY), false);
+}
+
+{
+  const env = mockEnv();
+  const empty = await postIngest(env, new Uint8Array(0));
+  assert.equal(empty.status, 400);
+  assert.equal(empty.json.error, 'empty_body');
+  assert.equal(empty.json.bodyBytes, 0);
+  assert.equal(empty.json.headHex, '');
+  assert.deepEqual(Object.keys(empty.json).sort(), ['bodyBytes', 'error', 'headHex']);
+  assert.equal(JSON.stringify(empty.json).includes(INGEST_KEY), false);
+}
+
+{
+  const env = mockEnv();
+  const objStr = await postIngest(env, '[object Object]');
+  assert.equal(objStr.status, 400);
+  assert.equal(objStr.json.error, 'bad_json');
+  assert.equal(objStr.json.bodyBytes, 15);
+  assert.equal(objStr.json.headHex, '5b6f626a656374204f626a6563745d');
+  assert.equal(JSON.stringify(objStr.json).includes(INGEST_KEY), false);
 }
 
 {
@@ -230,6 +333,8 @@ async function call(env, path, opts){
   });
   assert.equal(unauth.status, 401);
   assert.equal(unauth.json.error, 'unauthorized');
+  assert.equal(Object.prototype.hasOwnProperty.call(unauth.json, 'bodyBytes'), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(unauth.json, 'headHex'), false);
 }
 
 {
@@ -263,6 +368,213 @@ async function call(env, path, opts){
   });
   assert.equal(notXlsx.status, 400);
   assert.equal(notXlsx.json.error, 'bad_xlsx');
+  assert.ok(notXlsx.json.bodyBytes > 16);
+  assert.equal(notXlsx.json.headHex.slice(0, 2), '7b');
+  assert.deepEqual(Object.keys(notXlsx.json).sort(), ['bodyBytes', 'error', 'headHex']);
+}
+
+{
+  const xlsx = buildDispatchXlsx();
+  const b64 = xlsx.toString('base64');
+  const paBody = '{"$content-type":"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet","$content":"' + b64 + '"}';
+  assert.equal(JSON.parse(paBody).$content.slice(0, 6), 'UEsDBB');
+  const fromRaw = rowsFromRawEnvelopeText(paBody);
+  assert.equal(fromRaw.kind, 'rows');
+  assert.equal(fromRaw.source, 'xlsx');
+  assert.ok(fromRaw.rows.length >= 4);
+}
+
+{
+  const env = mockEnv();
+  const xlsx = buildDispatchXlsx();
+  const b64 = xlsx.toString('base64');
+  const mid = Math.max(8, Math.floor(b64.length / 2));
+  const broken = '{"$content-type":"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet","$content":"'
+    + b64.slice(0, mid) + '\n' + b64.slice(mid) + '"}';
+  let parseFailed = false;
+  try { JSON.parse(broken); } catch(_){ parseFailed = true; }
+  assert.equal(parseFailed, true, 'fixture must be invalid JSON (unescaped newline in $content)');
+  assert.ok(extractBase64FromMalformed(broken).replace(/\s+/g, '').length > 20);
+  assert.ok(extractBase64ZipFromText(broken).startsWith('UEsDBB'));
+
+  const posted = await call(env, '/ingest', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-FCT-Key': INGEST_KEY },
+    body: broken
+  });
+  assert.equal(posted.status, 200, posted.text);
+  assert.equal(posted.json.ok, true);
+  assert.ok(posted.json.rowCount >= 4);
+
+  const latest = await call(env, '/latest');
+  assert.equal(latest.status, 200);
+  assert.equal(latest.json.rows[3].po, '75811-49');
+  assert.ok(latest.json.ingestedAt);
+  assert.equal(Object.prototype.hasOwnProperty.call(latest.json, 'format'), false);
+}
+
+{
+  const env = mockEnv();
+  const xlsx = buildDispatchXlsx();
+  const envelope = JSON.stringify({
+    '$content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    $content: xlsx.toString('base64')
+  });
+  const posted = await call(env, '/ingest', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json; charset=utf-16', 'X-FCT-Key': INGEST_KEY },
+    body: Buffer.from(envelope, 'utf16le')
+  });
+  assert.equal(posted.status, 200, posted.text);
+  assert.ok(posted.json.rowCount >= 4);
+}
+
+{
+  const env = mockEnv();
+  const xlsx = buildDispatchXlsx();
+  const posted = await call(env, '/ingest', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-FCT-Key': INGEST_KEY },
+    body: JSON.stringify({
+      '$content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      $content: xlsx.toString('latin1')
+    })
+  });
+  assert.equal(posted.status, 200, posted.text);
+  assert.ok(posted.json.rowCount >= 4);
+  const latest = await call(env, '/latest');
+  assert.equal(latest.json.rows[3].driver, 'SAL');
+}
+
+{
+  const env = mockEnv();
+  const xlsx = buildDispatchXlsx();
+  const posted = await call(env, '/ingest', {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain', 'X-FCT-Key': INGEST_KEY },
+    body: xlsx.toString('base64')
+  });
+  assert.equal(posted.status, 200, posted.text);
+  assert.ok(posted.json.rowCount >= 4);
+}
+
+{
+  const typeOnly = '{"$content-type":"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}';
+  assert.equal(extractBase64FromMalformed(typeOnly), '');
+  const b64 = buildDispatchXlsx().toString('base64');
+  const pa = '{"$content-type":"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet","$content":"' + b64 + '"}';
+  const extracted = extractBase64FromMalformed(pa);
+  assert.equal(extracted, b64);
+  assert.equal(extracted.slice(0, 6), 'UEsDBB');
+  assert.ok(!extracted.includes('spreadsheet'));
+}
+
+{
+  const env = mockEnv();
+  const xlsx = buildXlsxOnSheet('2026 New');
+  const posted = await postIngest(env, JSON.stringify({
+    '$content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    $content: xlsx.toString('base64')
+  }));
+  assert.equal(posted.status, 200, posted.text);
+  assert.ok(posted.json.rowCount >= 3);
+  const latest = await call(env, '/latest');
+  assert.equal(latest.json.rows[2].po, '75811-49');
+}
+
+{
+  const env = mockEnv();
+  const xlsx = buildXlsxNearBase64Len(785008);
+  const b64 = xlsx.toString('base64');
+  assert.ok(b64.length >= 785008, 'need ~785k-char $content, got ' + b64.length);
+  assert.equal(b64.slice(0, 6), 'UEsDBB');
+  const decoded = decodeBase64(b64);
+  assert.ok(looksLikeZipXlsx(decoded));
+  assert.equal(decoded[2], 0x03);
+  assert.equal(decoded[3], 0x04);
+
+  const paBody = '{"$content-type":"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet","$content":"' + b64 + '"}';
+  assert.ok(Math.abs(JSON.parse(paBody).$content.length - b64.length) < 1);
+  const fromBytes = extractBase64ZipFromBytes(Buffer.from(paBody, 'utf8'));
+  assert.equal(fromBytes.slice(0, 6), 'UEsDBB');
+  assert.equal(fromBytes.length, b64.length);
+
+  const req = new Request(ORIGIN + '/ingest', {
+    method: 'POST',
+    headers: { 'X-FCT-Key': INGEST_KEY },
+    body: paBody
+  });
+  req.headers.delete('Content-Type');
+  assert.equal(req.headers.get('Content-Type'), null);
+
+  const posted = await postIngest(env, paBody);
+  assert.equal(posted.status, 200, posted.text);
+  assert.equal(posted.json.ok, true);
+  assert.ok(posted.json.rowCount >= 4, 'rowCount ' + posted.json.rowCount);
+
+  const latest = await call(env, '/latest');
+  assert.equal(latest.status, 200);
+  assert.equal(latest.json.rows[3].po, '75811-49');
+  assert.ok(latest.json.ingestedAt);
+  assert.equal(Object.prototype.hasOwnProperty.call(latest.json, 'format'), false);
+}
+
+{
+  const env = mockEnv();
+  const xlsx = buildXlsxNearBase64Len(785008);
+  const b64 = xlsx.toString('base64');
+  assert.ok(b64.length >= 785008, 'need ~785k-char $content, got ' + b64.length);
+  assert.equal(b64.slice(0, 6), 'UEsDBB');
+  const paBody = '{"$content-type":"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet","$content":"' + b64 + '"}';
+  const utf16 = Buffer.from(paBody, 'utf16le');
+  assert.equal(utf16[0], 0x7b);
+  assert.equal(utf16[1], 0x00);
+  assert.ok(!utf16.includes(Buffer.from('UEsDBB')));
+  const collapsed = collapseUtf16Ascii(utf16);
+  assert.ok(collapsed.startsWith('{"$content-type"'));
+  assert.ok(collapsed.includes('UEsDBB'));
+  const fromBytes = extractBase64ZipFromBytes(utf16);
+  assert.equal(fromBytes.slice(0, 6), 'UEsDBB');
+  assert.equal(fromBytes.length, b64.length);
+
+  const req = new Request(ORIGIN + '/ingest', {
+    method: 'POST',
+    headers: { 'X-FCT-Key': INGEST_KEY },
+    body: utf16
+  });
+  req.headers.delete('Content-Type');
+  assert.equal(req.headers.get('Content-Type'), null);
+
+  const posted = await postIngest(env, utf16);
+  assert.equal(posted.status, 200, posted.text);
+  assert.equal(posted.json.ok, true);
+  assert.ok(posted.json.rowCount >= 4, 'rowCount ' + posted.json.rowCount);
+
+  const latest = await call(env, '/latest');
+  assert.equal(latest.status, 200);
+  assert.equal(latest.json.rows[3].po, '75811-49');
+}
+
+{
+  const env = mockEnv();
+  const xlsx = buildDispatchXlsx();
+  const paBody = '{"$content-type":"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet","$content":"'
+    + xlsx.toString('base64') + '"}';
+  const utf16 = Buffer.from(paBody, 'utf16le');
+  const posted = await postIngest(env, utf16, { 'Content-Type': 'application/json; charset=utf-16' });
+  assert.equal(posted.status, 200, posted.text);
+  assert.ok(posted.json.rowCount >= 4);
+}
+
+{
+  const env = mockEnv();
+  const paBody = '{"$content-type":"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet","$content":"'
+    + Buffer.from('this is not an xlsx file at all!!').toString('base64') + '"}';
+  const posted = await postIngest(env, Buffer.from(paBody, 'utf16le'));
+  assert.equal(posted.status, 400, posted.text);
+  assert.equal(posted.json.error, 'bad_xlsx');
+  assert.ok(posted.json.bodyBytes > 0);
+  assert.ok(posted.json.headHex);
 }
 
 console.log('ingest.test.mjs ok');
