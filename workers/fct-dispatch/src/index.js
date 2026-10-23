@@ -12,7 +12,7 @@
  *
  * Auth:
  *   POST requires X-FCT-Key header matching INGEST_KEY secret.
- *   GET is public but returns only the parsed dispatch data (not sensitive).
+ *   GET /latest requires X-FCT-Read-Key matching READ_KEY secret.
  *
  * KV binding: DISPATCH  (namespace stores "latest" key with JSON blob)
  * Secret:     INGEST_KEY  (shared secret with Power Automate / Office Script)
@@ -41,6 +41,17 @@ function corsHeaders(){
     'Access-Control-Allow-Headers': 'Content-Type, X-FCT-Key',
     'Cache-Control': 'no-store'
   };
+}
+
+// Security (2026-10-23): GET /latest requires X-FCT-Read-Key == READ_KEY secret.
+// The Pages proxy (fct-calc.pages.dev/api/dispatch) injects it server-side.
+function readKeyOk(request, env){
+  const got = request.headers.get('X-FCT-Read-Key');
+  const expected = env && env.READ_KEY;
+  if(!expected || typeof got !== 'string' || got.length !== expected.length) return false;
+  let d = 0;
+  for(let i = 0; i < got.length; i++) d |= got.charCodeAt(i) ^ expected.charCodeAt(i);
+  return d === 0;
 }
 
 function json(obj, status){
@@ -81,6 +92,9 @@ export default {
     }
 
     if(url.pathname === '/latest' && request.method === 'GET'){
+      if(!readKeyOk(request, env)){
+        return json({ error: 'unauthorized' }, 401);
+      }
       const raw = await env.DISPATCH.get(KV_LATEST);
       if(!raw){
         return json({ error: 'no_data', message: 'No dispatch data ingested yet' }, 404);

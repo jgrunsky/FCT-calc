@@ -107,7 +107,7 @@ function corsPreflight() {
  * @param {{ upstream: string, prefix: string, allow: (method: string, path: string) => boolean }} opts
  * @param {typeof fetch} [fetchImpl]
  */
-export async function proxyWorkerRequest(request, opts, fetchImpl) {
+export async function proxyWorkerRequest(request, opts, fetchImpl, readKey) {
   const doFetch = fetchImpl || fetch;
   const url = new URL(request.url);
   if (request.method === 'OPTIONS') return corsPreflight();
@@ -123,6 +123,8 @@ export async function proxyWorkerRequest(request, opts, fetchImpl) {
   const contentType = request.headers.get('content-type');
   if (accept) headers.set('accept', accept);
   if (contentType) headers.set('content-type', contentType);
+  // Security (2026-10-23): workers require X-FCT-Read-Key; injected server-side only.
+  if (readKey) headers.set('x-fct-read-key', readKey);
 
   const init = { method: request.method, headers, redirect: 'manual' };
   if (request.method !== 'GET' && request.method !== 'HEAD') {

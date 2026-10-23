@@ -37,6 +37,9 @@ var index_default = {
     const url = new URL(request.url);
     try {
       if (url.pathname === "/health") return json({ ok: true, ts: nowIso() });
+      // Security (2026-10-23): every non-health route needs the read key; /debug/* also needs the debug key.
+      if (!keyOk(request.headers.get("X-FCT-Read-Key"), env.READ_KEY)) return json({ error: "unauthorized" }, 401);
+      if (url.pathname.startsWith("/debug/") && !keyOk(request.headers.get("X-FCT-Debug-Key"), env.DEBUG_KEY)) return json({ error: "not_found", path: url.pathname }, 404);
       if (url.pathname === "/latest") return await handleLatest(env);
       if (url.pathname === "/debug/auth") return await handleDebugAuth(env);
       if (url.pathname === "/debug/refresh") {
@@ -58,16 +61,6 @@ var index_default = {
       }
       if (url.pathname === "/debug/probe") {
         return await handleProbe(env);
-      }
-      if (url.pathname === "/debug/reset-day") {
-        const q = url.searchParams;
-        const date = q.get("date") || fctDayKey();
-        const milesKey = `daily_miles_${date}`;
-        const before = await env.FCT_VERIZON.get(milesKey);
-        await env.FCT_VERIZON.delete(milesKey);
-        const snapKey = `snap_last_${date}`;
-        await env.FCT_VERIZON.delete(snapKey);
-        return json({ ok: true, date, cleared: !!before, previousBytes: before ? before.length : 0 });
       }
       if (url.pathname === "/signals") {
         const raw = await env.FCT_VERIZON.get(KV_KEY_SIGNALS);
@@ -181,7 +174,7 @@ var index_default = {
         return json({
           service: "fct-verizon",
           version: WORKER_VERSION,
-          endpoints: ["/health", "/latest", "/miles", "/miles-real", "/miles-today", "/miles-yesterday", "/miles/range", "/signals", "/calibration", "/canonical-settings (GET+POST/PUT)", "/dispatch-log (POST)", "/debug/auth", "/debug/token", "/debug/refresh", "/debug/miles-probe", "/debug/calibration-inputs"]
+          endpoints: ["/health", "/latest", "/miles", "/miles-real", "/miles-today", "/miles-yesterday", "/miles/range", "/signals", "/calibration", "/canonical-settings (GET+POST/PUT)", "/dispatch-log (POST)", "/debug/* (debug key required)"]
         });
       }
       return json({ error: "not_found", path: url.pathname }, 404);
@@ -821,6 +814,12 @@ async function callApi(env, token, path, opts) {
   return { ok: res.ok, status: res.status, data, raw: bodyText };
 }
 __name(callApi, "callApi");
+function keyOk(got, expected) {
+  if (!expected || typeof got !== "string" || got.length !== expected.length) return false;
+  let d = 0;
+  for (let i = 0; i < got.length; i++) d |= got.charCodeAt(i) ^ expected.charCodeAt(i);
+  return d === 0;
+}
 function json(obj, status = 200) {
   return new Response(JSON.stringify(obj, null, 2), {
     status,
