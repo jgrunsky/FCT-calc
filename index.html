@@ -8,12 +8,12 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" >
 <meta name="apple-mobile-web-app-title" content="FCT Calc" >
 <!-- Cache-busting so iOS Home Screen / PWA pulls the latest build on next open.
-     Token: 2026-09-23-fct-calc-v2.1.52-fsc-45 — bump with APP_VERSION.
+     Token: 2026-10-30-fct-calc-v2.1.53-fleet-mph — bump with APP_VERSION.
      2026-09-07 restore: Pages production = PR #16 tree (not day-pick-fix). -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<meta name="app-version" content="2026-09-23-fct-calc-v2.1.52-fsc-45">
+<meta name="app-version" content="2026-10-30-fct-calc-v2.1.53-fleet-mph">
 <title data-id="th-modified">FCT Load Profitability — French Camp Transport</title>
 <link rel="manifest" href='data:application/manifest+json,{"name":"FCT Load Profitability","short_name":"FCT Calc","start_url":".","display":"standalone","background_color":"%2312100e","theme_color":"%2312100e","icons":[{"src":"data:image/svg%2Bxml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 192 192%27%3E%3Crect width=%27192%27 height=%27192%27 fill=%27%2312100e%27/%3E%3Ctext x=%2796%27 y=%27124%27 font-size=%2772%27 font-family=%27sans-serif%27 font-weight=%27700%27 fill=%27%238fb590%27 text-anchor=%27middle%27%3EFCT%3C/text%3E%3C/svg%3E","sizes":"192x192","type":"image/svg+xml"}]}'>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -1425,7 +1425,7 @@
    still exposes the Import JSON box for future refreshes.
    ============================================================= */
 
-const APP_VERSION = '2026-09-23-fct-calc-v2.1.52-fsc-45';
+const APP_VERSION = '2026-10-30-fct-calc-v2.1.53-fleet-mph';
 const STORAGE_KEY = 'fct-calc:state';
 const IDB_NAME = 'fct-calc-db';
 const IDB_STORE = 'kv';
@@ -6191,6 +6191,137 @@ function fleetHasGps(v){
   return !!(loc && typeof loc.Latitude === "number" && typeof loc.Longitude === "number");
 }
 
+/* FLEET_SPEED_START */
+// Verizon Reveal RAD Speed is kilometers per hour (GET location and GET status).
+// 0.621371 matches milesFromSegmentsResponse / OdometerInKM on this worker.
+// Raw Speed stays kph. SpeedMph is miles per hour — do not convert it again.
+const KPH_TO_MPH = 0.621371;
+// Worker cron is every 10 minutes. A fix older than 15 is not current speed.
+// The Oct 30 2026 Fleet screenshot fixes were 4 minutes old and still current.
+const SPEED_FRESH_MINUTES = 15;
+const MOVING_MPH = 1;
+
+function kphToMph(kph) {
+  if (kph == null || kph === "") return null;
+  const n = Number(kph);
+  if (!Number.isFinite(n) || n < 0) return null;
+  return n * KPH_TO_MPH;
+}
+
+function gpsAgeMinutes(loc, nowMs) {
+  const raw = loc && loc.UpdateUTC;
+  if (raw == null || raw === "") return null;
+  const s = String(raw).trim();
+  if (!s) return null;
+  const hasZone = /(?:[zZ]|[+-]\d{2}:?\d{2})$/.test(s);
+  const ms = Date.parse(hasZone ? s : s + "Z");
+  if (!Number.isFinite(ms)) return null;
+  const now = nowMs == null || nowMs === "" ? Date.now() : Number(nowMs);
+  const age = Math.floor((now - ms) / 60000);
+  if (!Number.isFinite(age)) return null;
+  if (age < 0) return 0;
+  return age;
+}
+
+function normalizeDisplayState(loc) {
+  const raw = loc && loc.DisplayState != null ? String(loc.DisplayState).trim().toLowerCase() : "";
+  if (raw === "1" || raw === "moving") return "moving";
+  if (raw === "2" || raw === "stop" || raw === "stopped" || raw === "park" || raw === "parked") return "stop";
+  if (raw === "3" || raw === "towing") return "towing";
+  if (raw === "0" || raw === "coverage") return "coverage";
+  if (raw === "5" || raw === "panic") return "panic";
+  if (raw === "6" || raw === "privacy") return "privacy";
+  if (raw === "idle" || raw === "idling") return "idle";
+  return raw;
+}
+
+function ignitionIsOff(loc) {
+  if (!loc || typeof loc !== "object") return false;
+  if (loc.IgnitionOn === false || loc.IgnitionOn === 0 || loc.IgnitionOn === "0" || loc.IgnitionOn === "false") return true;
+  if (loc.EngineOn === false || loc.EngineOn === 0 || loc.EngineOn === "0" || loc.EngineOn === "false") return true;
+  if (loc.KeyOn === false || loc.KeyOn === 0 || loc.KeyOn === "0" || loc.KeyOn === "false") return true;
+  for (const key of ["Ignition", "IgnitionStatus", "EngineStatus"]) {
+    if (loc[key] == null || loc[key] === "") continue;
+    const s = String(loc[key]).trim().toLowerCase();
+    if (s === "off" || s === "false" || s === "0" || s === "ignition off" || s === "engine off") return true;
+  }
+  return false;
+}
+
+function speedMphFromLocation(loc) {
+  if (!loc || typeof loc !== "object") return null;
+  if (loc.SpeedMph != null && loc.SpeedMph !== "") {
+    const stamped = Number(loc.SpeedMph);
+    if (Number.isFinite(stamped) && stamped >= 0) return stamped;
+  }
+  const kph = loc.SpeedKph != null && loc.SpeedKph !== "" ? loc.SpeedKph : loc.Speed;
+  return kphToMph(kph);
+}
+
+function annotateLocationSpeed(loc) {
+  if (!loc || typeof loc !== "object" || Array.isArray(loc)) return loc;
+  const kph = loc.SpeedKph != null && loc.SpeedKph !== "" ? loc.SpeedKph : loc.Speed;
+  const mph = kphToMph(kph);
+  if (mph == null) return loc;
+  return { ...loc, SpeedKph: Number(kph), SpeedMph: mph };
+}
+
+function fleetMotion(loc, nowMs) {
+  const ageMin = gpsAgeMinutes(loc, nowMs);
+  const mph = speedMphFromLocation(loc);
+  const state = normalizeDisplayState(loc);
+  const heading = loc && loc.Heading != null ? String(loc.Heading).trim() : "";
+  const fresh = ageMin != null && ageMin <= SPEED_FRESH_MINUTES;
+  const base = { ageMin, heading: "", mph: null, isMoving: false };
+
+  if (!fresh || state === "coverage") {
+    return { ...base, kind: "stale" };
+  }
+  if (ignitionIsOff(loc)) {
+    return { ...base, kind: "ignition-off" };
+  }
+  if (state === "stop" || state === "privacy") {
+    return { ...base, kind: "parked" };
+  }
+  if (state === "idle") {
+    return { ...base, kind: "idle" };
+  }
+  if (state === "panic") {
+    return { ...base, kind: "stopped" };
+  }
+  const driving = state === "moving" || state === "towing" || state === "";
+  if (driving && mph != null && mph >= MOVING_MPH) {
+    return { kind: "moving", isMoving: true, mph, heading, ageMin };
+  }
+  return { ...base, kind: "stopped" };
+}
+
+function fleetSpeedText(loc, nowMs) {
+  const m = fleetMotion(loc, nowMs);
+  if (m.kind === "moving") {
+    const rounded = Math.round(m.mph);
+    return m.heading ? rounded + " mph " + m.heading : rounded + " mph";
+  }
+  if (m.kind === "idle") return "idling";
+  if (m.kind === "parked") return "parked";
+  if (m.kind === "ignition-off") return "ignition off";
+  if (m.kind === "stale") return "stale GPS";
+  return "stopped";
+}
+/* FLEET_SPEED_END */
+function fleetStateBadge(loc, nowMs, isHome, tone){
+  const motion = fleetMotion(loc, nowMs);
+  const movingColor = tone === 'trailer' ? '#7dd3fc' : 'var(--green)';
+  const heldColor = tone === 'trailer' ? '#c4b5fd' : 'var(--amber)';
+  if(motion.isMoving){
+    return `<span style="color:${movingColor};font-weight:600;font-size:11px;text-transform:uppercase">▶ ${esc(fleetSpeedText(loc, nowMs))}</span>`;
+  }
+  if(isHome){
+    return `<span style="color:var(--text-muted);font-size:11px;text-transform:uppercase">⌂ yard</span>`;
+  }
+  return `<span style="color:${heldColor};font-size:11px;text-transform:uppercase">■ ${esc(fleetSpeedText(loc, nowMs))}</span>`;
+}
+
 function verizonDriverStatus(fctName){
   const vl = state.verizonLive;
   if(!vl || !vl.vehicles || !vl.vehicles.length) return null;
@@ -6223,12 +6354,12 @@ function verizonDriverStatus(fctName){
   });
   if(!match) return null;
   const loc = match._location || {};
-  const gpsMs = loc.UpdateUTC ? Date.parse(loc.UpdateUTC + 'Z') : 0;
-  const ageMin = gpsMs ? Math.floor((Date.now() - gpsMs) / 60000) : null;
-  const isMoving = loc.Speed > 0;
+  const ageMin = gpsAgeMinutes(loc);
+  const motion = fleetMotion(loc);
+  const isMoving = motion.isMoving;
   const isHome = /home terminal/i.test(String(loc.GeoFenceName||''));
   const addr = (loc.Address && loc.Address.AddressLine1) || loc.GeoFenceName || '';
-  const status = isMoving ? 'moving' : (isHome ? 'yard' : 'stopped');
+  const status = isMoving ? 'moving' : (isHome ? 'yard' : (motion.kind === 'stale' ? 'stale' : 'stopped'));
   const truckId = String(match.Name || match.VehicleNumber || '');
   const readyTs = state.verizonLive.readyOverrides && state.verizonLive.readyOverrides[truckId];
   const readyOverride = !!(readyTs && (Date.now() - Number(readyTs) < 4*60*60*1000));
@@ -6239,8 +6370,8 @@ function verizonDriverStatus(fctName){
     status, isMoving, isHome, readyOverride,
     // Effective availability: available if at yard, or manually marked ready, or stopped at customer > 30 min AND not moving
     available: isHome || readyOverride || (!isMoving && status === 'stopped' && ageMin != null && ageMin > 30),
-    speed: loc.Speed || 0,
-    heading: loc.Heading || '',
+    speed: isMoving && motion.mph != null ? motion.mph : 0,
+    heading: isMoving ? motion.heading : '',
     addr,
     ageMin,
     fresh: ageMin != null && ageMin < 30,
@@ -12541,7 +12672,7 @@ function renderVerizonLiveTile(){
     ageSec < 3600 ? Math.floor(ageSec/60)+'m ago' :
     Math.floor(ageSec/3600)+'h ago';
   const err = vl.lastError ? `<div class="hint" style="color:var(--red)">Last sync error: ${esc(vl.lastError)}</div>` : '';
-  const moving = trucks.filter(v => v._location && v._location.Speed > 0).length;
+  const moving = trucks.filter(v => fleetMotion(v._location).isMoving).length;
   const stopped = trucks.filter(v => v._location && v._location.DisplayState === 'Stop').length;
   const atHome = trucks.filter(v => v._location && /home terminal/i.test(String(v._location.GeoFenceName||''))).length;
   const trailerOnMap = trailers.filter(fleetHasGps).length;
@@ -12654,15 +12785,11 @@ function fleetAssetRows(list){
       : ageMin < 60 ? ageMin + " min ago"
       : ageMin < 60 * 24 ? Math.floor(ageMin / 60) + "h ago"
       : Math.floor(ageMin / 60 / 24) + "d ago";
-    const isMoving = has && loc.Speed > 0;
     const isHome = has && /home terminal/i.test(String(loc.GeoFenceName || ""));
+    const isMoving = has && fleetMotion(loc, nowT).isMoving;
     const stateBadge = !has
       ? `<span style="color:var(--amber);font-weight:600;font-size:11px;text-transform:uppercase">no GPS yet</span>`
-      : isMoving
-        ? `<span style="color:#7dd3fc;font-weight:600;font-size:11px;text-transform:uppercase">▶ ${Math.round(loc.Speed)} mph ${esc(loc.Heading||"")}</span>`
-        : (isHome
-          ? `<span style="color:var(--text-muted);font-size:11px;text-transform:uppercase">⌂ yard</span>`
-          : `<span style="color:#c4b5fd;font-size:11px;text-transform:uppercase">■ stopped</span>`);
+      : fleetStateBadge(loc, nowT, isHome, "trailer");
     const rank = !has ? 2 : (ageMin > 240 ? 1 : 0);
     return { rank, html: `
       <div style="display:grid;grid-template-columns:minmax(88px,140px) 1fr auto;gap:10px;align-items:center;padding:10px 4px;border-bottom:1px solid var(--border);${!has || ageMin > 240 ? "opacity:0.85" : ""}">
@@ -12699,7 +12826,7 @@ function renderFleet(){
     ageSec < 60 ? ageSec+'s ago' :
     ageSec < 3600 ? Math.floor(ageSec/60)+'m ago' :
     Math.floor(ageSec/3600)+'h ago';
-  const moving = trucks.filter(v => v._location && v._location.Speed > 0).length;
+  const moving = trucks.filter(v => fleetMotion(v._location).isMoving).length;
   const stopped = trucks.filter(v => v._location && v._location.DisplayState === 'Stop').length;
   const atHome = trucks.filter(v => v._location && /home terminal/i.test(String(v._location.GeoFenceName||''))).length;
   const trailerOnMap = trailers.filter(fleetHasGps).length;
@@ -12711,10 +12838,10 @@ function renderFleet(){
   const rows = trucks.map(v => {
     const loc = v._location || {};
     const addr = (loc.Address && loc.Address.AddressLine1) || loc.GeoFenceName || '(no location)';
-    const isMoving = loc.Speed > 0;
     const isHome = /home terminal/i.test(String(loc.GeoFenceName||''));
-    const gpsMs = loc.UpdateUTC ? Date.parse(loc.UpdateUTC + 'Z') : 0;
-    const ageMin = gpsMs ? Math.floor((nowT - gpsMs) / 60000) : Infinity;
+    const ageMinParsed = gpsAgeMinutes(loc, nowT);
+    const ageMin = ageMinParsed == null ? Infinity : ageMinParsed;
+    const isMoving = fleetMotion(loc, nowT).isMoving;
     const isFresh = ageMin < 30;
     const isStale = ageMin > 240;
     const truckId = String(v.Name || v.VehicleNumber || '');
@@ -12724,10 +12851,7 @@ function renderFleet(){
     const rank = !loc.Latitude ? 5 : isStale ? 4 : (isReady ? 1 : (isMoving ? 0 : (isHome ? 3 : 2)));
     const stateBadge = isReady
       ? `<span style="color:var(--green);font-weight:600;font-size:11px;text-transform:uppercase">✓ READY</span>`
-      : isMoving
-        ? `<span style="color:var(--green);font-weight:600;font-size:11px;text-transform:uppercase">▶ ${Math.round(loc.Speed)} mph ${esc(loc.Heading||'')}</span>`
-        : (isHome ? `<span style="color:var(--text-muted);font-size:11px;text-transform:uppercase">⌂ yard</span>`
-                  : `<span style="color:var(--amber);font-size:11px;text-transform:uppercase">■ stopped</span>`);
+      : fleetStateBadge(loc, nowT, isHome, 'truck');
     // v2.1.14: normal-driver + override-dropdown pattern per James 2026-08-19.
     // Show primary (Verizon-current OR last-known-primary from cache), with a
     // dropdown to override today's driver if someone else is in the truck.
@@ -12899,9 +13023,9 @@ function renderVerizonMapInto(containerId){
     const assetClass = classifyFleetAsset(v);
     const isTrailer = assetClass === "trailer" || assetClass === "pending";
     const isHome = /home terminal/i.test(String(loc.GeoFenceName||''));
-    const isMoving = loc.Speed > 0;
-    const gpsMs = loc.UpdateUTC ? Date.parse(loc.UpdateUTC + 'Z') : 0;
-    const ageMin = gpsMs ? Math.floor((now - gpsMs) / 60000) : Infinity;
+    const isMoving = fleetMotion(loc, now).isMoving;
+    const ageMinParsed = gpsAgeMinutes(loc, now);
+    const ageMin = ageMinParsed == null ? Infinity : ageMinParsed;
     // Age tier: fresh (<30 min), recent (30 min-4 hrs), stale (>4 hrs)
     let ageTier = 'stale';
     if(ageMin < 30) ageTier = 'fresh';
@@ -12939,7 +13063,9 @@ function renderVerizonMapInto(containerId){
         fillOpacity,
       }).addTo(__verizonMap);
     }
-    const speedTxt = isMoving ? ` — ${Math.round(loc.Speed)} mph ${loc.Heading||''}` : ' — stopped';
+    const speedTxt = isMoving
+      ? ` — ${esc(fleetSpeedText(loc, now))}`
+      : (isHome ? ' — yard' : ` — ${esc(fleetSpeedText(loc, now))}`);
     const addr = (loc.Address && loc.Address.AddressLine1) || loc.GeoFenceName || '';
     const ageLabel = ageMin === Infinity ? 'never' :
       ageMin < 60 ? `${ageMin} min ago` :
@@ -15705,6 +15831,10 @@ SHADOW_TIMELINE_TEXT['2026-07-28'] = "**PARTIAL DAY — Phase 2 diff loop stoppe
 
 /* ---- v2.0 DATA: Changelog (in-app version history) ---- */
 const SHADOW_CHANGELOG = [
+  { ver:'v2.1.53-fleet-mph', date:'2026-10-30', changes:[
+    'Fleet speed was Verizon Reveal location Speed, which the API returns in km/h, labeled as mph. Truck 20’s 91 on Los Banos Hwy is 57 mph; 77 is 48; 69 on W Mathews Rd is 43; 14 is 9. The worker keeps raw Speed and adds SpeedMph (× 0.621371, same factor as odometer km). The list and map use that',
+    'A fix older than 15 minutes shows “stale GPS” instead of a speed. DisplayState Stop shows parked, Idle shows idling, and an explicit ignition-off shows that — even when the last Speed number is still high'
+  ]},
   { ver:'v2.1.52-fsc-45', date:'2026-09-23', changes:[
     'James: fuel surcharge on customers that pay a percent of linehaul is 45%. POC lane overlay, customer cards (Diamond, ARA, POC, CNP, Foster, French Camp Grain, percent placeholders), and Diamond tiers that add FSC on top move 33/43 → 45. Penny Newman stays $2/ton. Harris stays flat-included. Pelican, Diestel/Perdue flat, and ADM rice stay fscPct 0',
     'Devices still holding an old percent (27/30/32/33/43) on a percent-of-linehaul customer migrate to 45 once. per_ton and none are not rewritten. Diesel stays the number in Settings on this device — $7 is already on the worker canonical-settings KV. No Device-out-of-sync bar and no diesel overwrite'

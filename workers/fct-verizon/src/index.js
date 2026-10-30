@@ -17,8 +17,9 @@ import {
   summarizeAssets,
   unwrapBulkLocationItem
 } from "./asset-gps.js";
+import { annotateLocationSpeed } from "./speed.js";
 
-var WORKER_VERSION = "v0.15-trailer-gps-2026-09-23";
+var WORKER_VERSION = "v0.16-speed-mph-2026-10-30";
 
 var __defProp = Object.defineProperty;
 var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
@@ -334,7 +335,7 @@ async function refreshSnapshot(env) {
       return {
         ...v,
         _assetClass: assetClass,
-        _location: resolved.gps === "live" ? resolved.location : null,
+        _location: resolved.gps === "live" ? annotateLocationSpeed(resolved.location) : null,
         _locStatus: resolved.status,
         _locKey: resolved.key,
         _locVia: resolved.via,
@@ -383,6 +384,7 @@ async function refreshSnapshot(env) {
       if (!truckId || !v._location) return;
       const loc = v._location;
       const p = prev[truckId] || {};
+      // Speed stays kilometers per hour. Zero versus moving does not need mph.
       const curSpeed = loc.Speed || 0;
       const curGeoFence = String(loc.GeoFenceName || "");
       const curDisplayState = String(loc.DisplayState || "");

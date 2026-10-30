@@ -4,6 +4,11 @@ Cloudflare Worker behind `https://fct-verizon.jamesgrunsky.workers.dev`.
 Serves Verizon Reveal GPS (`/latest`, `/miles`, `/signals`, …) and, as of
 v0.14, company-wide calc settings at `/canonical-settings`.
 
+**Speed (v0.16):** Reveal’s location `Speed` is kilometers per hour. The
+snapshot keeps that raw value and adds `SpeedKph` plus `SpeedMph`
+(`× 0.621371`, same factor as segment kilometers and `OdometerInKM`).
+The Fleet tab shows `SpeedMph`. It does not label the raw field as mph.
+
 **Direction of sync (v2.1.27):** operator Settings edits **push** to KV.
 The app does **not** silent-overwrite local diesel/MPG on boot. A banner
 offers tap-to-pull; dismiss keeps this device. v2.1.25 auto-apply wrote
